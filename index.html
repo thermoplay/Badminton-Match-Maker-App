@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0a0a0f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="CourtSide">
+    <meta name="mobile-web-app-capable" content="yes">
+
+    <!-- iOS homescreen icons — place these in an /icons/ folder -->
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png">
+    <link rel="apple-touch-icon" sizes="120x120" href="icons/icon-120.png">
+
+    <!-- iOS splash screens (add more sizes as needed) -->
+    <link rel="apple-touch-startup-image" href="icons/splash-2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2)">
+    <link rel="apple-touch-startup-image" href="icons/splash-1125.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)">
+
+    <!-- Web app manifest (Android PWA + modern iOS) -->
+    <link rel="manifest" href="manifest.json">
+    <title>Court Side Pro | Operations</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- QRCode loaded before app scripts so it's available when needed -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="subtitle">Matchmaking Made Easy</div>
+            <h1>COURT<span>SIDE</span></h1>
+        </header>
+
+        <section class="panel">
+            <div class="input-row">
+                <input
+                    type="text"
+                    id="playerName"
+                    placeholder="Athlete Name..."
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="words"
+                    onkeydown="if(event.key==='Enter') addPlayer()"
+                >
+                <button class="btn-add" onclick="addPlayer()">+</button>
+            </div>
+            <div class="athlete-grid" id="squadList"></div>
+        </section>
+
+        <div id="matchContainer"></div>
+
+        <div class="panel">
+            <div class="subtitle">Sideline Status</div>
+            <div id="restingList" class="athlete-grid" style="margin-top:8px;"></div>
+        </div>
+
+        <!-- Spacer so fixed nav doesn't cover content -->
+        <div style="height: 40px;"></div>
+    </div>
+
+    <nav class="nav-bar">
+        <button class="btn-icon" onclick="showOverlay('sync')" aria-label="Sync">📲</button>
+        <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()">Next Round</button>
+        <button class="btn-icon" onclick="showOverlay('stats')" aria-label="Stats">🏆</button>
+    </nav>
+
+    <!-- Stats / Sync Overlay -->
+    <div id="overlay" role="dialog" aria-modal="true">
+        <div class="overlay-header">
+            <h2 id="overlayTitle"></h2>
+            <button onclick="closeOverlay()" class="close-btn">CLOSE</button>
+        </div>
+        <div id="overlayContent"></div>
+    </div>
+
+    <!-- Player Action Menu -->
+    <div id="actionMenu" style="display:none;" role="dialog" aria-modal="true">
+        <div class="menu-card">
+            <h2 id="menuPlayerName"></h2>
+            <p id="playerStatusText"></p>
+            <button class="btn-main menu-btn" onclick="editPlayerName()">Edit Name</button>
+            <button class="btn-main menu-btn" id="restToggleBtn" style="background:var(--accent); color:#000;"></button>
+            <button class="btn-main menu-btn btn-danger" onclick="deletePlayer()">Remove Athlete</button>
+            <button class="btn-main btn-cancel" onclick="closeMenu()">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Team Builder Modal -->
+    <div id="teamBuilderModal" style="display:none;" role="dialog" aria-modal="true">
+        <div class="builder-sheet">
+
+            <div class="builder-top-bar">
+                <span class="builder-title">Edit Teams</span>
+                <span id="builderGameLabel" class="builder-game-tag"></span>
+            </div>
+
+            <div id="builderOdds" style="display:flex; justify-content:center; margin-bottom:18px;"></div>
+
+            <div class="builder-hint">Tap a player to select, then tap another to swap</div>
+
+            <div class="builder-teams">
+                <div class="builder-team-col">
+                    <div class="builder-team-label">Team A</div>
+                    <div id="builderTeamA"></div>
+                </div>
+                <div class="builder-vs">VS</div>
+                <div class="builder-team-col">
+                    <div class="builder-team-label">Team B</div>
+                    <div id="builderTeamB"></div>
+                </div>
+            </div>
+
+            <div id="builderSideline" style="margin-top:20px;"></div>
+
+            <div class="builder-actions">
+                <button class="builder-btn-shuffle" onclick="builderShuffle()">⟳ Shuffle</button>
+                <button class="builder-btn-confirm" onclick="confirmTeamBuilder()">Confirm</button>
+            </div>
+
+            <button class="btn-cancel" onclick="closeTeamBuilder()" style="width:100%; margin-top:8px;">Cancel</button>
+        </div>
+    </div>
+
+    <!--
+        LOAD ORDER:
+        1. polish.js  — Haptic, Confetti, Avatar utilities (no deps)
+        2. app.js     — State, UI, persistence (uses polish.js)
+        3. logic.js   — Match logic (uses app.js + polish.js)
+        4. sync.js    — Supabase multiplayer (uses all of the above)
+    -->
+    <script src="js/polish.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/logic.js"></script>
+    <script src="js/sync.js"></script>
+    <script>
+        // After local state loads, try to reconnect to any active online session
+        const _originalLoad = window.onload;
+        window.onload = async function() {
+            if (_originalLoad) _originalLoad();
+            await tryAutoRejoin();
+        };
+    </script>
+</body>
+</html>
