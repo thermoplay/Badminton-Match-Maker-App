@@ -31,7 +31,7 @@
     <div class="app-container">
         <header>
             <div class="subtitle">Matchmaking Made Easy</div>
-            <h1>The COURT<span>SIDE</span></h1>
+            <h1>THE COURT<span>SIDE</span></h1>
         </header>
 
         <section class="panel">
@@ -64,6 +64,7 @@
     <nav class="nav-bar">
         <button class="btn-icon" onclick="showOverlay('sync')" aria-label="Sync">📲</button>
         <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()">Next Round</button>
+        <button class="btn-icon undo-btn" id="undoRoundBtn" onclick="undoLastRound()" aria-label="Undo" style="display:none;">↩</button>
         <button class="btn-icon" onclick="showOverlay('stats')" aria-label="Stats">🏆</button>
     </nav>
 
@@ -124,9 +125,16 @@
         </div>
     </div>
 
-    <!--
-        LOAD ORDER:
-        1. polish.js  — Haptic, Confetti, Avatar utilities (no deps)
+    <!-- Spectator Check-in Sheet -->
+    <div id="checkinSheet" style="display:none;" class="checkin-sheet">
+        <div class="checkin-inner">
+            <div class="checkin-header">
+                <span class="checkin-title">👋 Check In</span>
+                <span class="checkin-hint">Tap your name to join the rotation</span>
+            </div>
+            <div id="checkinContainer"></div>
+        </div>
+    </div>
         2. app.js     — State, UI, persistence (uses polish.js)
         3. logic.js   — Match logic (uses app.js + polish.js)
         4. sync.js    — Supabase multiplayer (uses all of the above)

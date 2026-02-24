@@ -174,6 +174,7 @@ function pushStateToSupabase() {
                     operator_key:    operatorKey,  // verified server-side
                     squad:           squad,
                     current_matches: currentMatches,
+                    round_history:   roundHistory,
                 },
             });
         } catch (e) {
@@ -243,10 +244,13 @@ function applyRemoteState(session) {
     const prevCount = currentMatches.length;
     squad           = session.squad           || [];
     currentMatches  = session.current_matches || [];
+    roundHistory    = session.round_history   || [];
     renderSquad();
     document.getElementById('matchContainer').innerHTML = '';
     renderSavedMatches();
     checkNextButtonState();
+    updateUndoButton();
+    renderCheckinView();
     if (currentMatches.length > 0 && currentMatches.length !== prevCount) Haptic.bump();
 }
 
@@ -396,3 +400,95 @@ async function tryAutoRejoin() {
         showSessionToast(isOperator ? `✅ Reconnected as host` : `👁 Rejoined session`);
     } catch { /* silently stay offline */ }
 }
+
+// ---------------------------------------------------------------------------
+// SPECTATOR COUNT — lightweight presence tracking
+// Each spectator device pings a presence endpoint on join/heartbeat.
+// We track count via a simple in-memory counter updated from realtime.
+// ---------------------------------------------------------------------------
+
+let spectatorCount = 0;
+let presenceHeartbeat = null;
+
+/**
+ * Called when a spectator joins — registers their presence via a simple
+ * counter stored alongside the session. Uses a separate lightweight ping.
+ */
+async function registerPresence() {
+    if (isOperator) return; // operator doesn't count as spectator
+    try {
+        await apiCall('session-presence', {
+            method: 'POST',
+            body: { room_code: currentRoomCode, action: 'join' },
+        });
+        // Heartbeat every 20s to signal still watching
+        clearInterval(presenceHeartbeat);
+        presenceHeartbeat = setInterval(async () => {
+            if (!isOnlineSession) { clearInterval(presenceHeartbeat); return; }
+            await apiCall('session-presence', {
+                method: 'POST',
+                body: { room_code: currentRoomCode, action: 'ping' },
+            }).catch(() => {});
+        }, 20000);
+    } catch { /* silent */ }
+}
+
+/**
+ * Updates the spectator count badge on the host's nav bar.
+ */
+function updateSpectatorCount(count) {
+    spectatorCount = count;
+    const countEl = document.getElementById('spectatorCount');
+    if (countEl) {
+        countEl.textContent = `👁 ${count}`;
+        countEl.style.display = count > 0 ? 'inline-flex' : 'none';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SPECTATOR CHECK-IN VIEW
+// Rendered inside a fixed bottom sheet visible only to spectators
+// ---------------------------------------------------------------------------
+
+function showCheckinSheet() {
+    let sheet = document.getElementById('checkinSheet');
+    if (!sheet) return;
+    sheet.style.display = 'flex';
+    renderCheckinView();
+}
+
+function hideCheckinSheet() {
+    const sheet = document.getElementById('checkinSheet');
+    if (sheet) sheet.style.display = 'none';
+}
+
+// Override updateSessionUI to also handle spectator UI and count badge
+const _originalUpdateSessionUI = updateSessionUI;
+updateSessionUI = function() {
+    _originalUpdateSessionUI();
+
+    // Spectator count badge — only shown to operator
+    if (isOnlineSession && isOperator) {
+        let countEl = document.getElementById('spectatorCount');
+        if (!countEl) {
+            countEl = document.createElement('span');
+            countEl.id = 'spectatorCount';
+            countEl.className = 'spectator-count-badge';
+            countEl.style.display = 'none';
+            const badge = document.getElementById('sessionBadge');
+            if (badge) badge.appendChild(countEl);
+        }
+    }
+
+    // Check-in sheet — shown to spectators only
+    const sheet = document.getElementById('checkinSheet');
+    if (sheet) {
+        sheet.style.display = (isOnlineSession && !isOperator) ? 'flex' : 'none';
+        if (isOnlineSession && !isOperator) renderCheckinView();
+    }
+
+    // Register spectator presence
+    if (isOnlineSession && !isOperator) {
+        registerPresence();
+    }
+};

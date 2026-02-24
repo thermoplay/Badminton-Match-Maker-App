@@ -1485,3 +1485,244 @@ header {
 .player-chip:nth-child(14) { animation-delay: 0.28s; }
 .player-chip:nth-child(15) { animation-delay: 0.30s; }
 .player-chip:nth-child(16) { animation-delay: 0.32s; }
+
+/* =============================================================================
+   UNDO BUTTON
+   ============================================================================= */
+
+.undo-btn {
+    font-size: 1rem;
+    opacity: 0.8;
+    transition: opacity 0.2s, transform 0.15s;
+    animation: badgeIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.undo-btn:hover  { opacity: 1; }
+.undo-btn:active { transform: scale(0.88) rotate(-20deg); }
+
+/* =============================================================================
+   STATS TABS
+   ============================================================================= */
+
+.stats-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    background: var(--bg2);
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.stats-tab {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.stats-tab.active {
+    background: var(--surface2);
+    color: var(--accent);
+    border: 1px solid var(--border-accent);
+}
+
+.stats-tab:active { transform: scale(0.95); }
+
+/* =============================================================================
+   SESSION HISTORY
+   ============================================================================= */
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.history-round {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    animation: cardDrop 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.history-round-label {
+    font-family: var(--font-display);
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding: 8px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.history-game {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.history-game:last-child { border-bottom: none; }
+
+.history-game-label {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    flex-shrink: 0;
+    width: 42px;
+}
+
+.history-matchup {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    flex-wrap: wrap;
+    font-size: 0.78rem;
+}
+
+.history-winner {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-style: italic;
+    color: var(--accent);
+}
+
+.history-vs {
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    font-style: italic;
+    flex-shrink: 0;
+}
+
+.history-loser {
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-style: italic;
+}
+
+/* =============================================================================
+   CHECK-IN SHEET (Spectator)
+   ============================================================================= */
+
+.checkin-sheet {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 3000;
+    align-items: flex-end;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.checkin-inner {
+    width: 100%;
+    max-width: 500px;
+    background: var(--surface);
+    border-top: 1px solid var(--border-accent);
+    border-radius: 20px 20px 0 0;
+    padding: 16px 16px calc(16px + var(--safe-bottom));
+    pointer-events: auto;
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+    animation: sheetUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+    max-height: 45vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.checkin-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.checkin-title {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    color: var(--text);
+}
+
+.checkin-hint {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.checkin-chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1.5px solid var(--border);
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.checkin-chip:last-child { margin-bottom: 0; }
+.checkin-chip:active { transform: scale(0.97); }
+
+.checkin-active {
+    background: var(--accent-dim);
+    border-color: var(--border-accent);
+}
+
+.checkin-resting {
+    background: var(--surface2);
+    opacity: 0.6;
+}
+
+.checkin-status {
+    margin-left: auto;
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: var(--accent);
+}
+
+.checkin-resting .checkin-status {
+    color: var(--text-muted);
+}
+
+/* =============================================================================
+   SPECTATOR COUNT BADGE
+   ============================================================================= */
+
+.spectator-count-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: #60a5fa;
+    background: rgba(96,165,250,0.1);
+    border: 1px solid rgba(96,165,250,0.2);
+    border-radius: 10px;
+    padding: 2px 6px;
+    margin-left: 4px;
+    letter-spacing: 0.5px;
+    animation: badgeIn 0.3s ease both;
+}

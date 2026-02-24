@@ -42,7 +42,15 @@ function processAndNext() {
             alert('Operations Hold: Please select winners for all active games.');
             return;
         }
+        // Snapshot state BEFORE applying ELO — needed for undo
+        const snapshot = {
+            squadSnapshot: squad.map(p => ({ ...p })),
+            matches:       currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
+            timestamp:     Date.now(),
+        };
+        roundHistory.push(snapshot);
         applyELOResults();
+        updateUndoButton();
     }
     generateMatches();
 }

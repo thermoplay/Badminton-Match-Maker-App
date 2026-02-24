@@ -10,6 +10,8 @@
 // ---------------------------------------------------------------------------
 let squad = [];
 let currentMatches = [];
+let roundHistory = [];          // array of completed round snapshots for history + undo
+let previousRoundSnapshot = null; // snapshot before last round for undo
 let selectedPlayerIndex = null;
 let pressTimer = null;
 let isLongPress = false;
@@ -19,7 +21,7 @@ let isLongPress = false;
 // ---------------------------------------------------------------------------
 
 function saveToDisk() {
-    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches }));
+    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory }));
 }
 
 function loadFromDisk() {
@@ -27,21 +29,22 @@ function loadFromDisk() {
     if (saved) {
         try {
             const data = JSON.parse(saved);
-            squad = data.squad || [];
+            squad          = data.squad        || [];
+            roundHistory   = data.roundHistory || [];
             currentMatches = (data.currentMatches || []).filter(m => {
-                // FIX: Drop any saved match that references a player who no longer exists.
-                // This prevents a crash in renderMatchCard when findP() returns undefined.
                 return m.teams.flat().every(name => squad.find(p => p.name === name));
             });
             renderSquad();
             renderSavedMatches();
         } catch (e) {
             console.error('CourtSide: Failed to parse saved data.', e);
-            squad = [];
+            squad          = [];
             currentMatches = [];
+            roundHistory   = [];
         }
     }
     checkNextButtonState();
+    updateUndoButton();
 }
 
 /**
@@ -241,31 +244,8 @@ function showOverlay(type) {
     document.getElementById('overlay').classList.add('open');
 
     if (type === 'stats') {
-        title.innerText = 'Performance Lab';
-        const sorted   = [...squad].sort((a, b) => b.rating - a.rating);
-        const topCount = Math.max(1, Math.ceil(squad.length * 0.3));
-        const peak     = sorted.slice(0, topCount).sort((a, b) => a.name.localeCompare(b.name));
-        const active   = sorted.slice(topCount).sort((a, b) => a.name.localeCompare(b.name));
-
-        const winRate = (p) => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
-
-        const renderGroup = (label, list) => {
-            if (list.length === 0) return '';
-            const cards = list.map(p => `
-                <div class="stats-card">
-                    <div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' 🔥' : ''}</div>
-                    <div class="stats-meta">${p.wins}W · ${p.games}G · ${winRate(p)}% WR</div>
-                </div>
-            `).join('');
-            return `
-                <div class="stats-group">
-                    <div class="stats-header">${label}</div>
-                    <div class="stats-grid">${cards}</div>
-                </div>
-            `;
-        };
-
-        content.innerHTML = renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
+        title.innerText = 'Stats';
+        renderStatsTab('performance');
 
     } else {
         // SYNC / MULTIPLAYER panel
@@ -466,3 +446,183 @@ function escapeHTML(str) {
 // ---------------------------------------------------------------------------
 
 window.onload = loadFromDisk;
+
+// ---------------------------------------------------------------------------
+// UNDO LAST ROUND
+// ---------------------------------------------------------------------------
+
+/**
+ * Shows or hides the undo button based on whether there's history to undo.
+ */
+function updateUndoButton() {
+    let btn = document.getElementById('undoRoundBtn');
+    if (!btn) return;
+    btn.style.display  = roundHistory.length > 0 ? 'inline-flex' : 'none';
+}
+
+/**
+ * Rolls back the last completed round.
+ * Restores squad stats, ELO, and match cards to pre-round state.
+ */
+function undoLastRound() {
+    if (roundHistory.length === 0) return;
+    if (!confirm('Undo the last round? This will reverse all ELO changes.')) return;
+
+    const snapshot = roundHistory.pop();
+
+    // Restore squad stats from snapshot
+    squad = snapshot.squadSnapshot.map(s => ({ ...s }));
+
+    // Restore match cards so host can re-pick winners
+    currentMatches = snapshot.matches.map(m => ({ ...m, winnerTeamIndex: null }));
+
+    // Re-render everything
+    renderSquad();
+    document.getElementById('matchContainer').innerHTML = '';
+    renderSavedMatches();
+
+    // Re-select the previous winners visually so host knows what was picked
+    snapshot.matches.forEach((m, i) => {
+        if (m.winnerTeamIndex !== null) {
+            const boxes = document.querySelectorAll(`#match-${i} .team-box`);
+            if (boxes[m.winnerTeamIndex]) {
+                boxes[m.winnerTeamIndex].classList.add('selected');
+            }
+            currentMatches[i].winnerTeamIndex = m.winnerTeamIndex;
+        }
+    });
+
+    updateUndoButton();
+    checkNextButtonState();
+    saveToDisk();
+    if (isOnlineSession && isOperator) pushStateToSupabase();
+    Haptic.bump();
+    showSessionToast('↩ Last round undone');
+}
+
+// ---------------------------------------------------------------------------
+// STATS OVERLAY — TABS
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the stats overlay with tabbed navigation.
+ * tab: 'performance' | 'history'
+ */
+function renderStatsTab(tab) {
+    const content = document.getElementById('overlayContent');
+
+    const tabs = `
+        <div class="stats-tabs">
+            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}"
+                onclick="renderStatsTab('performance')">Performance</button>
+            <button class="stats-tab ${tab === 'history' ? 'active' : ''}"
+                onclick="renderStatsTab('history')">History</button>
+        </div>
+    `;
+
+    if (tab === 'performance') {
+        const sorted   = [...squad].sort((a, b) => b.rating - a.rating);
+        const topCount = Math.max(1, Math.ceil(squad.length * 0.3));
+        const peak     = sorted.slice(0, topCount).sort((a, b) => a.name.localeCompare(b.name));
+        const active   = sorted.slice(topCount).sort((a, b) => a.name.localeCompare(b.name));
+        const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+
+        const renderGroup = (label, list) => {
+            if (list.length === 0) return '';
+            const cards = list.map(p => `
+                <div class="stats-card">
+                    <div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' 🔥' : ''}</div>
+                    <div class="stats-meta">${p.wins}W · ${p.games}G · ${winRate(p)}% WR</div>
+                </div>
+            `).join('');
+            return `
+                <div class="stats-group">
+                    <div class="stats-header">${label}</div>
+                    <div class="stats-grid">${cards}</div>
+                </div>
+            `;
+        };
+
+        content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
+
+    } else {
+        // History tab
+        if (roundHistory.length === 0) {
+            content.innerHTML = tabs + `
+                <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
+                    No rounds played yet this session.
+                </div>`;
+            return;
+        }
+
+        const rounds = [...roundHistory].reverse().map((round, i) => {
+            const roundNum = roundHistory.length - i;
+            const games = round.matches.map((m, gi) => {
+                const winIdx  = m.winnerTeamIndex;
+                const loseIdx = winIdx === 0 ? 1 : 0;
+                const winners = m.teams[winIdx]?.join(' & ') || '?';
+                const losers  = m.teams[loseIdx]?.join(' & ') || '?';
+                return `
+                    <div class="history-game">
+                        <div class="history-game-label">Game ${gi + 1}</div>
+                        <div class="history-matchup">
+                            <span class="history-winner">${escapeHTML(winners)}</span>
+                            <span class="history-vs">def.</span>
+                            <span class="history-loser">${escapeHTML(losers)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="history-round">
+                    <div class="history-round-label">Round ${roundNum}</div>
+                    ${games}
+                </div>
+            `;
+        }).join('');
+
+        content.innerHTML = tabs + `<div class="history-list">${rounds}</div>`;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CHECK-IN MODE (Spectator view)
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the check-in UI shown to spectators.
+ * Displays all squad members — tap to toggle active/resting for this session.
+ * Changes are pushed to Supabase so the host sees them live.
+ */
+function renderCheckinView() {
+    const container = document.getElementById('checkinContainer');
+    if (!container) return;
+
+    if (squad.length === 0) {
+        container.innerHTML = `
+            <p style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding:20px 0;">
+                No players added yet. Ask the host to add players first.
+            </p>`;
+        return;
+    }
+
+    container.innerHTML = squad.map((p, i) => `
+        <div class="checkin-chip ${p.active ? 'checkin-active' : 'checkin-resting'}"
+             onclick="toggleCheckin(${i})">
+            ${Avatar.html(p.name)}
+            <span class="chip-name">${escapeHTML(p.name)}</span>
+            <span class="checkin-status">${p.active ? '✓ In' : 'Out'}</span>
+        </div>
+    `).join('');
+}
+
+async function toggleCheckin(idx) {
+    squad[idx].active = !squad[idx].active;
+    renderCheckinView();
+    renderSquad();
+    saveToDisk();
+    // Push to Supabase so host sees the roster update live
+    if (typeof pushStateToSupabase === 'function') pushStateToSupabase();
+    Haptic.tap();
+}
