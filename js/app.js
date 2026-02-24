@@ -172,7 +172,7 @@ function updateSideline() {
     const idle = squad.filter(p => p.active && !activeThisRound.has(p.name));
     document.getElementById('restingList').innerHTML = idle
         .map(p => `
-            <div class="player-chip active sideline-chip">
+            <div class="player-chip active sideline-chip" data-name="${escapeHTML(p.name)}">
                 ${Avatar.html(p.name)}
                 <span class="chip-name" style="font-size:0.72rem;">${escapeHTML(p.name)}</span>
             </div>`)
@@ -529,12 +529,14 @@ function renderStatsTab(tab) {
 
         const renderGroup = (label, list) => {
             if (list.length === 0) return '';
-            const cards = list.map(p => `
-                <div class="stats-card">
+            const cards = list.map((p, i) => {
+                const sqIdx = squad.indexOf(p);
+                return `
+                <div class="stats-card" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
                     <div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' 🔥' : ''}</div>
                     <div class="stats-meta">${p.wins}W · ${p.games}G · ${winRate(p)}% WR</div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
             return `
                 <div class="stats-group">
                     <div class="stats-header">${label}</div>
@@ -625,4 +627,129 @@ async function toggleCheckin(idx) {
     // Push to Supabase so host sees the roster update live
     if (typeof pushStateToSupabase === 'function') pushStateToSupabase();
     Haptic.tap();
+}
+
+// ---------------------------------------------------------------------------
+// PLAYER CARDS
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-generates a fun title based on a player's real stats.
+ * Everyone gets something — titles aren't only for high performers.
+ */
+function getPlayerTitle(p) {
+    const wr = p.games > 0 ? p.wins / p.games : 0;
+
+    if (p.streak >= 5)              return { title: 'On Fire',       icon: '🔥' };
+    if (p.streak >= 3)              return { title: 'Hot Hand',      icon: '⚡' };
+    if (p.games === 0)              return { title: 'Fresh Blood',   icon: '🌱' };
+    if (p.games >= 10 && wr >= 0.7) return { title: 'The Closer',    icon: '🎯' };
+    if (p.games >= 10 && wr >= 0.6) return { title: 'Sharp Shooter', icon: '🏹' };
+    if (p.games >= 8)               return { title: 'Iron Man',      icon: '💪' };
+    if (wr >= 0.6 && p.games >= 5)  return { title: 'Rising Star',   icon: '⭐' };
+    if (wr <= 0.35 && p.games >= 5) return { title: 'Never Quits',   icon: '🛡️' };
+    if (p.wins === 0 && p.games > 0)return { title: 'The Underdog',  icon: '🐉' };
+    if (p.games >= 6 && wr >= 0.45) return { title: 'Steady Eddie',  icon: '🤝' };
+    if (p.sessionPlayCount >= 5)    return { title: 'Always Ready',  icon: '🏃' };
+    if (p.streak === 0 && p.games > 3) return { title: 'The Wildcard', icon: '🎲' };
+    return { title: 'The Veteran', icon: '🏅' };
+}
+
+/**
+ * Opens a full-screen player card for a given squad index.
+ * Accessible from long-press menu (host) and Performance Lab (anyone).
+ */
+function openPlayerCard(idx) {
+    const p  = squad[idx];
+    if (!p) return;
+
+    const { title, icon } = getPlayerTitle(p);
+    const wr  = p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+    const bg  = Avatar.color(p.name);
+    const ini = Avatar.initials(p.name);
+
+    document.getElementById('playerCardContent').innerHTML = `
+        <div class="pc-avatar-wrap">
+            <div class="pc-avatar" style="background:${bg};">${ini}</div>
+            ${p.streak >= 3 ? '<div class="pc-streak-ring"></div>' : ''}
+        </div>
+        <div class="pc-title-badge">
+            <span class="pc-title-icon">${icon}</span>
+            <span class="pc-title-text">${title}</span>
+        </div>
+        <div class="pc-name">${escapeHTML(p.name)}</div>
+        <div class="pc-stats-row">
+            <div class="pc-stat">
+                <div class="pc-stat-val">${p.wins}</div>
+                <div class="pc-stat-label">Wins</div>
+            </div>
+            <div class="pc-stat-divider"></div>
+            <div class="pc-stat">
+                <div class="pc-stat-val">${p.games}</div>
+                <div class="pc-stat-label">Games</div>
+            </div>
+            <div class="pc-stat-divider"></div>
+            <div class="pc-stat">
+                <div class="pc-stat-val">${wr}%</div>
+                <div class="pc-stat-label">Win Rate</div>
+            </div>
+        </div>
+        ${p.streak > 0 ? `<div class="pc-streak">🔥 ${p.streak} game win streak</div>` : ''}
+    `;
+
+    document.getElementById('playerCardModal').style.display = 'flex';
+    Haptic.bump();
+}
+
+function closePlayerCard() {
+    document.getElementById('playerCardModal').style.display = 'none';
+}
+
+/**
+ * Captures the player card as an image and opens the native share sheet.
+ * Uses html2canvas loaded from CDN.
+ */
+async function sharePlayerCard() {
+    const card = document.querySelector('.player-card');
+    if (!card) return;
+
+    // Load html2canvas if not already present
+    if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
+    try {
+        const canvas = await html2canvas(card, {
+            backgroundColor: '#0a0a0f',
+            scale: 2,
+            useCORS: true,
+            logging: false,
+        });
+
+        canvas.toBlob(async (blob) => {
+            const file = new File([blob], 'courtside-player-card.png', { type: 'image/png' });
+            if (navigator.share && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                    title:  'The Court Side',
+                    text:   'Check out this player card!',
+                    files:  [file],
+                });
+            } else {
+                // Fallback: download the image
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'courtside-player-card.png';
+                a.click();
+            }
+        }, 'image/png');
+    } catch (e) {
+        console.error('Share failed:', e);
+    }
+    Haptic.success();
 }
