@@ -256,6 +256,91 @@
         </div>
     </div>
 
+    <!-- ═══ PLAYER SIDELINE VIEW ═══════════════════════════════════════════════ -->
+    <div id="sidelinePanel" style="display:none;" class="sl-panel">
+        <div class="sl-inner">
+
+            <!-- Header -->
+            <div class="sl-header">
+                <div class="sl-logo">THE COURT<span>SIDE</span></div>
+                <div class="sl-session-tag" id="slSessionTag"></div>
+            </div>
+
+            <!-- Passport identity -->
+            <div class="sl-identity">
+                <div class="sl-avatar" id="slPassportAvatar"></div>
+                <div class="sl-identity-text">
+                    <div class="sl-passport-name" id="slPassportName"></div>
+                    <button class="sl-rename-btn" onclick="passportRename()">✏️ Edit name</button>
+                </div>
+            </div>
+
+            <!-- Live matches -->
+            <div class="sl-section-label">LIVE NOW</div>
+            <div id="slCurrentMatches" class="sl-matches"></div>
+
+            <!-- Next up -->
+            <div class="sl-next-up" id="slNextUpRow" style="display:none;">
+                <span class="sl-next-up-label">NEXT UP</span>
+                <span class="sl-next-up-names" id="slNextUp"></span>
+            </div>
+
+            <!-- Private stats — visible only to this player -->
+            <div class="sl-section-label" style="margin-top:auto; padding-top:1.5rem;">
+                YOUR PRIVATE STATS
+                <span class="sl-private-badge">🔒 Only you can see this</span>
+            </div>
+            <div class="sl-stats-row">
+                <div class="sl-stat">
+                    <div class="sl-stat-val" id="slPrivateWins">0</div>
+                    <div class="sl-stat-label">Lifetime Wins</div>
+                </div>
+                <div class="sl-stat-divider"></div>
+                <div class="sl-stat">
+                    <div class="sl-stat-val" id="slPrivateGames">0</div>
+                    <div class="sl-stat-label">Total Games</div>
+                </div>
+                <div class="sl-stat-divider"></div>
+                <div class="sl-stat">
+                    <div class="sl-stat-val" id="slPrivateWR">—</div>
+                    <div class="sl-stat-label">Win Rate</div>
+                </div>
+            </div>
+            <div class="sl-privacy-note">Stats stored only on this device. Never shared.</div>
+        </div>
+    </div>
+
+    <!-- ═══ VICTORY CARD OVERLAY ════════════════════════════════════════════════ -->
+    <div id="victoryCardOverlay" style="display:none;" class="victory-overlay">
+        <!-- Capture target: exactly 9:16 -->
+        <div id="victoryCard" class="victory-card">
+
+            <!-- Background layers -->
+            <div class="vc-bg-gradient"></div>
+            <div class="vc-bg-grid"></div>
+
+            <!-- Branding -->
+            <div class="vc-brand">THE COURT<span>SIDE</span> PRO</div>
+
+            <!-- Core message -->
+            <div class="vc-content">
+                <div class="vc-victory-word">VICTORY</div>
+                <div class="vc-player-name" id="victoryCardName"></div>
+                <div class="vc-divider"></div>
+                <div class="vc-tagline">SEASON CERTIFIED</div>
+            </div>
+
+            <!-- Footer watermark -->
+            <div class="vc-footer">@thecourtsidepro</div>
+        </div>
+
+        <!-- Controls outside the capture area -->
+        <div class="victory-controls">
+            <button class="vc-share-btn" onclick="VictoryCard.share()">↑ Share Victory</button>
+            <button class="vc-close-btn" onclick="VictoryCard.hide()">✕ Close</button>
+        </div>
+    </div>
+
     <!--
         LOAD ORDER:
         1. polish.js  — Haptic, Confetti, Avatar utilities (no deps)
@@ -264,6 +349,7 @@
         4. sync.js    — Supabase multiplayer (uses all of the above)
     -->
     <script src="js/polish.js"></script>
+    <script src="js/passport.js"></script>
     <script src="js/app.js"></script>
     <script src="js/logic.js"></script>
     <script src="js/sync.js"></script>

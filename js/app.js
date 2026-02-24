@@ -1156,3 +1156,226 @@ function updateIWTPVisibility() {
         checkIWTPSmartRecognition();
     }
 }
+
+// =============================================================================
+// PASSPORT INTEGRATION
+// =============================================================================
+
+/**
+ * Called on page load and whenever the IWTP sheet is about to show.
+ * If the player has a passport, skip name entry entirely.
+ */
+function passportInit() {
+    const passport = Passport.init();
+    return passport;
+}
+
+/**
+ * Rename flow — triggered by tapping the player name in sideline view.
+ */
+function passportRename() {
+    const passport = Passport.get();
+    if (!passport) return;
+
+    const newName = prompt('Update your name:', passport.playerName);
+    if (!newName || !newName.trim()) return;
+
+    Passport.rename(newName);
+    SidelineView.refresh();
+
+    // If in a live session, push name change to host via play-request update
+    if (window.isOnlineSession && window.currentRoomCode) {
+        fetch('/api/passport-rename', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:   currentRoomCode,
+                player_uuid: passport.playerUUID,
+                new_name:    newName.trim(),
+            }),
+        }).catch(() => {});
+    }
+    showSessionToast(`✅ Name updated to ${newName.trim()}`);
+}
+
+/**
+ * Poll for win/loss signals addressed to this passport UUID.
+ * Runs every 8 seconds while in an online session.
+ */
+let _signalPollTimer = null;
+
+function startSignalPolling() {
+    const passport = Passport.get();
+    if (!passport || !window.currentRoomCode) return;
+
+    clearInterval(_signalPollTimer);
+    _signalPollTimer = setInterval(async () => {
+        if (!window.currentRoomCode) return;
+        try {
+            const res  = await fetch(
+                `/api/passport-signal?player_uuid=${encodeURIComponent(passport.playerUUID)}&room_code=${encodeURIComponent(currentRoomCode)}`
+            );
+            const data = await res.json();
+            if (data.signal) {
+                await handlePassportSignal(data.signal, passport);
+            }
+        } catch { /* silent */ }
+    }, 8000);
+}
+
+async function handlePassportSignal(signal, passport) {
+    if (signal.event === 'WIN') {
+        Passport.recordWin();
+        VictoryCard.show(passport.playerName);
+    } else if (signal.event === 'LOSS') {
+        Passport.recordLoss();
+    }
+    SidelineView.refresh();
+
+    // Acknowledge — clear signal from server
+    await fetch('/api/passport-signal', {
+        method:  'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+            player_uuid: passport.playerUUID,
+            room_code:   currentRoomCode,
+        }),
+    }).catch(() => {});
+}
+
+/**
+ * Host dispatches win signals after selecting winners.
+ * Called from setWinner() in logic.js.
+ * Resolves player names → UUIDs using the session's uuid_map.
+ */
+async function dispatchWinSignals(mIdx) {
+    if (!window.isOperator || !window.currentRoomCode) return;
+    const m = currentMatches[mIdx];
+    if (!m || m.winnerTeamIndex === null) return;
+
+    const winIdx   = m.winnerTeamIndex;
+    const loseIdx  = winIdx === 0 ? 1 : 0;
+    const uuidMap  = window._sessionUUIDMap || {};
+
+    const winnerUUIDs = m.teams[winIdx].map(n => uuidMap[n]).filter(Boolean);
+    const loserUUIDs  = m.teams[loseIdx].map(n => uuidMap[n]).filter(Boolean);
+
+    if (winnerUUIDs.length === 0 && loserUUIDs.length === 0) return;
+
+    try {
+        await fetch('/api/passport-signal', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:    currentRoomCode,
+                winner_uuids: winnerUUIDs,
+                loser_uuids:  loserUUIDs,
+                game_label:   `Game ${mIdx + 1}`,
+            }),
+        });
+    } catch (e) {
+        console.error('Signal dispatch failed:', e);
+    }
+}
+
+// =============================================================================
+// PASSPORT-AWARE JOIN FLOW OVERRIDE
+// =============================================================================
+
+/**
+ * Override checkIWTPSmartRecognition to also check for existing passport.
+ * If passport exists with a name, skip all forms and go straight to sideline view.
+ */
+const _originalCheckIWTP = checkIWTPSmartRecognition;
+checkIWTPSmartRecognition = function() {
+    const passport = Passport.get();
+    const sheet    = document.getElementById('iwantToPlaySheet');
+    if (!sheet || !window.isOnlineSession || window.isOperator) return;
+
+    if (passport && passport.playerName) {
+        // Returning player — show welcome-back prompt
+        showPassportWelcome(passport);
+        return;
+    }
+    // No passport — show normal choice flow
+    _originalCheckIWTP();
+};
+
+function showPassportWelcome(passport) {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet) return;
+
+    // Hijack the choice view with a personalised welcome
+    const choiceView = document.getElementById('iwtpChoiceView');
+    if (!choiceView) return;
+
+    choiceView.innerHTML = `
+        <div class="iwtp-title">Welcome back,</div>
+        <div class="iwtp-passport-name">${escapeHTML(passport.playerName)}</div>
+        <div class="iwtp-subtitle">Your passport was found on this device.</div>
+        <button class="iwtp-btn" onclick="passportJoinSession()">
+            🏀 Join Session ${escapeHTML(currentRoomCode || '')}
+        </button>
+        <button class="iwtp-choice-btn iwtp-choice-existing" style="margin-top:10px;" onclick="passportRenameAndJoin()">
+            ✏️ Join with a different name
+        </button>
+        <button class="iwtp-back-btn" style="margin-top:14px; display:block; text-align:center; width:100%;"
+            onclick="spectateOnly()">
+            👁 Just spectate
+        </button>
+    `;
+
+    _iwtpShow('iwtpChoiceView');
+    sheet.style.display = 'flex';
+}
+
+async function passportJoinSession() {
+    const passport = Passport.get();
+    if (!passport || !currentRoomCode) return;
+
+    await submitPassportJoinRequest(passport.playerName, passport.playerUUID);
+}
+
+async function passportRenameAndJoin() {
+    const passport = Passport.get();
+    const newName  = prompt('Enter name for this session:', passport?.playerName || '');
+    if (!newName || !newName.trim()) return;
+    Passport.rename(newName.trim());
+    await submitPassportJoinRequest(newName.trim(), passport.playerUUID);
+}
+
+async function submitPassportJoinRequest(name, uuid) {
+    if (!currentRoomCode) return;
+    const btn = document.querySelector('.iwtp-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+    try {
+        const res = await fetch('/api/play-request', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ room_code: currentRoomCode, name, player_uuid: uuid }),
+        });
+
+        if (res.ok) {
+            // Collapse sheet — show sideline view
+            collapseIWTPSheet();
+            setTimeout(() => {
+                SidelineView.show();
+                startSignalPolling();
+            }, 450);
+            showSessionToast('🏀 Request sent! Waiting for host approval…');
+            Haptic.success();
+        } else {
+            throw new Error('Failed');
+        }
+    } catch {
+        if (btn) { btn.disabled = false; btn.textContent = 'Join Session'; }
+        showSessionToast('Could not send request. Try again.');
+    }
+}
+
+function spectateOnly() {
+    collapseIWTPSheet();
+    document.body.classList.add('spectator-mode');
+    showSessionToast('👁 Spectating live');
+}

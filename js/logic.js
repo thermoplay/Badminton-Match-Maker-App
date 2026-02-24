@@ -246,6 +246,9 @@ function setWinner(mIdx, tIdx) {
 
     checkNextButtonState();
     saveToDisk();
+
+    // Dispatch win/loss signals to player passports (non-blocking)
+    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx);
 }
 
 // ---------------------------------------------------------------------------

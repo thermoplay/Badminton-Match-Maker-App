@@ -250,7 +250,6 @@ function subscribeRealtime(roomCode) {
 let _lastRemoteUpdate = 0;
 
 function applyRemoteState(session) {
-    // Stale data guard — ignore updates older than the last one we applied
     const ts = session.last_active ? new Date(session.last_active).getTime() : 0;
     if (ts > 0 && ts < _lastRemoteUpdate) {
         console.log('CourtSide: ignoring stale remote update');
@@ -262,13 +261,18 @@ function applyRemoteState(session) {
     squad           = session.squad           || [];
     currentMatches  = session.current_matches || [];
     roundHistory    = session.round_history   || [];
+
+    // Store UUID map (name → uuid) for win signal dispatch
+    // This is built from the uuid_map stored by the host on join approvals
+    window._sessionUUIDMap = session.uuid_map || {};
+
     renderSquad();
     document.getElementById('matchContainer').innerHTML = '';
     renderSavedMatches();
     checkNextButtonState();
     updateUndoButton();
-    // Update spectator-specific UI
     if (typeof checkIWTPSmartRecognition === 'function') checkIWTPSmartRecognition();
+    if (typeof SidelineView !== 'undefined') SidelineView.refresh();
     if (currentMatches.length > 0 && currentMatches.length !== prevCount) Haptic.bump();
 }
 
