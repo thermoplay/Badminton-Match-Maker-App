@@ -305,14 +305,15 @@ function updateSessionUI() {
 }
 
 function lockUIForSpectator(lock) {
-    ['#playerName', '.btn-add', '#nextRoundBtn', '.edit-teams-btn', '.team-box'].forEach(sel => {
-        document.querySelectorAll(sel).forEach(el => {
-            el.style.pointerEvents = lock ? 'none' : '';
-            el.style.opacity       = lock ? '0.5'  : '';
-        });
-    });
-    const syncBtn = document.querySelector('.btn-icon[onclick*="sync"]');
-    if (syncBtn) syncBtn.style.display = lock ? 'none' : '';
+    // Use a single body class — CSS handles everything from one place.
+    // This is bulletproof: no selector can be missed, no inline style can be
+    // accidentally overridden, and dynamically added elements (new match cards)
+    // are automatically locked without any extra JS.
+    if (lock) {
+        document.body.classList.add('spectator-mode');
+    } else {
+        document.body.classList.remove('spectator-mode');
+    }
 }
 
 function showSyncStatus(msg, type = 'info') {
@@ -351,6 +352,20 @@ saveToDisk = function () {
 // ---------------------------------------------------------------------------
 
 async function tryAutoRejoin() {
+    // Check for ?join=XXXX-XXXX in the URL first — this is how QR code scanning works.
+    // When someone scans the QR, their camera opens the URL with this param
+    // and we immediately join that session as a spectator.
+    const urlParams  = new URLSearchParams(window.location.search);
+    const joinCode   = urlParams.get('join');
+    if (joinCode) {
+        // Clean the URL so the code doesn't stay visible or persist on refresh
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+        await joinOnlineSession(joinCode);
+        return; // don't also try localStorage rejoin
+    }
+
+    // Otherwise try to reconnect as returning operator from localStorage
     const savedCode = localStorage.getItem('cs_room_code');
     const savedHash = localStorage.getItem('cs_op_key_hash');
     if (!savedCode) return;

@@ -217,7 +217,7 @@ input:focus {
 }
 
 /* ---------------------------------------------------------------------------
-   ATHLETE GRID & CHIPS
+   PLAYER GRID & CHIPS
    --------------------------------------------------------------------------- */
 .athlete-grid {
     display: grid;
@@ -1268,4 +1268,83 @@ body.spectator-mode::before {
 .session-toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+}
+
+/* =============================================================================
+   SPECTATOR MODE — complete UI lockdown via single body class
+   Everything interactive is disabled. Dynamically added elements are
+   automatically covered because the overlay catches all pointer events.
+   ============================================================================= */
+
+/* Spectator banner at top */
+body.spectator-mode::before {
+    content: '👁  SPECTATOR VIEW  —  READ ONLY';
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    background: rgba(96, 165, 250, 0.12);
+    color: #60a5fa;
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 900;
+    letter-spacing: 3px;
+    text-align: center;
+    padding: 7px;
+    z-index: 4000;
+    border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+}
+
+/* Push content down so banner doesn't overlap header */
+body.spectator-mode .app-container {
+    padding-top: 46px;
+}
+
+/* The invisible full-screen shield — sits above everything interactive
+   but below overlays and modals so those still work */
+body.spectator-mode::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    cursor: not-allowed;
+}
+
+/* Lock the nav bar buttons except stats (spectators can view stats) */
+body.spectator-mode .btn-add,
+body.spectator-mode #nextRoundBtn,
+body.spectator-mode #playerName {
+    pointer-events: none;
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+/* Hide the sync button entirely for spectators — they don't need it */
+body.spectator-mode .btn-icon[aria-label="Sync"] {
+    display: none;
+}
+
+/* Dim match cards so it's clear they're read-only */
+body.spectator-mode .team-box {
+    cursor: default;
+}
+
+/* Dim player chips */
+body.spectator-mode .player-chip {
+    cursor: default;
+    pointer-events: none;
+}
+
+/* Keep stats button visible and usable */
+body.spectator-mode .btn-icon[aria-label="Stats"] {
+    pointer-events: auto;
+    opacity: 1;
+    position: relative;
+    z-index: 501;
+}
+
+/* Keep overlays fully interactive */
+body.spectator-mode #overlay,
+body.spectator-mode #actionMenu,
+body.spectator-mode #teamBuilderModal {
+    pointer-events: auto;
+    z-index: 2000;
 }

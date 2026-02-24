@@ -113,7 +113,7 @@ function editPlayerName() {
 }
 
 function deletePlayer() {
-    if (!confirm('Remove this athlete?')) return;
+    if (!confirm('Remove this player?')) return;
     const removedName = squad[selectedPlayerIndex].name;
     squad.splice(selectedPlayerIndex, 1);
 
@@ -352,9 +352,10 @@ function showOverlay(type) {
         `;
 
         if (isOnlineSession) {
-            // Show QR of room code for easy sharing
-            QRCode.toCanvas(document.getElementById('qrCanvas'), currentRoomCode, {
-                width: 180, margin: 2,
+            // QR encodes the full join URL so scanning opens the app and auto-joins
+            const joinUrl = `${window.location.origin}${window.location.pathname}?join=${currentRoomCode}`;
+            QRCode.toCanvas(document.getElementById('qrCanvas'), joinUrl, {
+                width: 200, margin: 2,
                 color: { dark: '#000000', light: '#ffffff' }
             });
         }

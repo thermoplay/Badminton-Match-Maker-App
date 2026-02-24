@@ -82,7 +82,7 @@ function applyELOResults() {
 function generateMatches() {
     const pool = squad.filter(p => p.active);
     if (pool.length < 4) {
-        alert('Requires at least 4 active athletes.');
+        alert('Requires at least 4 active players.');
         return;
     }
 
