@@ -518,6 +518,8 @@ function renderStatsTab(tab) {
                 onclick="renderStatsTab('performance')">Performance</button>
             <button class="stats-tab ${tab === 'history' ? 'active' : ''}"
                 onclick="renderStatsTab('history')">History</button>
+            <button class="stats-tab"
+                onclick="renderLeaderboardTab()">Leaderboard</button>
         </div>
     `;
 
@@ -723,3 +725,244 @@ async function sharePlayerCard() {
     }
     Haptic.success();
 }
+
+// ---------------------------------------------------------------------------
+// AURA MATCH POSTER
+// ---------------------------------------------------------------------------
+
+async function shareAuraPoster(matchIdx) {
+    const m  = currentMatches[matchIdx];
+    if (!m) return;
+
+    const tA = m.teams[0];
+    const tB = m.teams[1];
+
+    // Populate the hidden poster div
+    document.getElementById('auraPosterGame').textContent  = `GAME ${matchIdx + 1}`;
+    document.getElementById('auraPosterTeamA').textContent = tA.join(' & ');
+    document.getElementById('auraPosterTeamB').textContent = tB.join(' & ');
+    document.getElementById('auraPosterOddsA').textContent = `${m.odds[0]}%`;
+    document.getElementById('auraPosterOddsB').textContent = `${m.odds[1]}%`;
+
+    // Move poster into view temporarily for capture
+    const poster = document.getElementById('auraPoster');
+    poster.style.left = '-9999px';
+    poster.style.top  = '0';
+
+    try {
+        const canvas = await html2canvas(poster.querySelector('.aura-bg'), {
+            backgroundColor: null,
+            scale:  2,
+            width:  390,
+            height: 693,
+            useCORS: true,
+            logging: false,
+        });
+
+        canvas.toBlob(async (blob) => {
+            const file = new File([blob], 'courtside-aura.png', { type: 'image/png' });
+            if (navigator.share && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                    title: 'The Court Side Pro',
+                    text:  `${tA.join(' & ')} vs ${tB.join(' & ')} — who you got? 🏀`,
+                    files: [file],
+                });
+            } else {
+                // Fallback: download
+                const a = document.createElement('a');
+                a.href     = URL.createObjectURL(blob);
+                a.download = 'courtside-aura.png';
+                a.click();
+            }
+            Haptic.success();
+        }, 'image/png');
+
+    } catch (e) {
+        console.error('Aura poster failed:', e);
+        showSessionToast('Could not generate poster');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WEEKLY LEADERBOARD — rendered in stats overlay
+// ---------------------------------------------------------------------------
+
+async function renderLeaderboardTab() {
+    const content = document.getElementById('overlayContent');
+
+    const tabs = `
+        <div class="stats-tabs">
+            <button class="stats-tab" onclick="renderStatsTab('performance')">Performance</button>
+            <button class="stats-tab" onclick="renderStatsTab('history')">History</button>
+            <button class="stats-tab active" onclick="renderLeaderboardTab()">Leaderboard</button>
+        </div>
+    `;
+
+    content.innerHTML = tabs + `<div style="text-align:center;padding:30px 0;color:var(--text-muted);font-size:0.8rem;">Loading leaderboard…</div>`;
+
+    try {
+        const res  = await fetch('/api/leaderboard-get');
+        const data = await res.json();
+
+        if (!data || !data.players || data.players.length === 0) {
+            content.innerHTML = tabs + `
+                <div style="text-align:center;padding:40px 0;color:var(--text-muted);font-size:0.85rem;">
+                    No leaderboard data yet.<br>Complete sessions to build the all-time rankings.
+                </div>`;
+            return;
+        }
+
+        const winRate = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+        const rows = data.players
+            .sort((a, b) => b.wins - a.wins || winRate(b) - winRate(a))
+            .map((p, i) => `
+                <div class="lb-row ${i === 0 ? 'lb-top' : ''}">
+                    <span class="lb-rank">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}</span>
+                    <span class="lb-name">${escapeHTML(p.name)}</span>
+                    <span class="lb-stats">${p.wins}W · ${p.games}G · ${winRate(p)}%</span>
+                </div>
+            `).join('');
+
+        content.innerHTML = tabs + `
+            <div class="lb-subtitle">All-time across all sessions</div>
+            <div class="lb-list">${rows}</div>
+        `;
+
+    } catch (e) {
+        content.innerHTML = tabs + `
+            <div style="text-align:center;padding:40px 0;color:var(--text-muted);font-size:0.85rem;">
+                Leaderboard unavailable. Are you online?
+            </div>`;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// "I WANT TO PLAY" — Spectator feature
+// ---------------------------------------------------------------------------
+
+let playRequests = []; // host-side list of pending requests
+
+/**
+ * Show the IWTP sheet to spectators when in an online session.
+ */
+function updateIWTPVisibility() {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet) return;
+    sheet.style.display = (isOnlineSession && !isOperator) ? 'flex' : 'none';
+}
+
+async function submitIWantToPlay() {
+    const input  = document.getElementById('iwtpNameInput');
+    const status = document.getElementById('iwtpStatus');
+    const name   = (input?.value || '').trim();
+
+    if (!name) {
+        status.textContent  = 'Please enter your name.';
+        status.style.display = 'block';
+        status.className    = 'iwtp-status iwtp-error';
+        return;
+    }
+
+    if (!currentRoomCode) {
+        status.textContent  = 'Not connected to a session.';
+        status.style.display = 'block';
+        status.className    = 'iwtp-status iwtp-error';
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/play-request', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ room_code: currentRoomCode, name }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            status.textContent   = `✅ Request sent! The host will add you soon.`;
+            status.style.display = 'block';
+            status.className     = 'iwtp-status iwtp-success';
+            input.value          = '';
+            input.disabled       = true;
+            document.querySelector('.iwtp-btn').disabled = true;
+            Haptic.success();
+        } else {
+            throw new Error(data.error || 'Failed');
+        }
+    } catch (e) {
+        status.textContent  = 'Could not send request. Try again.';
+        status.style.display = 'block';
+        status.className    = 'iwtp-status iwtp-error';
+        Haptic.error();
+    }
+}
+
+/**
+ * Host: poll for pending play requests and show badge.
+ */
+async function pollPlayRequests() {
+    if (!isOnlineSession || !isOperator || !currentRoomCode) return;
+    try {
+        const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}`);
+        const data = await res.json();
+        playRequests = data.requests || [];
+        const badge = document.getElementById('playRequestsBadge');
+        const count = document.getElementById('playRequestsCount');
+        if (badge && count) {
+            badge.style.display = playRequests.length > 0 ? 'flex' : 'none';
+            count.textContent   = playRequests.length;
+        }
+    } catch { /* silent */ }
+}
+
+function showPlayRequests() {
+    const modal = document.getElementById('playRequestsModal');
+    const list  = document.getElementById('playRequestsList');
+    if (!modal || !list) return;
+
+    list.innerHTML = playRequests.length === 0
+        ? '<p style="text-align:center;color:var(--text-muted);padding:20px 0;">No pending requests.</p>'
+        : playRequests.map(r => `
+            <div class="pr-row">
+                <span class="pr-name">${escapeHTML(r.name)}</span>
+                <button class="pr-add-btn" onclick="approvePlayRequest('${escapeHTML(r.name)}', '${r.id}')">+ Add</button>
+                <button class="pr-deny-btn" onclick="denyPlayRequest('${r.id}')">✕</button>
+            </div>
+        `).join('');
+
+    modal.style.display = 'flex';
+}
+
+function closePlayRequests() {
+    document.getElementById('playRequestsModal').style.display = 'none';
+}
+
+async function approvePlayRequest(name, id) {
+    // Add player to squad
+    if (!squad.find(p => p.name === name)) {
+        squad.push({ name, rating: 1000, wins: 0, games: 0, streak: 0, active: true });
+        renderSquad();
+        saveToDisk();
+        showSessionToast(`✅ ${name} added to squad`);
+    }
+    await denyPlayRequest(id); // remove from queue
+    Haptic.success();
+}
+
+async function denyPlayRequest(id) {
+    try {
+        await fetch('/api/play-request', {
+            method:  'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ id, room_code: currentRoomCode }),
+        });
+        await pollPlayRequests();
+        showPlayRequests();
+    } catch { /* silent */ }
+}
+
+// Start polling when host goes live
+const _startPolling = () => {
+    pollPlayRequests();
+    setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
+};

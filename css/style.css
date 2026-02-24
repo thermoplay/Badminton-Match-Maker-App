@@ -1889,3 +1889,428 @@ header {
 }
 
 .player-card-share-btn:active { transform: scale(0.96); opacity: 0.85; }
+
+
+/* =============================================================================
+   AURA MATCH POSTER
+   ============================================================================= */
+
+.aura-bg {
+    width: 390px;
+    height: 693px;
+    background: linear-gradient(160deg, #0a0a1a 0%, #0d1a0d 40%, #0a0a0f 70%, #1a0a0a 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    font-family: 'Arial Black', sans-serif;
+}
+
+/* Radial glow effects */
+.aura-bg::before {
+    content: '';
+    position: absolute;
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, rgba(0,255,163,0.08) 0%, transparent 70%);
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+.aura-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(ellipse at 20% 20%, rgba(0,255,163,0.05) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(0,100,255,0.05) 0%, transparent 50%);
+    pointer-events: none;
+}
+
+.aura-top-label {
+    position: absolute;
+    top: 32px;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 5px;
+    color: rgba(0,255,163,0.7);
+    text-transform: uppercase;
+}
+
+.aura-game-label {
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: rgba(255,255,255,0.3);
+    text-transform: uppercase;
+    margin-bottom: 24px;
+}
+
+.aura-teams {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    z-index: 1;
+    padding: 0 32px;
+    width: 100%;
+}
+
+.aura-team {
+    font-size: 38px;
+    font-weight: 900;
+    font-style: italic;
+    color: #ffffff;
+    text-transform: uppercase;
+    text-align: center;
+    letter-spacing: 1px;
+    line-height: 1.1;
+    text-shadow: 0 0 40px rgba(0,255,163,0.3);
+}
+
+.aura-vs {
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(0,255,163,0.6);
+}
+
+.aura-odds-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 32px;
+    z-index: 1;
+}
+
+.aura-odd {
+    font-size: 28px;
+    font-weight: 900;
+    font-style: italic;
+    color: var(--accent);
+}
+
+.aura-odd-label {
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    color: rgba(255,255,255,0.3);
+    text-transform: uppercase;
+}
+
+.aura-footer {
+    position: absolute;
+    bottom: 32px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: rgba(255,255,255,0.2);
+    text-transform: uppercase;
+}
+
+/* Aura share button on match cards */
+.aura-share-btn {
+    background: transparent;
+    border: 1px solid rgba(0,255,163,0.3);
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 1px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.aura-share-btn:hover {
+    background: rgba(0,255,163,0.1);
+    border-color: var(--accent);
+}
+
+.aura-share-btn:active { transform: scale(0.92); }
+
+/* =============================================================================
+   WEEKLY LEADERBOARD
+   ============================================================================= */
+
+.lb-subtitle {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-align: center;
+    margin-bottom: 16px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.lb-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lb-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    animation: chipIn 0.3s ease both;
+}
+
+.lb-top {
+    border-color: var(--border-accent);
+    background: var(--accent-dim);
+}
+
+.lb-rank {
+    font-size: 1rem;
+    width: 28px;
+    text-align: center;
+    flex-shrink: 0;
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 900;
+    color: var(--text-muted);
+}
+
+.lb-top .lb-rank { color: var(--accent); }
+
+.lb-name {
+    flex: 1;
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-style: italic;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text);
+}
+
+.lb-stats {
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.lb-top .lb-stats { color: var(--accent); }
+
+/* Three-tab stats — shrink font slightly */
+.stats-tabs .stats-tab {
+    font-size: 0.65rem;
+}
+
+/* =============================================================================
+   I WANT TO PLAY SHEET
+   ============================================================================= */
+
+.iwtp-sheet {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 3500;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.iwtp-inner {
+    width: 100%;
+    max-width: 500px;
+    background: var(--surface);
+    border-top: 2px solid var(--accent);
+    border-radius: 20px 20px 0 0;
+    padding: 20px 20px calc(20px + var(--safe-bottom));
+    pointer-events: auto;
+    box-shadow: 0 -10px 40px rgba(0,255,163,0.1), 0 -20px 60px rgba(0,0,0,0.5);
+    animation: sheetUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.iwtp-title {
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text);
+    margin-bottom: 4px;
+}
+
+.iwtp-subtitle {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+}
+
+.iwtp-input {
+    width: 100%;
+    background: var(--bg2);
+    border: 1.5px solid var(--border);
+    color: #fff;
+    padding: 14px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    outline: none;
+    font-size: 16px;
+    font-family: var(--font-body);
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+.iwtp-input:focus { border-color: var(--border-accent); }
+
+.iwtp-btn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    background: var(--accent);
+    color: #000;
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-style: italic;
+    font-size: 0.95rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.15s;
+}
+
+.iwtp-btn:active { transform: scale(0.97); opacity: 0.85; }
+
+.iwtp-status {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 10px 14px;
+    border-radius: 10px;
+    margin-top: 10px;
+    text-align: center;
+}
+
+.iwtp-success {
+    background: rgba(0,255,163,0.1);
+    color: var(--accent);
+    border: 1px solid var(--border-accent);
+}
+
+.iwtp-error {
+    background: rgba(239,68,68,0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239,68,68,0.3);
+}
+
+/* =============================================================================
+   PLAY REQUESTS (Host badge + modal)
+   ============================================================================= */
+
+.play-requests-badge {
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: #000;
+    font-family: var(--font-display);
+    font-size: 0.72rem;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 1px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    z-index: 3000;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 4px 20px rgba(0,255,163,0.3);
+    animation: badgeIn 0.3s ease both;
+    white-space: nowrap;
+}
+
+.play-requests-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 5000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(10,10,15,0.85);
+    backdrop-filter: blur(12px);
+}
+
+.play-requests-card {
+    width: 100%;
+    max-width: 340px;
+    background: var(--surface);
+    border: 1px solid var(--border-accent);
+    border-radius: 20px;
+    padding: 24px;
+    animation: cardPop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.play-requests-title {
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 16px;
+    color: var(--text);
+}
+
+.pr-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.pr-row:last-child { border-bottom: none; }
+
+.pr-name {
+    flex: 1;
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-style: italic;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+}
+
+.pr-add-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #000;
+    font-weight: 700;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.pr-add-btn:hover { opacity: 0.85; }
+
+.pr-deny-btn {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.pr-deny-btn:hover { border-color: #ef4444; color: #ef4444; }

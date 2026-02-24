@@ -49,6 +49,8 @@ function processAndNext() {
             timestamp:     Date.now(),
         };
         roundHistory.push(snapshot);
+        // Archive to Supabase match_history for weekly leaderboard
+        if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
         applyELOResults();
         updateUndoButton();
     }
@@ -156,6 +158,7 @@ function buildMatchCardHTML(idx, tA, tB, odds) {
                     <div class="prob-pill ${hA}">${odds[0]}%</div>
                     <div class="prob-pill ${hB}">${odds[1]}%</div>
                 </div>
+                <button class="aura-share-btn" onclick="shareAuraPoster(${idx})" title="Share Aura Poster">✦ Share</button>
                 <button class="edit-teams-btn" onclick="openTeamBuilder(${idx})">✎ Edit</button>
             </div>
             <div class="team-box" onclick="setWinner(${idx}, 0)">

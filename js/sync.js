@@ -467,4 +467,35 @@ updateSessionUI = function() {
     if (isOnlineSession && !isOperator) {
         registerPresence();
     }
+
+    // Show/hide "I Want to Play" sheet for spectators
+    if (typeof updateIWTPVisibility === 'function') updateIWTPVisibility();
+
+    // Start polling play requests if operator
+    if (isOnlineSession && isOperator && typeof _startPolling === 'function') {
+        _startPolling();
+    }
 };
+
+
+// ---------------------------------------------------------------------------
+// MATCH HISTORY ARCHIVAL — weekly leaderboard
+// ---------------------------------------------------------------------------
+
+async function archiveRoundToSupabase(snapshot) {
+    if (!currentRoomCode) return;
+    try {
+        await fetch('/api/match-history', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code: currentRoomCode,
+                timestamp: snapshot.timestamp,
+                matches:   snapshot.matches,
+                squad:     snapshot.squadSnapshot,
+            }),
+        });
+    } catch (e) {
+        console.error('CourtSide: archive failed', e);
+    }
+}

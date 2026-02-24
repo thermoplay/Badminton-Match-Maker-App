@@ -26,6 +26,8 @@
     <link rel="stylesheet" href="css/style.css">
     <!-- QRCode loaded before app scripts so it's available when needed -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+    <!-- html2canvas for Aura poster export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -140,6 +142,54 @@
                     <span>↑</span> Share Card
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- Aura Match Poster (hidden, captured by html2canvas) -->
+    <div id="auraPoster" style="position:fixed; left:-9999px; top:0; width:390px; height:693px; z-index:-1; overflow:hidden;">
+        <div class="aura-bg">
+            <div class="aura-top-label">THE COURT SIDE PRO</div>
+            <div class="aura-game-label" id="auraPosterGame">GAME 1</div>
+            <div class="aura-teams">
+                <div class="aura-team" id="auraPosterTeamA"></div>
+                <div class="aura-vs">VS</div>
+                <div class="aura-team" id="auraPosterTeamB"></div>
+            </div>
+            <div class="aura-odds-row">
+                <div class="aura-odd" id="auraPosterOddsA"></div>
+                <div class="aura-odd-label">WIN ODDS</div>
+                <div class="aura-odd" id="auraPosterOddsB"></div>
+            </div>
+            <div class="aura-footer">@thecourtsidepro</div>
+        </div>
+    </div>
+
+    <!-- Spectator "I Want to Play" Sheet -->
+    <div id="iwantToPlaySheet" style="display:none;" class="iwtp-sheet">
+        <div class="iwtp-inner">
+            <div class="iwtp-title">🏀 I Want to Play</div>
+            <div class="iwtp-subtitle">Let the host know you're ready to join</div>
+            <input type="text" id="iwtpNameInput"
+                placeholder="Enter your name..."
+                class="iwtp-input"
+                autocomplete="off" autocorrect="off" autocapitalize="words"
+                maxlength="30">
+            <button class="iwtp-btn" onclick="submitIWantToPlay()">Send Request</button>
+            <div id="iwtpStatus" class="iwtp-status" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Host: Pending play requests badge -->
+    <div id="playRequestsBadge" style="display:none;" class="play-requests-badge" onclick="showPlayRequests()">
+        🏀 <span id="playRequestsCount">0</span> want to play
+    </div>
+
+    <!-- Host: Play Requests Modal -->
+    <div id="playRequestsModal" style="display:none;" class="play-requests-modal">
+        <div class="play-requests-card">
+            <div class="play-requests-title">🏀 Play Requests</div>
+            <div id="playRequestsList"></div>
+            <button class="btn-main btn-cancel" style="width:100%; margin-top:12px;" onclick="closePlayRequests()">Close</button>
         </div>
     </div>
 
