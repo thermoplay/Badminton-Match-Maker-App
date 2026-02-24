@@ -323,7 +323,8 @@ function updateSessionUI() {
     if (!badge) {
         badge = document.createElement('div');
         badge.id = 'sessionBadge';
-        document.querySelector('.nav-bar').prepend(badge);
+        // Fixed top-right — not inside nav bar
+        document.body.appendChild(badge);
     }
     if (!isOnlineSession) { badge.style.display = 'none'; return; }
     badge.style.display = 'flex';

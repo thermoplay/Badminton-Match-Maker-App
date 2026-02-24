@@ -852,40 +852,37 @@ function updateIWTPVisibility() {
 }
 
 // ---------------------------------------------------------------------------
-// IWTP FLOW CONTROLLERS
+// IWTP — DECISION FLOW (Zero-assumption, clean collapse)
 // ---------------------------------------------------------------------------
 
+/** Helper: show only one IWTP sub-view, hide all others */
+function _iwtpShow(id) {
+    ['iwtpChoiceView','iwtpNewPlayerView','iwtpExistingView','iwtpSpectatorView'].forEach(v => {
+        const el = document.getElementById(v);
+        if (el) el.style.display = v === id ? 'block' : 'none';
+    });
+}
+
 function showIWTPChoice() {
-    document.getElementById('iwtpChoiceView').style.display      = 'block';
-    document.getElementById('iwtpNewPlayerView').style.display   = 'none';
-    document.getElementById('iwtpExistingView').style.display    = 'none';
-    document.getElementById('iwtpSpectatorView').style.display   = 'none';
+    _iwtpShow('iwtpChoiceView');
 }
 
 function showIWTPNewPlayer() {
-    document.getElementById('iwtpChoiceView').style.display      = 'none';
-    document.getElementById('iwtpNewPlayerView').style.display   = 'block';
-    document.getElementById('iwtpExistingView').style.display    = 'none';
-    document.getElementById('iwtpSpectatorView').style.display   = 'none';
+    _iwtpShow('iwtpNewPlayerView');
     Haptic.tap();
-    setTimeout(() => document.getElementById('iwtpNameInput')?.focus(), 100);
+    setTimeout(() => document.getElementById('iwtpNameInput')?.focus(), 120);
 }
 
 function showIWTPExisting() {
-    document.getElementById('iwtpChoiceView').style.display      = 'none';
-    document.getElementById('iwtpNewPlayerView').style.display   = 'none';
-    document.getElementById('iwtpExistingView').style.display    = 'block';
-    document.getElementById('iwtpSpectatorView').style.display   = 'none';
+    _iwtpShow('iwtpExistingView');
     Haptic.tap();
-
-    // Populate squad name list
     const list = document.getElementById('iwtpPlayerList');
     if (!list) return;
     if (squad.length === 0) {
-        list.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:16px 0;font-size:0.8rem;">No players yet. Ask the host to add players first.</p>';
+        list.innerHTML = `<p class="iwtp-empty">No players yet.<br>Ask the host to add players first.</p>`;
         return;
     }
-    list.innerHTML = squad.map((p, i) => `
+    list.innerHTML = squad.map(p => `
         <button class="iwtp-player-chip" onclick="confirmSpectateAs('${escapeHTML(p.name)}')">
             ${Avatar.html(p.name)}
             <span>${escapeHTML(p.name)}</span>
@@ -894,27 +891,36 @@ function showIWTPExisting() {
 }
 
 /**
- * Spectator picks their name → enter confirmed read-only live view.
+ * Player picks their name → instant collapse to confirmed read-only view.
+ * Screen is 100% clear of forms. Spectator mode enforced.
  */
 function confirmSpectateAs(name) {
     localStorage.setItem('cs_spectator_name', name);
-
-    // Show confirmed view
-    document.getElementById('iwtpChoiceView').style.display      = 'none';
-    document.getElementById('iwtpNewPlayerView').style.display   = 'none';
-    document.getElementById('iwtpExistingView').style.display    = 'none';
-    document.getElementById('iwtpSpectatorView').style.display   = 'block';
-    document.getElementById('iwtpSpectatorName').textContent     = name.toUpperCase();
-
-    // Enforce read-only spectator mode
+    document.getElementById('iwtpSpectatorName').textContent    = name.toUpperCase();
+    document.getElementById('iwtpSpectatorSubtitle').textContent = 'Live view — read only';
+    _iwtpShow('iwtpSpectatorView');
     document.body.classList.add('spectator-mode');
     Haptic.success();
-    showToastNotification(`👁 Watching as ${name}`, 'info');
+    showSessionToast(`👁 Watching as ${name}`);
 }
 
 /**
- * Submit a new player join request.
- * Collapses the form entirely on success — shows toast instead of inline text.
+ * Collapse the entire IWTP sheet off-screen.
+ * Called when spectator taps "Enter Live View".
+ */
+function collapseIWTPSheet() {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet) return;
+    sheet.style.transition = 'transform 0.4s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease';
+    sheet.style.transform  = 'translateY(100%)';
+    sheet.style.opacity    = '0';
+    setTimeout(() => { sheet.style.display = 'none'; }, 420);
+    Haptic.tap();
+}
+
+/**
+ * New player submits join request.
+ * On success: entire sheet collapses immediately — toast confirms.
  */
 async function submitIWantToPlay() {
     const input = document.getElementById('iwtpNameInput');
@@ -922,11 +928,12 @@ async function submitIWantToPlay() {
     const btn   = document.getElementById('iwtpSendBtn');
 
     if (!name) {
-        showToastNotification('Please enter your name.', 'error');
+        showSessionToast('Please enter your name first.');
+        input?.focus();
         return;
     }
     if (!currentRoomCode) {
-        showToastNotification('Not connected to a session.', 'error');
+        showSessionToast('Not connected to a session.');
         return;
     }
 
@@ -941,38 +948,24 @@ async function submitIWantToPlay() {
 
         if (res.ok) {
             localStorage.setItem('cs_spectator_name', name);
-            // Collapse entire form immediately
-            const form = document.getElementById('iwtpNewPlayerView');
-            if (form) form.style.display = 'none';
-            // Show waiting state
-            document.getElementById('iwtpChoiceView').style.display    = 'none';
-            document.getElementById('iwtpSpectatorView').style.display = 'block';
-            document.getElementById('iwtpSpectatorName').textContent   = '⏳ PENDING';
-            document.querySelector('#iwtpSpectatorView .iwtp-subtitle').textContent =
-                'Waiting for host approval…';
-            showToastNotification('🏀 Request sent! Waiting for host…', 'info');
+            // INSTANT: collapse entire sheet — screen is clean
+            collapseIWTPSheet();
+            // Small toast confirms action
+            setTimeout(() => showSessionToast('🏀 Request sent! Pending host approval…'), 300);
             Haptic.success();
         } else {
             throw new Error('Failed');
         }
     } catch {
         if (btn) { btn.disabled = false; btn.textContent = 'Send Request'; }
-        showToastNotification('Could not send request. Try again.', 'error');
+        showSessionToast('Could not send request. Try again.');
         Haptic.error();
     }
 }
 
 /**
- * Global toast notification — used instead of inline status text.
- * type: 'info' | 'success' | 'error'
- */
-function showToastNotification(msg, type = 'info') {
-    // Reuse the existing session toast for spectator messages too
-    showSessionToast(msg);
-}
-
-/**
- * Check smart recognition on load — if returning spectator, restore their view.
+ * On load: check if returning spectator — skip choice, restore their view.
+ * Otherwise show the two-choice landing.
  */
 function checkIWTPSmartRecognition() {
     const sheet = document.getElementById('iwantToPlaySheet');
@@ -980,14 +973,13 @@ function checkIWTPSmartRecognition() {
 
     const savedName = localStorage.getItem('cs_spectator_name');
     if (savedName) {
-        const inSquad = squad.find(p => p.name.toLowerCase() === savedName.toLowerCase());
-        if (inSquad) {
-            // Returning known spectator — restore their view directly
-            confirmSpectateAs(inSquad.name);
+        const match = squad.find(p => p.name.toLowerCase() === savedName.toLowerCase());
+        if (match) {
+            confirmSpectateAs(match.name);
             return;
         }
     }
-    // Default: show choice
+    // First time — show choice
     showIWTPChoice();
 }
 

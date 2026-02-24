@@ -73,17 +73,24 @@ body {
    LAYOUT
    --------------------------------------------------------------------------- */
 .app-container {
-    max-width: 500px;
+    max-width: 600px;
+    width: 100%;
     margin: 0 auto;
-    padding: 0 16px 24px;
+    padding: 0 1rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
 }
 
 /* ---------------------------------------------------------------------------
    HEADER
    --------------------------------------------------------------------------- */
 header {
-    padding: 36px 0 20px;
+    padding: 2.5rem 0 1.25rem;
     position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
 }
 
 /* Accent bar above title */
@@ -220,9 +227,16 @@ input:focus {
    PLAYER GRID & CHIPS
    --------------------------------------------------------------------------- */
 .athlete-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(95px, 1fr));
-    gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-start;
+    align-items: flex-start;
+}
+.athlete-grid .player-chip {
+    flex: 0 1 calc(25% - 0.375rem);
+    min-width: 75px;
+    max-width: 130px;
 }
 
 .player-chip {
@@ -455,25 +469,39 @@ input:focus {
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 14px 16px calc(14px + var(--safe-bottom));
+    padding: 0.75rem 1rem calc(0.75rem + var(--safe-bottom));
     display: flex;
-    gap: 10px;
+    justify-content: center;
+    align-items: stretch;
+    gap: 0.625rem;
     z-index: 1000;
     isolation: isolate;
-
-    /* Frosted glass */
-    background: rgba(10, 10, 15, 0.82);
+    background: rgba(10, 10, 15, 0.88);
     backdrop-filter: blur(20px) saturate(1.5);
     -webkit-backdrop-filter: blur(20px) saturate(1.5);
     border-top: 1px solid var(--border);
-
-    /* Top glow line */
     box-shadow: 0 -1px 0 0 rgba(0,255,163,0.12), 0 -20px 60px rgba(0,0,0,0.6);
+}
+
+/* Inner wrapper keeps nav content max-width aligned */
+.nav-bar > * {
+    flex-shrink: 0;
+}
+
+/* Hero: Next Round stretches to fill remaining space up to a cap */
+#nextRoundBtn {
+    flex: 1 1 auto;
+    max-width: 380px;
+    min-height: 3.5rem;
+    font-size: 1.15rem;
+    padding: 1rem 1.5rem;
+    letter-spacing: 2px;
+    box-shadow: 0 0 32px var(--accent-glow);
 }
 
 .btn-main {
     flex: 1;
-    padding: 15px 10px;
+    padding: 0.9rem 0.75rem;
     border-radius: 12px;
     border: none;
     font-family: var(--font-display);
@@ -486,8 +514,11 @@ input:focus {
     color: var(--bg);
     cursor: pointer;
     transition: background 0.3s, opacity 0.3s, transform 0.15s, box-shadow 0.3s;
-    min-height: 52px;
+    min-height: 3.25rem;
     box-shadow: 0 0 24px var(--accent-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .btn-main:active { transform: scale(0.96); }
@@ -1093,25 +1124,33 @@ input:focus {
 
 /* Session badge in nav bar — shows room code + live indicator */
 .session-badge {
+    position: fixed;
+    top: max(0.75rem, env(safe-area-inset-top, 0.75rem));
+    right: 0.75rem;
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
+    gap: 5px;
+    background: rgba(22, 22, 31, 0.72);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.06);
     border-radius: 20px;
-    padding: 6px 10px;
+    padding: 4px 8px;
     font-family: var(--font-display);
-    font-size: 0.65rem;
+    font-size: 0.55rem;
     font-weight: 900;
-    letter-spacing: 1px;
+    letter-spacing: 1.5px;
     white-space: nowrap;
-    overflow: hidden;
-    max-width: 130px;
+    z-index: 1500;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    max-width: 110px;
 }
+.session-badge:hover { opacity: 1; }
 
 .session-dot {
-    width: 7px;
-    height: 7px;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
     flex-shrink: 0;
     animation: dotPulse 1.5s ease-in-out infinite;
@@ -2424,22 +2463,24 @@ header {
 
 .next-up-ticker {
     position: fixed;
-    bottom: calc(74px + var(--safe-bottom));
+    bottom: calc(4.75rem + var(--safe-bottom));
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     align-items: center;
-    gap: 10px;
-    background: rgba(10,10,15,0.92);
+    gap: 0.625rem;
+    background: rgba(10,10,15,0.95);
     border: 1px solid rgba(0,255,163,0.25);
     border-radius: 20px;
-    padding: 7px 16px;
+    padding: 0.4rem 1rem;
     z-index: 2500;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     white-space: nowrap;
-    max-width: calc(100vw - 32px);
+    max-width: min(calc(100vw - 2rem), 560px);
     overflow: hidden;
     animation: badgeIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
 }
 
 .next-up-label {
@@ -2710,4 +2751,262 @@ button:active,
     text-align: center;
     font-size: 2.5rem;
     margin-bottom: 8px;
+}
+
+/* =============================================================================
+   IWTP REDESIGN — Final clean version
+   ============================================================================= */
+
+/* Override any previous IWTP sheet rules */
+.iwtp-sheet {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 3500;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.iwtp-inner {
+    width: 100%;
+    max-width: 600px;
+    background: var(--surface);
+    border-top: 2px solid var(--accent);
+    border-radius: 1.25rem 1.25rem 0 0;
+    padding: 1.5rem 1.25rem calc(1.5rem + var(--safe-bottom));
+    pointer-events: auto;
+    box-shadow: 0 -0.5rem 2.5rem rgba(0,255,163,0.08), 0 -1.25rem 3.75rem rgba(0,0,0,0.55);
+    animation: sheetUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes sheetUp {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);   opacity: 1; }
+}
+
+.iwtp-title {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text);
+    margin-bottom: 0.25rem;
+}
+
+.iwtp-subtitle {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    letter-spacing: 0.02em;
+}
+
+/* Two big choice buttons */
+.iwtp-choice-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.1rem;
+    border-radius: 0.875rem;
+    border: 1.5px solid var(--border);
+    background: var(--bg2);
+    cursor: pointer;
+    margin-bottom: 0.625rem;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+    text-align: left;
+}
+
+.iwtp-choice-btn:active { transform: scale(0.97); }
+
+.iwtp-choice-new {
+    border-color: var(--border-accent);
+    background: var(--accent-dim);
+}
+.iwtp-choice-new:hover  { background: rgba(0,255,163,0.14); }
+.iwtp-choice-existing:hover { background: var(--surface2); }
+
+.iwtp-choice-icon {
+    font-size: 1.75rem;
+    flex-shrink: 0;
+    width: 2.5rem;
+    text-align: center;
+}
+
+.iwtp-choice-label {
+    flex: 1;
+    font-family: var(--font-display);
+    font-size: 0.9rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text);
+    line-height: 1.2;
+}
+
+.iwtp-choice-label small {
+    display: block;
+    font-family: var(--font-body);
+    font-size: 0.65rem;
+    font-weight: 500;
+    font-style: normal;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    margin-top: 0.2rem;
+}
+
+.iwtp-choice-new .iwtp-choice-label { color: var(--accent); }
+
+.iwtp-choice-arrow {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+/* Back button */
+.iwtp-back-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+    margin-bottom: 0.75rem;
+    display: inline-block;
+    transition: color 0.15s;
+    letter-spacing: 0.02em;
+}
+.iwtp-back-btn:hover { color: var(--text); }
+
+/* Name input */
+.iwtp-input {
+    width: 100%;
+    background: var(--bg2);
+    border: 1.5px solid var(--border);
+    color: var(--text);
+    padding: 0.875rem 1rem;
+    border-radius: 0.75rem;
+    margin-bottom: 0.625rem;
+    outline: none;
+    font-size: 1rem;
+    font-family: var(--font-body);
+    transition: border-color 0.2s, box-shadow 0.2s;
+    box-sizing: border-box;
+}
+.iwtp-input:focus {
+    border-color: var(--border-accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+/* Primary CTA button */
+.iwtp-btn {
+    width: 100%;
+    padding: 0.9rem 1rem;
+    border: none;
+    border-radius: 0.75rem;
+    background: var(--accent);
+    color: #000;
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-style: italic;
+    font-size: 1rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.12s;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 1.5rem var(--accent-dim);
+}
+.iwtp-btn:active { transform: scale(0.97); opacity: 0.88; }
+.iwtp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Player list for existing player pick */
+.iwtp-player-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 14rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.iwtp-player-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.7rem 0.875rem;
+    border-radius: 0.625rem;
+    border: 1.5px solid var(--border);
+    background: var(--bg2);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+    font-family: var(--font-body);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text);
+    text-align: left;
+    width: 100%;
+}
+.iwtp-player-chip:hover  { border-color: var(--border-accent); background: var(--accent-dim); }
+.iwtp-player-chip:active { transform: scale(0.97); }
+
+.iwtp-empty {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    padding: 1rem 0;
+    line-height: 1.5;
+}
+
+/* Confirmed spectator view */
+.iwtp-confirmed-icon {
+    font-size: 2.5rem;
+    text-align: center;
+    margin-bottom: 0.5rem;
+}
+
+/* =============================================================================
+   RESPONSIVE OVERRIDES — Mobile-first, clean breakpoints
+   ============================================================================= */
+
+/* iPhone SE and smaller */
+@media (max-width: 375px) {
+    h1 { font-size: 2.8rem; }
+    .btn-main { font-size: 0.9rem; }
+    #nextRoundBtn { font-size: 1rem; padding: 0.875rem 1rem; }
+    .match-card { border-radius: 12px; }
+    .iwtp-inner { padding: 1.25rem 1rem calc(1.25rem + var(--safe-bottom)); }
+}
+
+/* Tablet (768px+) — two-column match grid */
+@media (min-width: 768px) {
+    #matchContainer {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+    }
+    .athlete-grid .player-chip {
+        flex-basis: calc(20% - 0.4rem);
+    }
+    .nav-bar {
+        padding: 0.875rem 1.5rem calc(0.875rem + var(--safe-bottom));
+    }
+    #nextRoundBtn {
+        font-size: 1.2rem;
+    }
+}
+
+/* Desktop / iPad Pro (1024px+) */
+@media (min-width: 1024px) {
+    .app-container { max-width: 680px; }
+    #matchContainer { grid-template-columns: repeat(3, 1fr); gap: 1.25rem; }
+    .athlete-grid .player-chip { flex-basis: calc(16.666% - 0.42rem); }
 }
