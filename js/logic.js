@@ -58,6 +58,7 @@ function processAndNext() {
 }
 
 function applyELOResults() {
+    // Players sitting out this round gain a wait round (handled in generateMatches)
     currentMatches.forEach(m => {
         const winIdx  = m.winnerTeamIndex;
         const loseIdx = winIdx === 0 ? 1 : 0;
@@ -89,6 +90,14 @@ function applyELOResults() {
 // MATCH GENERATION
 // ---------------------------------------------------------------------------
 
+/**
+ * FAIRNESS ENGINE — generateMatches()
+ * Priority order for who plays next:
+ * 1. Longest wait (highest waitRounds — rounds sitting out)
+ * 2. Fewest games played this session (sessionPlayCount)
+ * 3. Slight random shuffle to prevent predictability
+ * Teams are then balanced by ELO (snake draft: 1&4 vs 2&3).
+ */
 function generateMatches() {
     const pool = squad.filter(p => p.active);
     if (pool.length < 4) {
@@ -99,15 +108,36 @@ function generateMatches() {
     currentMatches = [];
     document.getElementById('matchContainer').innerHTML = '';
 
-    const available = [...pool].sort(
-        (a, b) => a.sessionPlayCount - b.sessionPlayCount || Math.random() - 0.5
-    );
+    // Increment waitRounds for everyone — playing will reset it
+    pool.forEach(p => { p.waitRounds = (p.waitRounds || 0) + 1; });
+
+    // Sort by fairness: most wait first, then fewest games, then random
+    const available = [...pool].sort((a, b) => {
+        const waitDiff = (b.waitRounds || 0) - (a.waitRounds || 0);
+        if (waitDiff !== 0) return waitDiff;
+        const gamesDiff = a.sessionPlayCount - b.sessionPlayCount;
+        if (gamesDiff !== 0) return gamesDiff;
+        return Math.random() - 0.5;
+    });
+
     const courtCount = Math.floor(available.length / 4);
+    const playing    = available.slice(0, courtCount * 4);
+    const sitting    = available.slice(courtCount * 4);
+
+    // Players who will play get waitRounds reset
+    playing.forEach(p => { p.waitRounds = 0; });
+
+    // Pre-calculate "Next Up" for the bench — who's most likely next round
+    const nextUp = [...sitting, ...pool.filter(p => !playing.includes(p))]
+        .sort((a, b) => (b.waitRounds || 0) - (a.waitRounds || 0) || a.sessionPlayCount - b.sessionPlayCount)
+        .slice(0, 4);
+    updateNextUpTicker(nextUp);
 
     const matchData = [];
     for (let i = 0; i < courtCount; i++) {
-        const p4 = available.splice(0, 4);
+        const p4 = playing.splice(0, 4);
         p4.forEach(p => p.sessionPlayCount++);
+        // Snake draft ELO balance: sort by rating, pair 1&4 vs 2&3
         p4.sort((a, b) => b.rating - a.rating);
 
         const tA   = [p4[0], p4[3]];
@@ -126,7 +156,6 @@ function generateMatches() {
     checkNextButtonState();
     renderSquad();
     saveToDisk();
-    // Haptic: medium bump to signal round is live
     Haptic.bump();
 }
 

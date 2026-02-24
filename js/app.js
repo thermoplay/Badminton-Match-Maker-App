@@ -853,25 +853,22 @@ function updateIWTPVisibility() {
 
 async function submitIWantToPlay() {
     const input  = document.getElementById('iwtpNameInput');
-    const status = document.getElementById('iwtpStatus');
     const name   = (input?.value || '').trim();
 
     if (!name) {
-        status.textContent  = 'Please enter your name.';
-        status.style.display = 'block';
-        status.className    = 'iwtp-status iwtp-error';
+        showIWTPStatus('Please enter your name.', 'error');
+        return;
+    }
+    if (!currentRoomCode) {
+        showIWTPStatus('Not connected to a session.', 'error');
         return;
     }
 
-    if (!currentRoomCode) {
-        status.textContent  = 'Not connected to a session.';
-        status.style.display = 'block';
-        status.className    = 'iwtp-status iwtp-error';
-        return;
-    }
+    const btn = document.querySelector('.iwtp-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     try {
-        const res = await fetch('/api/play-request', {
+        const res  = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ room_code: currentRoomCode, name }),
@@ -879,33 +876,79 @@ async function submitIWantToPlay() {
         const data = await res.json();
 
         if (res.ok) {
-            status.textContent   = `✅ Request sent! The host will add you soon.`;
-            status.style.display = 'block';
-            status.className     = 'iwtp-status iwtp-success';
-            input.value          = '';
-            input.disabled       = true;
-            document.querySelector('.iwtp-btn').disabled = true;
+            // Collapse form — replace with status message
+            const form = document.getElementById('iwtpForm');
+            if (form) form.style.display = 'none';
+            showIWTPStatus(`⏳ Request sent! Waiting for host approval…`, 'pending');
             Haptic.success();
         } else {
             throw new Error(data.error || 'Failed');
         }
     } catch (e) {
-        status.textContent  = 'Could not send request. Try again.';
-        status.style.display = 'block';
-        status.className    = 'iwtp-status iwtp-error';
+        if (btn) { btn.disabled = false; btn.textContent = 'Send Request'; }
+        showIWTPStatus('Could not send request. Try again.', 'error');
         Haptic.error();
     }
 }
 
+function showIWTPStatus(msg, type) {
+    const el = document.getElementById('iwtpStatus');
+    if (!el) return;
+    el.textContent   = msg;
+    el.style.display = 'block';
+    el.className     = `iwtp-status iwtp-${type}`;
+}
+
+/**
+ * Smart recognition — if spectator's name is already in squad,
+ * show contextual buttons instead of the join form.
+ */
+function checkIWTPSmartRecognition() {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet || !isOnlineSession || isOperator) return;
+
+    const savedName = localStorage.getItem('cs_spectator_name');
+    const inSquad   = savedName && squad.find(p => p.name.toLowerCase() === savedName.toLowerCase());
+
+    const smartView  = document.getElementById('iwtpSmartView');
+    const form       = document.getElementById('iwtpForm');
+    const knownName  = document.getElementById('iwtpKnownName');
+
+    if (inSquad && smartView && form && knownName) {
+        knownName.textContent = inSquad.name;
+        form.style.display      = 'none';
+        smartView.style.display = 'block';
+    } else if (smartView && form) {
+        form.style.display      = 'block';
+        smartView.style.display = 'none';
+    }
+}
+
+// Save name locally after submission for smart recognition next time
+const _origSubmit = submitIWantToPlay;
+
 /**
  * Host: poll for pending play requests and show badge.
  */
+let _lastSeenRequestIds = new Set();
+
 async function pollPlayRequests() {
     if (!isOnlineSession || !isOperator || !currentRoomCode) return;
     try {
         const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}`);
         const data = await res.json();
-        playRequests = data.requests || [];
+        const incoming = data.requests || [];
+        playRequests = incoming;
+
+        // Detect NEW requests not seen before — trigger notification
+        incoming.forEach(r => {
+            if (!_lastSeenRequestIds.has(r.id)) {
+                _lastSeenRequestIds.add(r.id);
+                showJoinNotification(r.name, r.id);
+            }
+        });
+
+        // Update badge count
         const badge = document.getElementById('playRequestsBadge');
         const count = document.getElementById('playRequestsCount');
         if (badge && count) {
@@ -913,6 +956,67 @@ async function pollPlayRequests() {
             count.textContent   = playRequests.length;
         }
     } catch { /* silent */ }
+}
+
+/**
+ * High-visibility slide-down notification for new join requests.
+ * Stacks if multiple arrive — each one queues and shows in sequence.
+ */
+const _notifQueue = [];
+let   _notifShowing = false;
+
+function showJoinNotification(name, id) {
+    _notifQueue.push({ name, id });
+    if (!_notifShowing) processNotifQueue();
+}
+
+function processNotifQueue() {
+    if (_notifQueue.length === 0) { _notifShowing = false; return; }
+    _notifShowing = true;
+
+    const { name, id } = _notifQueue.shift();
+    const notif = document.getElementById('joinNotification');
+    const nameEl = document.getElementById('joinNotifName');
+    if (!notif || !nameEl) return;
+
+    nameEl.textContent = name;
+    notif.dataset.id   = id;
+    notif.dataset.name = name;
+    notif.classList.add('show');
+    Haptic.bump();
+
+    // Auto-dismiss after 12s if no action
+    const timer = setTimeout(() => dismissJoinNotification(), 12000);
+    notif._timer = timer;
+}
+
+function dismissJoinNotification() {
+    const notif = document.getElementById('joinNotification');
+    if (!notif) return;
+    clearTimeout(notif._timer);
+    notif.classList.remove('show');
+    setTimeout(processNotifQueue, 400); // wait for slide-out animation
+}
+
+async function notifApprove() {
+    const notif = document.getElementById('joinNotification');
+    const name  = notif?.dataset.name;
+    const id    = notif?.dataset.id;
+    if (name && id) {
+        await approvePlayRequest(name, id);
+        _lastSeenRequestIds.delete(id);
+    }
+    dismissJoinNotification();
+}
+
+async function notifDecline() {
+    const notif = document.getElementById('joinNotification');
+    const id    = notif?.dataset.id;
+    if (id) {
+        await denyPlayRequest(id);
+        _lastSeenRequestIds.delete(id);
+    }
+    dismissJoinNotification();
 }
 
 function showPlayRequests() {
@@ -966,3 +1070,33 @@ const _startPolling = () => {
     pollPlayRequests();
     setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
 };
+
+// ---------------------------------------------------------------------------
+// NEXT UP TICKER
+// ---------------------------------------------------------------------------
+
+function updateNextUpTicker(players) {
+    const ticker = document.getElementById('nextUpTicker');
+    if (!ticker) return;
+    if (!players || players.length === 0) {
+        ticker.style.display = 'none';
+        return;
+    }
+    ticker.style.display = 'flex';
+    document.getElementById('nextUpNames').textContent =
+        players.map(p => p.name.toUpperCase()).join('  ·  ');
+}
+
+// ---------------------------------------------------------------------------
+// NEXT UP TICKER — sync update for spectators
+// ---------------------------------------------------------------------------
+
+function updateIWTPVisibility() {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet) return;
+    const show = isOnlineSession && !isOperator;
+    sheet.style.display = show ? 'flex' : 'none';
+    if (show) {
+        checkIWTPSmartRecognition();
+    }
+}

@@ -2314,3 +2314,182 @@ header {
 }
 
 .pr-deny-btn:hover { border-color: #ef4444; color: #ef4444; }
+
+/* =============================================================================
+   HIGH-VISIBILITY JOIN NOTIFICATION
+   ============================================================================= */
+
+.join-notif {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 9000;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    transform: translateY(-110%);
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.join-notif.show {
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.join-notif-inner {
+    width: 100%;
+    max-width: 480px;
+    background: linear-gradient(135deg, #0a1a12, #0d1f0d);
+    border-bottom: 2px solid var(--accent);
+    border-left: 1px solid rgba(0,255,163,0.3);
+    border-right: 1px solid rgba(0,255,163,0.3);
+    padding: 18px 20px 16px;
+    box-shadow: 0 10px 40px rgba(0,255,163,0.2), 0 4px 20px rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.join-notif-label {
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 900;
+    letter-spacing: 4px;
+    color: var(--accent);
+    text-transform: uppercase;
+    opacity: 0.8;
+}
+
+.join-notif-name {
+    font-family: var(--font-display);
+    font-size: 1.6rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #fff;
+    text-shadow: 0 0 30px rgba(0,255,163,0.4);
+    line-height: 1;
+}
+
+.join-notif-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    width: 100%;
+}
+
+.join-notif-approve {
+    flex: 1;
+    padding: 12px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #000;
+    font-family: var(--font-display);
+    font-size: 0.85rem;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.15s;
+}
+
+.join-notif-approve:active { transform: scale(0.96); }
+
+.join-notif-decline {
+    flex: 1;
+    padding: 12px;
+    border: 1.5px solid rgba(239,68,68,0.4);
+    border-radius: 10px;
+    background: rgba(239,68,68,0.08);
+    color: #ef4444;
+    font-family: var(--font-display);
+    font-size: 0.85rem;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.join-notif-decline:hover { background: rgba(239,68,68,0.15); }
+.join-notif-decline:active { transform: scale(0.96); }
+
+/* =============================================================================
+   NEXT UP TICKER
+   ============================================================================= */
+
+.next-up-ticker {
+    position: fixed;
+    bottom: calc(74px + var(--safe-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(10,10,15,0.92);
+    border: 1px solid rgba(0,255,163,0.25);
+    border-radius: 20px;
+    padding: 7px 16px;
+    z-index: 2500;
+    backdrop-filter: blur(10px);
+    white-space: nowrap;
+    max-width: calc(100vw - 32px);
+    overflow: hidden;
+    animation: badgeIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.next-up-label {
+    font-family: var(--font-display);
+    font-size: 0.55rem;
+    font-weight: 900;
+    letter-spacing: 3px;
+    color: var(--accent);
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.next-up-names {
+    font-family: var(--font-display);
+    font-size: 0.65rem;
+    font-weight: 900;
+    font-style: italic;
+    color: rgba(255,255,255,0.7);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* =============================================================================
+   IWTP — SMART VIEW & SECONDARY BUTTON
+   ============================================================================= */
+
+.iwtp-known-msg {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    text-align: center;
+    line-height: 1.4;
+}
+
+.iwtp-known-msg strong {
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-style: italic;
+}
+
+.iwtp-btn-secondary {
+    background: var(--surface2) !important;
+    color: var(--text) !important;
+    border: 1.5px solid var(--border);
+}
+
+.iwtp-status.iwtp-pending {
+    background: rgba(96,165,250,0.1);
+    color: #60a5fa;
+    border: 1px solid rgba(96,165,250,0.3);
+}

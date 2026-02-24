@@ -250,6 +250,8 @@ function applyRemoteState(session) {
     renderSavedMatches();
     checkNextButtonState();
     updateUndoButton();
+    // Update spectator-specific UI
+    if (typeof checkIWTPSmartRecognition === 'function') checkIWTPSmartRecognition();
     if (currentMatches.length > 0 && currentMatches.length !== prevCount) Haptic.bump();
 }
 

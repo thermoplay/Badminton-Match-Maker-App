@@ -164,17 +164,51 @@
         </div>
     </div>
 
+    <!-- Host: High-visibility join notification banner -->
+    <div id="joinNotification" class="join-notif">
+        <div class="join-notif-inner">
+            <div class="join-notif-label">🏀 WANTS TO PLAY</div>
+            <div class="join-notif-name" id="joinNotifName"></div>
+            <div class="join-notif-actions">
+                <button class="join-notif-approve" onclick="notifApprove()">✓ Approve</button>
+                <button class="join-notif-decline" onclick="notifDecline()">✕ Decline</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Next Up Ticker (spectator + host) -->
+    <div id="nextUpTicker" class="next-up-ticker" style="display:none;">
+        <span class="next-up-label">NEXT UP</span>
+        <span class="next-up-names" id="nextUpNames"></span>
+    </div>
+
     <!-- Spectator "I Want to Play" Sheet -->
     <div id="iwantToPlaySheet" style="display:none;" class="iwtp-sheet">
         <div class="iwtp-inner">
             <div class="iwtp-title">🏀 I Want to Play</div>
             <div class="iwtp-subtitle">Let the host know you're ready to join</div>
-            <input type="text" id="iwtpNameInput"
-                placeholder="Enter your name..."
-                class="iwtp-input"
-                autocomplete="off" autocorrect="off" autocapitalize="words"
-                maxlength="30">
-            <button class="iwtp-btn" onclick="submitIWantToPlay()">Send Request</button>
+
+            <!-- Smart view: shown if name already in squad -->
+            <div id="iwtpSmartView" style="display:none;">
+                <div class="iwtp-known-msg">
+                    Welcome back, <strong id="iwtpKnownName"></strong>!
+                </div>
+                <button class="iwtp-btn" onclick="window.scrollTo(0,0)">👁 View Live Match</button>
+                <button class="iwtp-btn iwtp-btn-secondary" style="margin-top:8px;"
+                    onclick="submitIWantToPlay()">🏀 Request to Join Rotation</button>
+            </div>
+
+            <!-- Normal join form -->
+            <div id="iwtpForm">
+                <input type="text" id="iwtpNameInput"
+                    placeholder="Enter your name..."
+                    class="iwtp-input"
+                    autocomplete="off" autocorrect="off" autocapitalize="words"
+                    maxlength="30"
+                    oninput="localStorage.setItem('cs_spectator_name', this.value.trim())">
+                <button class="iwtp-btn" onclick="submitIWantToPlay()">Send Request</button>
+            </div>
+
             <div id="iwtpStatus" class="iwtp-status" style="display:none;"></div>
         </div>
     </div>
