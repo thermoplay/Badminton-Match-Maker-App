@@ -227,16 +227,16 @@ input:focus {
    PLAYER GRID & CHIPS
    --------------------------------------------------------------------------- */
 .athlete-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    justify-content: center;
-    align-items: flex-start;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 10px;
+    width: 100%;
 }
 .athlete-grid .player-chip {
-    flex: 1 1 auto;
-    min-width: 80px;
-    max-width: none;
+    width: 100%;
+    flex: unset;
+    min-width: unset;
+    max-width: unset;
 }
 
 .player-chip {
@@ -2960,7 +2960,7 @@ button:active,
         grid-template-columns: 1fr 1fr;
         gap: 1rem;
     }
-    .athlete-grid .player-chip { flex: 0 1 calc(20% - 0.4rem); }
+    /* athlete-grid is CSS grid — no flex overrides needed */
     .next-up-ticker { bottom: calc(5.5rem + var(--safe-bottom)); }
 }
 
@@ -2968,6 +2968,6 @@ button:active,
 @media (min-width: 1024px) {
     .app-container { max-width: 900px; }
     #matchContainer { grid-template-columns: repeat(3, 1fr); gap: 1.25rem; }
-    .athlete-grid .player-chip { flex: 0 1 calc(16.5% - 0.42rem); }
+    /* athlete-grid is CSS grid — no flex overrides needed */
     #nextRoundBtn { max-width: 480px; font-size: 1.25rem; }
 }
