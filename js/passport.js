@@ -292,3 +292,218 @@ const VictoryCard = {
         }
     },
 };
+
+// =============================================================================
+// PLAYER MODE — boot controller for ?role=player
+// =============================================================================
+
+const PlayerMode = {
+
+    _joinCode: null,
+    _pollTimer: null,
+
+    /**
+     * Entry point. Called from the boot script when role=player is detected.
+     * @param {object} passport  — existing or newly created passport
+     * @param {string} joinCode  — room code from ?join= param, or null
+     */
+    async boot(passport, joinCode) {
+        this._joinCode = joinCode;
+
+        // Populate identity fields immediately from localStorage
+        this._renderIdentity(passport);
+        this._renderStats(passport);
+
+        // Tag session code in the top pill
+        const codeEl = document.getElementById('slSessionCode');
+        if (codeEl && joinCode) codeEl.textContent = joinCode;
+
+        if (joinCode) {
+            // Auto-join the session as a player
+            await this._joinSession(passport, joinCode);
+        } else {
+            // No room code — prompt for one
+            this._promptForCode(passport);
+        }
+    },
+
+    // ── Private helpers ─────────────────────────────────────────────────────
+
+    _renderIdentity(passport) {
+        const nameEl   = document.getElementById('slPassportName');
+        const avatarEl = document.getElementById('slPassportAvatar');
+        if (nameEl)   nameEl.textContent   = passport.playerName || 'Tap to set name';
+        if (avatarEl) avatarEl.textContent = (passport.playerName || '?').charAt(0).toUpperCase();
+    },
+
+    _renderStats(passport) {
+        const wins  = document.getElementById('slPrivateWins');
+        const games = document.getElementById('slPrivateGames');
+        const wr    = document.getElementById('slPrivateWR');
+        if (wins)  wins.textContent  = passport.privateLifetimeWins  || 0;
+        if (games) games.textContent = passport.privateTotalGames     || 0;
+        if (wr)    wr.textContent    = Passport.winRate()             || '—';
+    },
+
+    setStatus(state, text, sub) {
+        const card   = document.getElementById('slStatusCard');
+        const icon   = document.getElementById('slStatusIcon');
+        const textEl = document.getElementById('slStatusText');
+        const subEl  = document.getElementById('slStatusSub');
+
+        const icons = {
+            pending:  '⏳',
+            'on-deck':'🟡',
+            playing:  '🟢',
+            resting:  '🔵',
+            approved: '✅',
+        };
+
+        if (card)   card.dataset.state   = state;
+        if (icon)   icon.textContent     = icons[state] || '⏳';
+        if (textEl) textEl.textContent   = text;
+        if (subEl)  subEl.textContent    = sub || '';
+    },
+
+    async _joinSession(passport, joinCode) {
+        this.setStatus('pending', 'Joining session…', 'Connecting to ' + joinCode);
+
+        try {
+            // Use the existing sync.js joinOnlineSession which handles Supabase
+            if (typeof joinOnlineSession === 'function') {
+                await joinOnlineSession(joinCode);
+            }
+
+            // If passport has no name yet, ask for one before requesting
+            let name = passport.playerName;
+            if (!name) {
+                name = await this._promptName();
+                if (!name) return;
+                Passport.rename(name);
+                this._renderIdentity(Passport.get());
+            }
+
+            // Send join request to host with UUID
+            const res = await fetch('/api/play-request', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    room_code:   joinCode,
+                    name:        name,
+                    player_uuid: passport.playerUUID,
+                }),
+            });
+
+            if (res.ok) {
+                this.setStatus('pending',
+                    'Request sent!',
+                    'Waiting for host to approve you…'
+                );
+                // Start polling for win signals + state updates
+                this._startPolling(joinCode, passport);
+            } else {
+                this.setStatus('pending', 'Could not join', 'Check the room code and try again');
+            }
+        } catch(e) {
+            this.setStatus('pending', 'Connection failed', 'Make sure you have internet access');
+            console.error('[PlayerMode] join failed:', e);
+        }
+    },
+
+    _startPolling(joinCode, passport) {
+        clearInterval(this._pollTimer);
+
+        this._pollTimer = setInterval(async () => {
+            // 1. Refresh match state
+            if (typeof SidelineView !== 'undefined') SidelineView.refresh();
+            this._updateOnDeckStatus(passport);
+
+            // 2. Check for win/loss signal
+            try {
+                const r = await fetch(
+                    `/api/passport-signal?player_uuid=${encodeURIComponent(passport.playerUUID)}&room_code=${encodeURIComponent(joinCode)}`
+                );
+                const d = await r.json();
+                if (d.signal) {
+                    await this._handleSignal(d.signal, passport, joinCode);
+                }
+            } catch { /* silent */ }
+        }, 6000);
+    },
+
+    _updateOnDeckStatus(passport) {
+        if (!window.currentMatches || !window.squad) return;
+        const name    = passport.playerName?.toLowerCase();
+        const playing = window.currentMatches?.some(m =>
+            [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n=>n.toLowerCase()).includes(name)
+        );
+
+        // Check if in squad (approved)
+        const inSquad = window.squad?.some(p => p.name?.toLowerCase() === name);
+
+        // Check Next Up ticker
+        const tickerEl = document.getElementById('nextUpNames');
+        const nextUp   = tickerEl?.textContent || '';
+        const isNext   = name && nextUp.toLowerCase().includes(name);
+
+        if (playing) {
+            this.setStatus('playing', 'You\'re on court!', 'Playing now — give it everything');
+        } else if (isNext) {
+            this.setStatus('on-deck', 'You\'re on deck!', 'Get ready — you\'re up next');
+        } else if (inSquad) {
+            this.setStatus('resting', 'Resting this round', 'Sit tight, your turn is coming');
+        }
+        // else stay as pending/last status
+    },
+
+    async _handleSignal(signal, passport, joinCode) {
+        if (signal.event === 'WIN') {
+            Passport.recordWin();
+            this._renderStats(Passport.get());
+            VictoryCard.show(passport.playerName);
+        } else if (signal.event === 'LOSS') {
+            Passport.recordLoss();
+            this._renderStats(Passport.get());
+        }
+        // Acknowledge
+        await fetch('/api/passport-signal', {
+            method:  'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ player_uuid: passport.playerUUID, room_code: joinCode }),
+        }).catch(() => {});
+    },
+
+    _promptName() {
+        return new Promise(resolve => {
+            const name = prompt('Enter your name to join:');
+            resolve(name ? name.trim() : null);
+        });
+    },
+
+    _promptForCode(passport) {
+        this.setStatus('pending', 'No room code', 'Ask the host for the QR code or room code');
+        // Optionally show an inline input for manual code entry
+        const matchesEl = document.getElementById('slCurrentMatches');
+        if (matchesEl) {
+            matchesEl.innerHTML = `
+                <div class="sl-code-entry">
+                    <div class="sl-code-label">Enter Room Code</div>
+                    <input id="slCodeInput" class="sl-code-input" placeholder="XXXX-XXXX"
+                        autocomplete="off" autocapitalize="characters" maxlength="9">
+                    <button class="sl-code-btn" onclick="PlayerMode._manualJoin()">Join →</button>
+                </div>
+            `;
+        }
+    },
+
+    async _manualJoin() {
+        const input = document.getElementById('slCodeInput');
+        const code  = (input?.value || '').trim().toUpperCase();
+        if (!code) return;
+        const passport = Passport.get();
+        // Restore matches area
+        const matchesEl = document.getElementById('slCurrentMatches');
+        if (matchesEl) matchesEl.innerHTML = '<div class="sl-empty">Connecting…</div>';
+        await this._joinSession(passport, code);
+    },
+};

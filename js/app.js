@@ -334,7 +334,7 @@ function showOverlay(type) {
 
         if (isOnlineSession) {
             // QR encodes the full join URL so scanning opens the app and auto-joins
-            const joinUrl = `${window.location.origin}${window.location.pathname}?join=${currentRoomCode}`;
+            const joinUrl = `${window.location.origin}${window.location.pathname}?join=${currentRoomCode}&role=player`;
             QRCode.toCanvas(document.getElementById('qrCanvas'), joinUrl, {
                 width: 200, margin: 2,
                 color: { dark: '#000000', light: '#ffffff' }

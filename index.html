@@ -30,6 +30,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
+    <!-- #hostRoot: hidden when ?role=player is in URL -->
+    <div id="hostRoot">
     <div class="app-container">
         <header>
             <div class="subtitle">Matchmaking Made Easy</div>
@@ -63,7 +65,10 @@
         <div style="height: 40px;"></div>
     </div>
 
-    <nav class="nav-bar">
+    </div><!-- /.app-container -->
+    </div><!-- /#hostRoot -->
+
+    <nav class="nav-bar" id="hostNav">
         <button class="btn-icon" onclick="showOverlay('sync')" aria-label="Sync">📲</button>
         <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()">Next Round</button>
         <button class="btn-icon undo-btn" id="undoRoundBtn" onclick="undoLastRound()" aria-label="Undo" style="display:none;">
@@ -257,58 +262,84 @@
     </div>
 
     <!-- ═══ PLAYER SIDELINE VIEW ═══════════════════════════════════════════════ -->
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         PLAYER SIDELINE VIEW
+         Rendered when: URL contains ?role=player  OR  SidelineView.show()
+         #hostRoot + #hostNav are hidden when this view is active.
+         ═══════════════════════════════════════════════════════════════════════ -->
     <div id="sidelinePanel" style="display:none;" class="sl-panel">
         <div class="sl-inner">
 
-            <!-- Header -->
-            <div class="sl-header">
+            <!-- ── TOP BAR ──────────────────────────────────────────────── -->
+            <div class="sl-topbar">
                 <div class="sl-logo">THE COURT<span>SIDE</span></div>
-                <div class="sl-session-tag" id="slSessionTag"></div>
+                <div class="sl-live-pill" id="slSessionTag">
+                    <span class="sl-live-dot"></span>
+                    <span id="slSessionCode">LIVE</span>
+                </div>
             </div>
 
-            <!-- Passport identity -->
+            <!-- ── ON DECK STATUS ────────────────────────────────────────── -->
+            <!-- States: pending | on-deck | playing | resting              -->
+            <div class="sl-status-card" id="slStatusCard" data-state="pending">
+                <div class="sl-status-lhs">
+                    <div class="sl-status-icon" id="slStatusIcon">⏳</div>
+                </div>
+                <div class="sl-status-rhs">
+                    <div class="sl-status-label">STATUS</div>
+                    <div class="sl-status-text" id="slStatusText">Waiting for approval</div>
+                    <div class="sl-status-sub"  id="slStatusSub">The host will add you to the rotation</div>
+                </div>
+            </div>
+
+            <!-- ── IDENTITY ──────────────────────────────────────────────── -->
             <div class="sl-identity">
-                <div class="sl-avatar" id="slPassportAvatar"></div>
+                <div class="sl-avatar" id="slPassportAvatar">?</div>
                 <div class="sl-identity-text">
-                    <div class="sl-passport-name" id="slPassportName"></div>
+                    <div class="sl-passport-name" id="slPassportName">—</div>
                     <button class="sl-rename-btn" onclick="passportRename()">✏️ Edit name</button>
                 </div>
             </div>
 
-            <!-- Live matches -->
-            <div class="sl-section-label">LIVE NOW</div>
-            <div id="slCurrentMatches" class="sl-matches"></div>
+            <!-- ── LIVE MATCHES ───────────────────────────────────────────── -->
+            <div class="sl-section-label">
+                <span class="sl-dot-accent"></span>LIVE NOW
+            </div>
+            <div id="slCurrentMatches" class="sl-matches">
+                <div class="sl-empty">No active round yet</div>
+            </div>
 
-            <!-- Next up -->
+            <!-- ── NEXT UP ────────────────────────────────────────────────── -->
             <div class="sl-next-up" id="slNextUpRow" style="display:none;">
                 <span class="sl-next-up-label">NEXT UP</span>
                 <span class="sl-next-up-names" id="slNextUp"></span>
             </div>
 
-            <!-- Private stats — visible only to this player -->
-            <div class="sl-section-label" style="margin-top:auto; padding-top:1.5rem;">
-                YOUR PRIVATE STATS
-                <span class="sl-private-badge">🔒 Only you can see this</span>
+            <!-- ── PRIVATE STATS ──────────────────────────────────────────── -->
+            <div class="sl-section-label sl-section-private">
+                <span class="sl-dot-lock">🔒</span>PRIVATE STATS
+                <span class="sl-private-badge">Only you can see this</span>
             </div>
-            <div class="sl-stats-row">
-                <div class="sl-stat">
+            <div class="sl-stats-grid">
+                <div class="sl-stat-card">
                     <div class="sl-stat-val" id="slPrivateWins">0</div>
-                    <div class="sl-stat-label">Lifetime Wins</div>
+                    <div class="sl-stat-label">Wins</div>
                 </div>
-                <div class="sl-stat-divider"></div>
-                <div class="sl-stat">
+                <div class="sl-stat-card">
                     <div class="sl-stat-val" id="slPrivateGames">0</div>
-                    <div class="sl-stat-label">Total Games</div>
+                    <div class="sl-stat-label">Games</div>
                 </div>
-                <div class="sl-stat-divider"></div>
-                <div class="sl-stat">
+                <div class="sl-stat-card">
                     <div class="sl-stat-val" id="slPrivateWR">—</div>
                     <div class="sl-stat-label">Win Rate</div>
                 </div>
             </div>
-            <div class="sl-privacy-note">Stats stored only on this device. Never shared.</div>
-        </div>
-    </div>
+            <div class="sl-privacy-note">
+                Stored on this device only. Never sent to host or other players.
+            </div>
+
+        </div><!-- /.sl-inner -->
+    </div><!-- /#sidelinePanel -->
 
     <!-- ═══ VICTORY CARD OVERLAY ════════════════════════════════════════════════ -->
     <div id="victoryCardOverlay" style="display:none;" class="victory-overlay">
@@ -354,11 +385,45 @@
     <script src="js/logic.js"></script>
     <script src="js/sync.js"></script>
     <script>
-        // After local state loads, try to reconnect to any active online session
+        // ── URL-BASED CONDITIONAL RENDERING ──────────────────────────────────
+        // Runs synchronously before paint so there's zero flash of host UI.
+        (function() {
+            const params = new URLSearchParams(window.location.search);
+            const role   = params.get('role');
+            if (role === 'player') {
+                // Mark body immediately — CSS handles the rest
+                document.body.classList.add('player-mode');
+            }
+        })();
+
+        // ── BOOT ─────────────────────────────────────────────────────────────
         const _originalLoad = window.onload;
         window.onload = async function() {
             if (_originalLoad) _originalLoad();
-            await tryAutoRejoin();
+
+            const params   = new URLSearchParams(window.location.search);
+            const role     = params.get('role');
+            const joinCode = params.get('join');
+
+            if (role === 'player') {
+                // ── PLAYER MODE ──
+                // 1. Init or retrieve passport
+                const passport = Passport.init();
+
+                // 2. Hide host shell immediately
+                const hostRoot = document.getElementById('hostRoot');
+                const hostNav  = document.getElementById('hostNav');
+                if (hostRoot) hostRoot.style.display = 'none';
+                if (hostNav)  hostNav.style.display  = 'none';
+
+                // 3. Show sideline panel right away with passport data
+                SidelineView.show();
+                PlayerMode.boot(passport, joinCode);
+
+            } else {
+                // ── HOST / SPECTATOR MODE ──
+                await tryAutoRejoin();
+            }
         };
     </script>
 </body>
