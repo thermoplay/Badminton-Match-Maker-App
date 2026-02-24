@@ -250,7 +250,6 @@ function applyRemoteState(session) {
     renderSavedMatches();
     checkNextButtonState();
     updateUndoButton();
-    renderCheckinView();
     if (currentMatches.length > 0 && currentMatches.length !== prevCount) Haptic.bump();
 }
 
@@ -446,22 +445,6 @@ function updateSpectatorCount(count) {
 }
 
 // ---------------------------------------------------------------------------
-// SPECTATOR CHECK-IN VIEW
-// Rendered inside a fixed bottom sheet visible only to spectators
-// ---------------------------------------------------------------------------
-
-function showCheckinSheet() {
-    let sheet = document.getElementById('checkinSheet');
-    if (!sheet) return;
-    sheet.style.display = 'flex';
-    renderCheckinView();
-}
-
-function hideCheckinSheet() {
-    const sheet = document.getElementById('checkinSheet');
-    if (sheet) sheet.style.display = 'none';
-}
-
 // Override updateSessionUI to also handle spectator UI and count badge
 const _originalUpdateSessionUI = updateSessionUI;
 updateSessionUI = function() {
@@ -478,13 +461,6 @@ updateSessionUI = function() {
             const badge = document.getElementById('sessionBadge');
             if (badge) badge.appendChild(countEl);
         }
-    }
-
-    // Check-in sheet — shown to spectators only
-    const sheet = document.getElementById('checkinSheet');
-    if (sheet) {
-        sheet.style.display = (isOnlineSession && !isOperator) ? 'flex' : 'none';
-        if (isOnlineSession && !isOperator) renderCheckinView();
     }
 
     // Register spectator presence

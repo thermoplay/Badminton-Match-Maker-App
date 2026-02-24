@@ -99,13 +99,14 @@ function addPlayer() {
 
 function editPlayerName() {
     const p = squad[selectedPlayerIndex];
+    const oldName = p.name; // capture BEFORE rename
     const newName = prompt('Edit Name:', p.name);
     if (newName && newName.trim()) {
         p.name = newName.trim();
-        // Also update name references inside currentMatches
+        // Update name references in currentMatches using oldName
         currentMatches.forEach(m => {
             m.teams = m.teams.map(team =>
-                team.map(n => (n === p.name ? p.name : n))
+                team.map(n => (n === oldName ? p.name : n))
             );
         });
         closeMenu();
@@ -597,37 +598,6 @@ function renderStatsTab(tab) {
  * Displays all squad members — tap to toggle active/resting for this session.
  * Changes are pushed to Supabase so the host sees them live.
  */
-function renderCheckinView() {
-    const container = document.getElementById('checkinContainer');
-    if (!container) return;
-
-    if (squad.length === 0) {
-        container.innerHTML = `
-            <p style="text-align:center; color:var(--text-muted); font-size:0.85rem; padding:20px 0;">
-                No players added yet. Ask the host to add players first.
-            </p>`;
-        return;
-    }
-
-    container.innerHTML = squad.map((p, i) => `
-        <div class="checkin-chip ${p.active ? 'checkin-active' : 'checkin-resting'}"
-             onclick="toggleCheckin(${i})">
-            ${Avatar.html(p.name)}
-            <span class="chip-name">${escapeHTML(p.name)}</span>
-            <span class="checkin-status">${p.active ? '✓ In' : 'Out'}</span>
-        </div>
-    `).join('');
-}
-
-async function toggleCheckin(idx) {
-    squad[idx].active = !squad[idx].active;
-    renderCheckinView();
-    renderSquad();
-    saveToDisk();
-    // Push to Supabase so host sees the roster update live
-    if (typeof pushStateToSupabase === 'function') pushStateToSupabase();
-    Haptic.tap();
-}
 
 // ---------------------------------------------------------------------------
 // PLAYER CARDS
