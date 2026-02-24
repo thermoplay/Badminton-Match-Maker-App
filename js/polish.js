@@ -60,24 +60,26 @@ const Confetti = (() => {
      * @param {number} originY - Y coordinate (pixels from top)
      * @param {number} count   - Number of particles (default 60)
      */
-    function burst(originX, originY, count = 60) {
+    function burst(originX, originY, count = 70) {
         init();
         for (let i = 0; i < count; i++) {
             const angle  = (Math.random() * Math.PI * 2);
-            const speed  = 3 + Math.random() * 6;
-            const size   = 5 + Math.random() * 6;
+            const speed  = 1.5 + Math.random() * 4.5;   // slower launch speed
+            const size   = 5 + Math.random() * 7;
+            // Mix rectangles and squares for variety
+            const isSquare = Math.random() > 0.6;
             particles.push({
-                x:    originX,
-                y:    originY,
-                vx:   Math.cos(angle) * speed,
-                vy:   Math.sin(angle) * speed - 4, // bias upward
-                rot:  Math.random() * 360,
-                rotV: (Math.random() - 0.5) * 8,
-                w:    size,
-                h:    size * 0.4,
-                color: COLORS[Math.floor(Math.random() * COLORS.length)],
-                life:  1,
-                decay: 0.012 + Math.random() * 0.01,
+                x:      originX,
+                y:      originY,
+                vx:     Math.cos(angle) * speed,
+                vy:     Math.sin(angle) * speed - 3.5, // gentler upward bias
+                rot:    Math.random() * 360,
+                rotV:   (Math.random() - 0.5) * 5,     // slower spin
+                w:      size,
+                h:      isSquare ? size : size * 0.38,
+                color:  COLORS[Math.floor(Math.random() * COLORS.length)],
+                life:   1,
+                decay:  0.006 + Math.random() * 0.006, // much slower decay = longer life
             });
         }
         if (!raf) loop();
@@ -90,8 +92,8 @@ const Confetti = (() => {
         particles.forEach(p => {
             p.x   += p.vx;
             p.y   += p.vy;
-            p.vy  += 0.25;   // gravity
-            p.vx  *= 0.98;   // air resistance
+            p.vy  += 0.12;   // gentler gravity — floats longer
+            p.vx  *= 0.99;   // very light air resistance
             p.rot += p.rotV;
             p.life -= p.decay;
 

@@ -238,12 +238,12 @@ input:focus {
     user-select: none;
     -webkit-user-select: none;
     letter-spacing: 0.2px;
-    animation: chipIn 0.3s ease both;
+    animation: chipIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes chipIn {
-    from { opacity: 0; transform: scale(0.85) translateY(6px); }
-    to   { opacity: 1; transform: scale(1) translateY(0); }
+    from { opacity: 0; transform: scale(0.8) translateY(10px); filter: blur(3px); }
+    to   { opacity: 1; transform: scale(1) translateY(0);      filter: blur(0);   }
 }
 
 .player-chip.active {
@@ -283,7 +283,7 @@ input:focus {
     margin-bottom: 8px;
     overflow: hidden;
     border: 1px solid var(--border);
-    animation: cardDrop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: cardDrop 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
     box-shadow: 0 4px 30px rgba(0,0,0,0.4);
 }
 
@@ -347,8 +347,8 @@ input:focus {
 }
 
 @keyframes cardDrop {
-    from { opacity: 0; transform: translateY(16px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: translateY(24px) scale(0.97); filter: blur(4px); }
+    to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 
 .team-box {
@@ -1278,10 +1278,10 @@ body.spectator-mode::before {
 
 /* Spectator banner at top */
 body.spectator-mode::before {
-    content: '👁  SPECTATOR VIEW  —  READ ONLY';
+    content: '👁  READ ONLY';
     position: fixed;
     top: 0; left: 0; right: 0;
-    background: rgba(96, 165, 250, 0.12);
+    background: rgba(96, 165, 250, 0.1);
     color: #60a5fa;
     font-family: var(--font-display);
     font-size: 0.6rem;
@@ -1291,6 +1291,12 @@ body.spectator-mode::before {
     padding: 7px;
     z-index: 4000;
     border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+    animation: spectatorBannerIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes spectatorBannerIn {
+    from { opacity: 0; transform: translateY(-100%); }
+    to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 
 /* Push content down so banner doesn't overlap header */
@@ -1348,3 +1354,134 @@ body.spectator-mode #teamBuilderModal {
     pointer-events: auto;
     z-index: 2000;
 }
+
+/* =============================================================================
+   ENHANCED INTERACTIONS & ANIMATIONS
+   ============================================================================= */
+
+/* Winner team box — ripple ring on selection */
+.team-box.selected::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--accent);
+    border-radius: inherit;
+    animation: winnerRing 0.5s ease-out both;
+    pointer-events: none;
+}
+
+@keyframes winnerRing {
+    from { opacity: 1;  transform: scale(1);    }
+    to   { opacity: 0;  transform: scale(1.08); }
+}
+
+/* Match card — subtle glow on hover */
+.match-card:hover {
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,255,163,0.08);
+    transition: box-shadow 0.25s ease;
+}
+
+/* Panel entrance animation on page load */
+.panel {
+    animation: panelFadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.panel:nth-child(1) { animation-delay: 0.05s; }
+.panel:nth-child(2) { animation-delay: 0.12s; }
+.panel:nth-child(3) { animation-delay: 0.18s; }
+
+@keyframes panelFadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0);    }
+}
+
+/* Header entrance */
+header {
+    animation: headerIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes headerIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Nav bar entrance */
+.nav-bar {
+    animation: navSlideUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+}
+
+@keyframes navSlideUp {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* Active chip — glow pulse on hover */
+.player-chip.active:hover {
+    box-shadow: 0 0 0 2px rgba(0,255,163,0.3);
+    transform: translateY(-1px);
+    transition: all 0.15s ease;
+}
+
+/* Next round button — breathing glow when active/ready */
+#nextRoundBtn:not([style*="0.2"]) {
+    animation: btnGlow 2.5s ease-in-out infinite;
+}
+
+@keyframes btnGlow {
+    0%, 100% { box-shadow: 0 0 16px rgba(0,255,163,0.25); }
+    50%       { box-shadow: 0 0 32px rgba(0,255,163,0.5);  }
+}
+
+/* Stats card hover lift */
+.stats-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-accent);
+    transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+/* Prob pill transition when odds update */
+.prob-pill {
+    transition: opacity 0.3s ease, background 0.3s ease, color 0.3s ease;
+}
+
+/* Match header — subtle shimmer on new card */
+.match-card .match-header {
+    animation: headerShimmer 0.6s ease both;
+}
+
+@keyframes headerShimmer {
+    0%   { background: rgba(0,255,163,0.08); }
+    100% { background: var(--bg2);           }
+}
+
+/* Session badge — entrance animation */
+.session-badge {
+    animation: badgeIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes badgeIn {
+    from { opacity: 0; transform: scale(0.8) translateX(-10px); }
+    to   { opacity: 1; transform: scale(1)   translateX(0);     }
+}
+
+/* Overlay — richer slide in */
+#overlay {
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Builder sheet — snappier spring */
+.builder-sheet {
+    animation: sheetUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Stagger match cards more noticeably */
+.match-card:nth-child(1) { animation-delay: 0.04s; }
+.match-card:nth-child(2) { animation-delay: 0.10s; }
+.match-card:nth-child(3) { animation-delay: 0.16s; }
+.match-card:nth-child(4) { animation-delay: 0.22s; }
+
+/* Extend chip stagger to 16 players */
+.player-chip:nth-child(13) { animation-delay: 0.26s; }
+.player-chip:nth-child(14) { animation-delay: 0.28s; }
+.player-chip:nth-child(15) { animation-delay: 0.30s; }
+.player-chip:nth-child(16) { animation-delay: 0.32s; }
