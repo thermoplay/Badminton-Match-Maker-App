@@ -232,7 +232,14 @@ function subscribeRealtime(roomCode) {
 
     ws.onerror = () => {};
     ws.onclose = () => {
-        if (isOnlineSession) setTimeout(() => subscribeRealtime(roomCode), 3000);
+        if (isOnlineSession) {
+            showReconnectingIndicator(true);
+            setTimeout(() => {
+                subscribeRealtime(roomCode);
+                // Hide indicator after reconnect attempt
+                setTimeout(() => showReconnectingIndicator(false), 2000);
+            }, 3000);
+        }
     };
 }
 
@@ -240,7 +247,17 @@ function subscribeRealtime(roomCode) {
 // APPLY REMOTE STATE
 // ---------------------------------------------------------------------------
 
+let _lastRemoteUpdate = 0;
+
 function applyRemoteState(session) {
+    // Stale data guard — ignore updates older than the last one we applied
+    const ts = session.last_active ? new Date(session.last_active).getTime() : 0;
+    if (ts > 0 && ts < _lastRemoteUpdate) {
+        console.log('CourtSide: ignoring stale remote update');
+        return;
+    }
+    _lastRemoteUpdate = ts || Date.now();
+
     const prevCount = currentMatches.length;
     squad           = session.squad           || [];
     currentMatches  = session.current_matches || [];
@@ -270,6 +287,18 @@ function leaveSession() {
     localStorage.removeItem('cs_operator_key');
     localStorage.removeItem('cs_op_key_hash');
     updateSessionUI();
+}
+
+function showReconnectingIndicator(show) {
+    let el = document.getElementById('reconnectIndicator');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'reconnectIndicator';
+        el.className = 'reconnect-indicator';
+        el.textContent = '⟳ Reconnecting…';
+        document.body.appendChild(el);
+    }
+    el.classList.toggle('visible', show);
 }
 
 async function endAndDeleteSession() {

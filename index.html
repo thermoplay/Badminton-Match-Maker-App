@@ -182,34 +182,55 @@
         <span class="next-up-names" id="nextUpNames"></span>
     </div>
 
-    <!-- Spectator "I Want to Play" Sheet -->
+    <!-- Spectator Join / Spectate Sheet -->
     <div id="iwantToPlaySheet" style="display:none;" class="iwtp-sheet">
         <div class="iwtp-inner">
-            <div class="iwtp-title">🏀 I Want to Play</div>
-            <div class="iwtp-subtitle">Let the host know you're ready to join</div>
 
-            <!-- Smart view: shown if name already in squad -->
-            <div id="iwtpSmartView" style="display:none;">
-                <div class="iwtp-known-msg">
-                    Welcome back, <strong id="iwtpKnownName"></strong>!
+            <!-- ENTRY CHOICE — shown first -->
+            <div id="iwtpChoiceView">
+                <div class="iwtp-title">👋 Welcome</div>
+                <div class="iwtp-subtitle">How would you like to join?</div>
+                <button class="iwtp-choice-btn iwtp-choice-new" onclick="showIWTPNewPlayer()">
+                    <span class="iwtp-choice-icon">🏀</span>
+                    <span class="iwtp-choice-label">New Player?<br><small>Request to join the squad</small></span>
+                </button>
+                <button class="iwtp-choice-btn iwtp-choice-existing" onclick="showIWTPExisting()">
+                    <span class="iwtp-choice-icon">👤</span>
+                    <span class="iwtp-choice-label">Already a Player?<br><small>Spectate as yourself</small></span>
+                </button>
+            </div>
+
+            <!-- NEW PLAYER FORM -->
+            <div id="iwtpNewPlayerView" style="display:none;">
+                <button class="iwtp-back-btn" onclick="showIWTPChoice()">← Back</button>
+                <div class="iwtp-title">🏀 Request to Join</div>
+                <div id="iwtpForm">
+                    <input type="text" id="iwtpNameInput"
+                        placeholder="Enter your name..."
+                        class="iwtp-input"
+                        autocomplete="off" autocorrect="off" autocapitalize="words"
+                        maxlength="30"
+                        oninput="localStorage.setItem('cs_spectator_name', this.value.trim())">
+                    <button class="iwtp-btn" id="iwtpSendBtn" onclick="submitIWantToPlay()">Send Request</button>
                 </div>
-                <button class="iwtp-btn" onclick="window.scrollTo(0,0)">👁 View Live Match</button>
-                <button class="iwtp-btn iwtp-btn-secondary" style="margin-top:8px;"
-                    onclick="submitIWantToPlay()">🏀 Request to Join Rotation</button>
             </div>
 
-            <!-- Normal join form -->
-            <div id="iwtpForm">
-                <input type="text" id="iwtpNameInput"
-                    placeholder="Enter your name..."
-                    class="iwtp-input"
-                    autocomplete="off" autocorrect="off" autocapitalize="words"
-                    maxlength="30"
-                    oninput="localStorage.setItem('cs_spectator_name', this.value.trim())">
-                <button class="iwtp-btn" onclick="submitIWantToPlay()">Send Request</button>
+            <!-- EXISTING PLAYER LIST -->
+            <div id="iwtpExistingView" style="display:none;">
+                <button class="iwtp-back-btn" onclick="showIWTPChoice()">← Back</button>
+                <div class="iwtp-title">👤 Who are you?</div>
+                <div class="iwtp-subtitle">Pick your name to enter live view</div>
+                <div id="iwtpPlayerList" class="iwtp-player-list"></div>
             </div>
 
-            <div id="iwtpStatus" class="iwtp-status" style="display:none;"></div>
+            <!-- CONFIRMED SPECTATOR VIEW -->
+            <div id="iwtpSpectatorView" style="display:none;">
+                <div class="iwtp-confirmed-icon">👁</div>
+                <div class="iwtp-title" id="iwtpSpectatorName"></div>
+                <div class="iwtp-subtitle">You're watching live — read only</div>
+                <button class="iwtp-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})">View Live Match ↑</button>
+            </div>
+
         </div>
     </div>
 

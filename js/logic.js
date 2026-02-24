@@ -127,10 +127,32 @@ function generateMatches() {
     // Players who will play get waitRounds reset
     playing.forEach(p => { p.waitRounds = 0; });
 
-    // Pre-calculate "Next Up" for the bench — who's most likely next round
-    const nextUp = [...sitting, ...pool.filter(p => !playing.includes(p))]
-        .sort((a, b) => (b.waitRounds || 0) - (a.waitRounds || 0) || a.sessionPlayCount - b.sessionPlayCount)
-        .slice(0, 4);
+    // Pre-calculate "Next Up" — 4 UNIQUE players from bench, by priority
+    // Use index tracking to guarantee no duplicates (fixes "David bug")
+    const benchPool = [...sitting].sort(
+        (a, b) => (b.waitRounds || 0) - (a.waitRounds || 0) || a.sessionPlayCount - b.sessionPlayCount
+    );
+    const nextUpPicked = new Set();
+    const nextUp = [];
+    for (const p of benchPool) {
+        const uid = squad.indexOf(p); // use squad index as unique ID
+        if (!nextUpPicked.has(uid)) {
+            nextUpPicked.add(uid);
+            nextUp.push(p);
+        }
+        if (nextUp.length === 4) break;
+    }
+    // If bench has fewer than 4, fill from playing pool tail (won't overlap — different indices)
+    if (nextUp.length < 4) {
+        for (const p of [...pool].reverse()) {
+            const uid = squad.indexOf(p);
+            if (!nextUpPicked.has(uid)) {
+                nextUpPicked.add(uid);
+                nextUp.push(p);
+            }
+            if (nextUp.length === 4) break;
+        }
+    }
     updateNextUpTicker(nextUp);
 
     const matchData = [];

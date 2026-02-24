@@ -851,81 +851,145 @@ function updateIWTPVisibility() {
     sheet.style.display = (isOnlineSession && !isOperator) ? 'flex' : 'none';
 }
 
+// ---------------------------------------------------------------------------
+// IWTP FLOW CONTROLLERS
+// ---------------------------------------------------------------------------
+
+function showIWTPChoice() {
+    document.getElementById('iwtpChoiceView').style.display      = 'block';
+    document.getElementById('iwtpNewPlayerView').style.display   = 'none';
+    document.getElementById('iwtpExistingView').style.display    = 'none';
+    document.getElementById('iwtpSpectatorView').style.display   = 'none';
+}
+
+function showIWTPNewPlayer() {
+    document.getElementById('iwtpChoiceView').style.display      = 'none';
+    document.getElementById('iwtpNewPlayerView').style.display   = 'block';
+    document.getElementById('iwtpExistingView').style.display    = 'none';
+    document.getElementById('iwtpSpectatorView').style.display   = 'none';
+    Haptic.tap();
+    setTimeout(() => document.getElementById('iwtpNameInput')?.focus(), 100);
+}
+
+function showIWTPExisting() {
+    document.getElementById('iwtpChoiceView').style.display      = 'none';
+    document.getElementById('iwtpNewPlayerView').style.display   = 'none';
+    document.getElementById('iwtpExistingView').style.display    = 'block';
+    document.getElementById('iwtpSpectatorView').style.display   = 'none';
+    Haptic.tap();
+
+    // Populate squad name list
+    const list = document.getElementById('iwtpPlayerList');
+    if (!list) return;
+    if (squad.length === 0) {
+        list.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:16px 0;font-size:0.8rem;">No players yet. Ask the host to add players first.</p>';
+        return;
+    }
+    list.innerHTML = squad.map((p, i) => `
+        <button class="iwtp-player-chip" onclick="confirmSpectateAs('${escapeHTML(p.name)}')">
+            ${Avatar.html(p.name)}
+            <span>${escapeHTML(p.name)}</span>
+        </button>
+    `).join('');
+}
+
+/**
+ * Spectator picks their name → enter confirmed read-only live view.
+ */
+function confirmSpectateAs(name) {
+    localStorage.setItem('cs_spectator_name', name);
+
+    // Show confirmed view
+    document.getElementById('iwtpChoiceView').style.display      = 'none';
+    document.getElementById('iwtpNewPlayerView').style.display   = 'none';
+    document.getElementById('iwtpExistingView').style.display    = 'none';
+    document.getElementById('iwtpSpectatorView').style.display   = 'block';
+    document.getElementById('iwtpSpectatorName').textContent     = name.toUpperCase();
+
+    // Enforce read-only spectator mode
+    document.body.classList.add('spectator-mode');
+    Haptic.success();
+    showToastNotification(`👁 Watching as ${name}`, 'info');
+}
+
+/**
+ * Submit a new player join request.
+ * Collapses the form entirely on success — shows toast instead of inline text.
+ */
 async function submitIWantToPlay() {
-    const input  = document.getElementById('iwtpNameInput');
-    const name   = (input?.value || '').trim();
+    const input = document.getElementById('iwtpNameInput');
+    const name  = (input?.value || '').trim();
+    const btn   = document.getElementById('iwtpSendBtn');
 
     if (!name) {
-        showIWTPStatus('Please enter your name.', 'error');
+        showToastNotification('Please enter your name.', 'error');
         return;
     }
     if (!currentRoomCode) {
-        showIWTPStatus('Not connected to a session.', 'error');
+        showToastNotification('Not connected to a session.', 'error');
         return;
     }
 
-    const btn = document.querySelector('.iwtp-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     try {
-        const res  = await fetch('/api/play-request', {
+        const res = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ room_code: currentRoomCode, name }),
         });
-        const data = await res.json();
 
         if (res.ok) {
-            // Collapse form — replace with status message
-            const form = document.getElementById('iwtpForm');
+            localStorage.setItem('cs_spectator_name', name);
+            // Collapse entire form immediately
+            const form = document.getElementById('iwtpNewPlayerView');
             if (form) form.style.display = 'none';
-            showIWTPStatus(`⏳ Request sent! Waiting for host approval…`, 'pending');
+            // Show waiting state
+            document.getElementById('iwtpChoiceView').style.display    = 'none';
+            document.getElementById('iwtpSpectatorView').style.display = 'block';
+            document.getElementById('iwtpSpectatorName').textContent   = '⏳ PENDING';
+            document.querySelector('#iwtpSpectatorView .iwtp-subtitle').textContent =
+                'Waiting for host approval…';
+            showToastNotification('🏀 Request sent! Waiting for host…', 'info');
             Haptic.success();
         } else {
-            throw new Error(data.error || 'Failed');
+            throw new Error('Failed');
         }
-    } catch (e) {
+    } catch {
         if (btn) { btn.disabled = false; btn.textContent = 'Send Request'; }
-        showIWTPStatus('Could not send request. Try again.', 'error');
+        showToastNotification('Could not send request. Try again.', 'error');
         Haptic.error();
     }
 }
 
-function showIWTPStatus(msg, type) {
-    const el = document.getElementById('iwtpStatus');
-    if (!el) return;
-    el.textContent   = msg;
-    el.style.display = 'block';
-    el.className     = `iwtp-status iwtp-${type}`;
+/**
+ * Global toast notification — used instead of inline status text.
+ * type: 'info' | 'success' | 'error'
+ */
+function showToastNotification(msg, type = 'info') {
+    // Reuse the existing session toast for spectator messages too
+    showSessionToast(msg);
 }
 
 /**
- * Smart recognition — if spectator's name is already in squad,
- * show contextual buttons instead of the join form.
+ * Check smart recognition on load — if returning spectator, restore their view.
  */
 function checkIWTPSmartRecognition() {
     const sheet = document.getElementById('iwantToPlaySheet');
     if (!sheet || !isOnlineSession || isOperator) return;
 
     const savedName = localStorage.getItem('cs_spectator_name');
-    const inSquad   = savedName && squad.find(p => p.name.toLowerCase() === savedName.toLowerCase());
-
-    const smartView  = document.getElementById('iwtpSmartView');
-    const form       = document.getElementById('iwtpForm');
-    const knownName  = document.getElementById('iwtpKnownName');
-
-    if (inSquad && smartView && form && knownName) {
-        knownName.textContent = inSquad.name;
-        form.style.display      = 'none';
-        smartView.style.display = 'block';
-    } else if (smartView && form) {
-        form.style.display      = 'block';
-        smartView.style.display = 'none';
+    if (savedName) {
+        const inSquad = squad.find(p => p.name.toLowerCase() === savedName.toLowerCase());
+        if (inSquad) {
+            // Returning known spectator — restore their view directly
+            confirmSpectateAs(inSquad.name);
+            return;
+        }
     }
+    // Default: show choice
+    showIWTPChoice();
 }
-
-// Save name locally after submission for smart recognition next time
-const _origSubmit = submitIWantToPlay;
 
 /**
  * Host: poll for pending play requests and show badge.
