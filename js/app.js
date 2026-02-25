@@ -1000,7 +1000,7 @@ async function pollPlayRequests() {
         incoming.forEach(r => {
             if (!_lastSeenRequestIds.has(r.id)) {
                 _lastSeenRequestIds.add(r.id);
-                showJoinNotification(r.name, r.id);
+                showJoinNotification(r.name, r.id, r.player_uuid || null);
             }
         });
 
@@ -1021,8 +1021,8 @@ async function pollPlayRequests() {
 const _notifQueue = [];
 let   _notifShowing = false;
 
-function showJoinNotification(name, id) {
-    _notifQueue.push({ name, id });
+function showJoinNotification(name, id, uuid = null) {
+    _notifQueue.push({ name, id, uuid });
     if (!_notifShowing) processNotifQueue();
 }
 
@@ -1030,18 +1030,18 @@ function processNotifQueue() {
     if (_notifQueue.length === 0) { _notifShowing = false; return; }
     _notifShowing = true;
 
-    const { name, id } = _notifQueue.shift();
+    const { name, id, uuid } = _notifQueue.shift();
     const notif = document.getElementById('joinNotification');
     const nameEl = document.getElementById('joinNotifName');
     if (!notif || !nameEl) return;
 
-    nameEl.textContent = name;
-    notif.dataset.id   = id;
-    notif.dataset.name = name;
+    nameEl.textContent  = name;
+    notif.dataset.id    = id;
+    notif.dataset.name  = name;
+    notif.dataset.uuid  = uuid || '';
     notif.classList.add('show');
     Haptic.bump();
 
-    // Auto-dismiss after 12s if no action
     const timer = setTimeout(() => dismissJoinNotification(), 12000);
     notif._timer = timer;
 }
@@ -1058,8 +1058,9 @@ async function notifApprove() {
     const notif = document.getElementById('joinNotification');
     const name  = notif?.dataset.name;
     const id    = notif?.dataset.id;
+    const uuid  = notif?.dataset.uuid || null;
     if (name && id) {
-        await approvePlayRequest(name, id);
+        await approvePlayRequest(name, id, uuid);
         _lastSeenRequestIds.delete(id);
     }
     dismissJoinNotification();
@@ -1085,7 +1086,7 @@ function showPlayRequests() {
         : playRequests.map(r => `
             <div class="pr-row">
                 <span class="pr-name">${escapeHTML(r.name)}</span>
-                <button class="pr-add-btn" onclick="approvePlayRequest('${escapeHTML(r.name)}', '${r.id}')">+ Add</button>
+                <button class="pr-add-btn" onclick="approvePlayRequest('${escapeHTML(r.name)}', '${r.id}', '${r.player_uuid||''}')">+ Add</button>
                 <button class="pr-deny-btn" onclick="denyPlayRequest('${r.id}')">✕</button>
             </div>
         `).join('');
@@ -1097,16 +1098,41 @@ function closePlayRequests() {
     document.getElementById('playRequestsModal').style.display = 'none';
 }
 
-async function approvePlayRequest(name, id) {
-    // Add player to squad
+async function approvePlayRequest(name, id, playerUUID = null) {
+    // Add to squad
     if (!squad.find(p => p.name === name)) {
         squad.push({ name, rating: 1000, wins: 0, games: 0, streak: 0, active: true });
-        renderSquad();
-        saveToDisk();
-        showSessionToast(`✅ ${name} added to squad`);
     }
-    await denyPlayRequest(id); // remove from queue
+
+    // UUID map for win signal dispatch
+    window._sessionUUIDMap = window._sessionUUIDMap || {};
+    if (playerUUID) window._sessionUUIDMap[name] = playerUUID;
+
+    // Verification token — stored in session for refresh persistence
+    const token = _makeApprovalToken();
+    window._approvedPlayers = window._approvedPlayers || {};
+    window._approvedPlayers[playerUUID || name] = { token, name, uuid: playerUUID, approvedAt: Date.now() };
+
+    renderSquad();
+    saveToDisk();   // triggers pushStateToSupabase + broadcastGameState via hook
+    showSessionToast(`✅ ${name} added`);
     Haptic.success();
+
+    // BUG 1 FIX: broadcast approval INSTANTLY via the broadcast channel.
+    // The player's _onApprovalReceived handler catches this, matches UUID,
+    // saves token to sessionStorage, and flips UI to active sideline view.
+    // This is separate from (and faster than) the debounced DB write.
+    if (typeof broadcastApproval === 'function') {
+        broadcastApproval(playerUUID, name, token);
+    }
+
+    await denyPlayRequest(id);
+}
+
+function _makeApprovalToken() {
+    const arr = new Uint8Array(12);
+    (window.crypto || crypto).getRandomValues(arr);
+    return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function denyPlayRequest(id) {
@@ -1180,22 +1206,25 @@ function passportRename() {
     const newName = prompt('Update your name:', passport.playerName);
     if (!newName || !newName.trim()) return;
 
-    Passport.rename(newName);
-    SidelineView.refresh();
+    const trimmed = newName.trim();
+    const oldName = passport.playerName;
 
-    // If in a live session, push name change to host via play-request update
-    if (window.isOnlineSession && window.currentRoomCode) {
-        fetch('/api/passport-rename', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({
-                room_code:   currentRoomCode,
-                player_uuid: passport.playerUUID,
-                new_name:    newName.trim(),
-            }),
-        }).catch(() => {});
+    // BUG 3 FIX: write localStorage FIRST, then update UI, then broadcast.
+    // This order prevents any render reading stale data.
+    Passport.rename(trimmed);                   // 1. localStorage
+    if (typeof PlayerMode !== 'undefined') {
+        PlayerMode._renderIdentity(Passport.get()); // 2. identity card
     }
-    showSessionToast(`✅ Name updated to ${newName.trim()}`);
+    SidelineView.refresh();                     // 3. full view
+
+    // 4. Broadcast to host via the broadcast channel (not a dead API route)
+    if (window.isOnlineSession && window.currentRoomCode) {
+        if (typeof broadcastNameUpdate === 'function') {
+            broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
+        }
+    }
+
+    showSessionToast(`✅ Name updated to ${trimmed}`);
 }
 
 /**
@@ -1256,26 +1285,33 @@ async function dispatchWinSignals(mIdx) {
     const winIdx   = m.winnerTeamIndex;
     const loseIdx  = winIdx === 0 ? 1 : 0;
     const uuidMap  = window._sessionUUIDMap || {};
+    const label    = `Game ${mIdx + 1}`;
 
-    const winnerUUIDs = m.teams[winIdx].map(n => uuidMap[n]).filter(Boolean);
+    const winnerUUIDs = m.teams[winIdx] .map(n => uuidMap[n]).filter(Boolean);
     const loserUUIDs  = m.teams[loseIdx].map(n => uuidMap[n]).filter(Boolean);
 
-    if (winnerUUIDs.length === 0 && loserUUIDs.length === 0) return;
+    // BUG 4 FIX: broadcast match_result instantly via the broadcast channel.
+    // Each player's _onMatchResult does a strict UUID equality check:
+    //   if playerUUID === myUUID → recordWin()  (localStorage first)
+    //   else if wasPlaying       → recordLoss() (localStorage first)
+    if (typeof broadcastMatchResult === 'function') {
+        broadcastMatchResult(winnerUUIDs, loserUUIDs, label);
+    }
 
+    // Also write to passport_signals table as durable fallback
+    // (catches devices that lost the WS connection momentarily)
+    const signals = [
+        ...winnerUUIDs.map(uuid => ({ player_uuid: uuid, event: 'WIN'  })),
+        ...loserUUIDs .map(uuid => ({ player_uuid: uuid, event: 'LOSS' })),
+    ];
+    if (signals.length === 0) return;
     try {
         await fetch('/api/passport-signal', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({
-                room_code:    currentRoomCode,
-                winner_uuids: winnerUUIDs,
-                loser_uuids:  loserUUIDs,
-                game_label:   `Game ${mIdx + 1}`,
-            }),
+            body:    JSON.stringify({ room_code: currentRoomCode, signals, game_label: label }),
         });
-    } catch (e) {
-        console.error('Signal dispatch failed:', e);
-    }
+    } catch (e) { console.error('Signal dispatch failed:', e); }
 }
 
 // =============================================================================
