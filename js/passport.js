@@ -510,141 +510,91 @@ const PlayerMode = {
 
     async boot(passport, joinCode) {
         // ══════════════════════════════════════════════════════════════════════
-        // BOOT — Four-phase init. Each phase completes independently so the
-        // screen is never blank, even if the DB is slow or unreachable.
+        // BOOT — Two-layer init:
+        //   Layer 1 (Identity):  Instant, from localStorage. Shows name only.
+        //   Layer 2 (Session):   DB check. Decides what to do next.
         //
-        // PHASE 0 — Instant render     (synchronous, <1ms)
-        // PHASE 1 — Passport check     (synchronous localStorage read)
-        // PHASE 2 — Session handshake  (async DB call)
-        // PHASE 3 — Join or approve    (async, sets final status)
+        // Session outcomes:
+        //   active  → player is in the squad → show live feed
+        //   pending → request exists but not approved → show waiting state
+        //   null    → no record → send join request to host
         // ══════════════════════════════════════════════════════════════════════
 
         this._joinCode = joinCode;
 
-        // ── PHASE 0: Instant frame render ─────────────────────────────────────
-        // BUG 1 FIX: Render the UI shell RIGHT NOW before any async work.
-        // Add .sl-booting so the status card pulses while we wait for the DB.
-        // Remove it once we have a real answer.
-        const panel = document.getElementById('sidelinePanel');
-        if (panel) panel.classList.add('sl-booting');
-
-        // Render whatever identity we have — even '—' is better than blank
+        // ── Layer 1: Identity (instant, no network) ───────────────────────────
         this._renderIdentity(passport);
         this._renderStats(passport);
 
+        // Show room code in the pill
         const codeEl = document.getElementById('slSessionCode');
-        if (codeEl && joinCode) codeEl.textContent = joinCode;
+        if (codeEl) codeEl.textContent = joinCode || 'LIVE';
 
+        // No joinCode at all — player opened URL manually without scanning
         if (!joinCode) {
-            if (panel) panel.classList.remove('sl-booting');
             this._promptForCode();
             return;
         }
 
-        // ── EARLY: Set currentRoomCode BEFORE any name prompt or memberUpsert ──
-        // memberUpsert() in sync.js reads the global `currentRoomCode`. If this
-        // global is still null when memberUpsert runs (because joinOnlineSession
-        // hadn't been called yet for new players), the upsert returns null and
-        // the player incorrectly lands on "Court not found".
-        //
-        // We do NOT call joinOnlineSession() here because that function is built
-        // for the host path: it calls applyRemoteState() → renderSquad() → writes
-        // to host-only DOM elements (#matchContainer, #squadList etc.) which do
-        // not exist in player mode and throw errors that abort the boot sequence.
-        //
-        // Instead we set the three globals that sync.js functions depend on
-        // directly and synchronously — zero network cost, zero DOM side effects.
-        // Write to window so sync.js's memberUpsert() can read it.
-        // sync.js declares `let currentRoomCode` in its own scope — passport.js
-        // cannot write to that variable directly. window.currentRoomCode crosses
-        // the script boundary and is read as a fallback in memberUpsert().
+        // Set globals on window so sync.js (different script scope) can read them
         window.currentRoomCode = joinCode;
         window.isOnlineSession = true;
+        // Also assign bare names for any sync.js code that reads them via closure
         if (typeof currentRoomCode !== 'undefined') currentRoomCode = joinCode;
-        if (typeof isOnlineSession !== 'undefined') isOnlineSession  = true;
-        // isOperator stays false — players are never operators
+        if (typeof isOnlineSession !== 'undefined') isOnlineSession = true;
 
-        // ── PHASE 1: Check localStorage passport ──────────────────────────────
-        // BUG 3 FIX: Do this synchronously right here — zero network wait.
-        // Show a personalised welcome message immediately if name exists.
-        const hasName = !!(passport.playerName && passport.playerName.trim());
-        if (hasName) {
-            // "Welcome back" message shown instantly from localStorage
-            this._showWelcomeBack(passport.playerName, joinCode);
-            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
-        } else {
-            // No name yet — show the name entry form immediately
-            // _promptName() calls _showNameEntry(callback) internally, which
-            // renders the form AND wires the button listener atomically.
-            // We do NOT call _showNameEntry() here first — that would render
-            // the form with no listener (dead button) before _promptName()
-            // overwrites it with the correctly wired version.
+        // If new player (no name yet), collect name first then proceed
+        if (!passport.playerName || !passport.playerName.trim()) {
             this.setStatus('pending', 'Almost there…', 'Enter your name to join');
-            // Name entry is async — the rest of boot() waits here
             const name = await this._promptName();
-            if (!name) {
-                if (panel) panel.classList.remove('sl-booting');
-                return;
-            }
+            if (!name) return;
             Passport.rename(name);
-            this._renderIdentity(Passport.get());
-            this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
+            passport = Passport.get();
+            this._renderIdentity(passport);
         }
 
-        // ── DB verification — always check current status before showing welcome ─
-        // sessionStorage / localStorage tells us the player's NAME (instant UI),
-        // but the HOST decides who is actually in the squad. The player's status
-        // may be 'pending' (new session) or their row may not exist at all.
-        // We ALWAYS hit the DB before deciding whether to welcome back or request.
+        // Subscribe to realtime before DB call so we never miss an event
         this._subscribeAndPoll(joinCode, passport);
-        this._showSearchingSpinner();
+
+        // ── Layer 2: Session check (async DB) ─────────────────────────────────
+        // Check session_members for this UUID + room.
+        // member-upsert: creates pending row if none exists, returns current status.
+        this.setStatus('pending', `Hey ${passport.playerName}!`, 'Checking your status…');
 
         let upsertResult = null;
         try {
-            upsertResult = await this._memberUpsert(Passport.get(), joinCode);
-        } catch (err) {
-            console.error('[PlayerMode.boot] member-upsert threw:', err);
+            upsertResult = await this._memberUpsert(passport, joinCode);
+        } catch (e) {
+            console.error('[PlayerMode.boot] upsert error:', e);
         }
 
-        if (panel) panel.classList.remove('sl-booting');
-        this._clearSearchingSpinner();
-
-        // Network blip — retry silently, never show room code prompt
         if (!upsertResult) {
-            this.setStatus('pending', 'Connecting…', 'Waiting for court to respond 🏀');
-            setTimeout(async () => {
-                try {
-                    const retry = await this._memberUpsert(Passport.get(), joinCode);
-                    if (retry?.status === 'active') {
-                        this._markApprovedInSession(joinCode);
-                        this._hydrateFromUpsert(retry);
-                        const cur = Passport.get();
-                        this.setStatus('approved', `Welcome back, ${cur.playerName}! 🎉`, "You're in the rotation ✅");
-                        this._fetchLiveSessionState(joinCode);
-                    } else {
-                        // pending or missing — send a fresh join request
-                        this._clearApprovedInSession(joinCode);
-                        await this._submitJoinRequest(Passport.get(), joinCode);
-                    }
-                } catch { /* stay on connecting state */ }
-            }, 3000);
+            // DB unreachable — send join request directly, which also creates the row
+            console.warn('[PlayerMode.boot] upsert returned null — sending join request directly');
+            await this._submitJoinRequest(passport, joinCode);
             return;
         }
 
-        // ── DB says ACTIVE — player is genuinely in the squad ────────────────
         if (upsertResult.status === 'active') {
+            // Player is already in the squad (returning from refresh or same session)
             this._markApprovedInSession(joinCode);
             this._hydrateFromUpsert(upsertResult);
             const p = Passport.get();
-            this.setStatus('approved', `Welcome back, ${p.playerName}! 🎉`, "You're in the rotation ✅");
-            this._fetchLiveSessionState(joinCode);
+            this.setStatus('approved', `You're in, ${p.playerName}!`, 'Welcome back to the court ✅');
+            this._fetchLiveSessionState(joinCode, p);
             return;
         }
 
-        // ── DB says PENDING — new session or was removed. Request to join. ───
-        // Clear any stale sessionStorage approval so next scan starts fresh.
-        this._clearApprovedInSession(joinCode);
-        await this._submitJoinRequest(Passport.get(), joinCode);
+        if (upsertResult.status === 'pending') {
+            // Row exists but not approved yet — send request so host sees notification,
+            // then show waiting state. play-request is idempotent on the session_members
+            // side (ignore-duplicates) and always writes to play_requests for the host.
+            await this._submitJoinRequest(passport, joinCode);
+            return;
+        }
+
+        // Fallback — unknown status, send request
+        await this._submitJoinRequest(passport, joinCode);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
