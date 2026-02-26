@@ -209,6 +209,11 @@ const SidelineView = {
     _renderMatches() {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
+
+        // Guard: don't overwrite queued-state or name-entry UI during join flow
+        if (container.querySelector('.sl-queued-state') ||
+            container.querySelector('.sl-name-entry')) return;
+
         const matches = window.currentMatches || [];
         if (matches.length === 0) {
             container.innerHTML = `<div class="sl-empty">No active round yet</div>`;
@@ -324,164 +329,57 @@ const VictoryCard = {
 const InviteQR = {
     _overlay: null,
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // show(roomCode)
-    //
-    // roomCode resolution order:
-    //   1. Argument passed in (e.g. onclick="InviteQR.show(PlayerMode._joinCode)")
-    //   2. PlayerMode._joinCode  — set synchronously in boot(), always correct
-    //      for players joining via QR link
-    //   3. window.currentRoomCode — set by joinOnlineSession() in sync.js,
-    //      correct for host or after Supabase handshake completes
-    //
-    // URL format: ?join=XXXX-XXXX&role=player
-    //   Matches the format the host's QR generates and the app reads on load.
-    // ─────────────────────────────────────────────────────────────────────────
-
+    /**
+     * Show the invite QR overlay.
+     * Uses the same URL format as the host's QR: ?join=XXXX-XXXX&role=player
+     */
     show(roomCode) {
-        // Resolve the room code using the priority chain above
-        const code = roomCode
-            || (typeof PlayerMode !== 'undefined' && PlayerMode._joinCode)
-            || window.currentRoomCode
-            || null;
+        if (!roomCode) { alert('No active session to share.'); return; }
 
-        if (!code) {
-            // No room code available — guide the user
-            if (typeof showSessionToast === 'function') {
-                showSessionToast('No active session to share.');
-            } else {
-                alert('No active session to share.');
-            }
-            return;
-        }
-
-        // Remove any existing overlay before creating a new one
+        // Remove any existing overlay
         if (this._overlay) this._overlay.remove();
 
-        // ── JOIN URL — identical construction to the host's Session Hub QR ──────
-        // MUST use ?join= because that is the parameter read by:
-        //   index.html boot    → params.get('join')
-        //   sync.js            → urlParams.get('join')
-        //   PlayerMode.boot()  → joinCode argument from index.html
-        // Using any other parameter name produces "No Room Code" on the player screen.
-        const joinUrl = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
+        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${roomCode}&role=player`;
 
-        // Log so both host and player can verify in console
-        console.log('[CourtSide] InviteQR generating for:', joinUrl);
-
-        // Build overlay DOM — use a div for the QR so qrcodejs can append into it
         this._overlay = document.createElement('div');
         this._overlay.className = 'sl-invite-overlay';
         this._overlay.innerHTML = `
             <div class="sl-invite-card">
                 <div class="sl-invite-header">
                     <div class="sl-invite-title">INVITE TO COURT</div>
-                    <button class="sl-invite-close" id="inviteCloseBtn">✕</button>
+                    <button class="sl-invite-close" onclick="InviteQR.hide()">✕</button>
                 </div>
                 <div class="sl-invite-sub">Scan to join this session</div>
-                <div id="inviteQrDiv" class="sl-invite-canvas" style="display:flex;justify-content:center;margin:0 auto;"></div>
-                <div class="sl-invite-code">${code}</div>
+                <canvas id="inviteQrCanvas" class="sl-invite-canvas"></canvas>
+                <div class="sl-invite-code">${roomCode}</div>
                 <div class="sl-invite-hint">Players who scan will see the player view</div>
-                <button class="sl-invite-copy-btn" id="inviteCopyBtn">
-                    <span class="sl-invite-copy-icon">🔗</span>
-                    Copy Link
-                </button>
             </div>
         `;
         document.body.appendChild(this._overlay);
+        requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
 
-        // Wire close button via addEventListener (not inline onclick)
-        // so it works even if InviteQR is referenced before the script fully loads
-        this._overlay.querySelector('#inviteCloseBtn')
-            .addEventListener('click', () => this.hide());
-
-        // Wire Copy Link button
-        this._overlay.querySelector('#inviteCopyBtn')
-            .addEventListener('click', () => this._copyLink(joinUrl));
-
-        // Tap outside the card to dismiss
+        // Tap outside to dismiss
         this._overlay.addEventListener('click', e => {
             if (e.target === this._overlay) this.hide();
         });
 
-        // Animate in on next frame
-        requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
-
-        // ── QR GENERATION — mirrors host QR exactly ───────────────────────────
-        // QRCodeConstructor (qrcodejs) is saved in index.html before qrcode@1.5.1
-        // overwrites the global. Fall back to QRCode.toCanvas if only one library loaded.
-        const qrDiv  = this._overlay.querySelector('#inviteQrDiv');
-        const QRCtor = window.QRCodeConstructor;
-
-        if (qrDiv && QRCtor) {
-            // Use the same constructor API as the host QR
-            new QRCtor(qrDiv, {
-                text:         joinUrl,
-                width:        220,
-                height:       220,
-                colorDark:    '#0a0a0f',
-                colorLight:   '#ffffff',
-                correctLevel: QRCtor.CorrectLevel?.H || 0,
-            });
-        } else if (qrDiv && window.QRCode && typeof window.QRCode.toCanvas === 'function') {
-            // Fallback: qrcode@1.5.1 toCanvas API (canvas element needed)
-            const canvas = document.createElement('canvas');
-            qrDiv.appendChild(canvas);
-            window.QRCode.toCanvas(canvas, joinUrl,
-                { width: 220, margin: 2, color: { dark: '#0a0a0f', light: '#ffffff' } },
-                err => { if (err) console.error('[InviteQR] QR gen failed:', err); }
-            );
-        } else if (qrDiv) {
-            // Both libraries unavailable — show the URL as tappable text
-            console.warn('[InviteQR] No QRCode library available, showing plain URL');
-            const txt = document.createElement('div');
-            txt.className   = 'sl-invite-url';
-            txt.textContent = joinUrl;
-            txt.style.cssText = 'word-break:break-all;font-size:11px;color:#00ffa3;padding:12px;text-align:center;';
-            qrDiv.appendChild(txt);
-        }
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // _copyLink — copies the join URL to clipboard with visual confirmation
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _copyLink(url) {
-        const btn = this._overlay?.querySelector('#inviteCopyBtn');
-        const succeed = () => {
-            if (btn) {
-                btn.innerHTML = '✅ Link copied!';
-                btn.disabled  = true;
-                setTimeout(() => {
-                    btn.innerHTML = '<span class="sl-invite-copy-icon">🔗</span> Copy Link';
-                    btn.disabled  = false;
-                }, 2500);
-            }
-        };
-        const fail = () => {
-            if (btn) {
-                btn.innerHTML = '⚠️ Copy failed — tap URL above';
-                setTimeout(() => {
-                    btn.innerHTML = '<span class="sl-invite-copy-icon">🔗</span> Copy Link';
-                }, 2500);
-            }
-        };
-
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(url).then(succeed).catch(fail);
+        // Generate QR
+        if (window.QRCode) {
+            QRCode.toCanvas(document.getElementById('inviteQrCanvas'), joinUrl, {
+                width:  220,
+                margin: 2,
+                color: { dark: '#0a0a0f', light: '#ffffff' },
+            }, err => { if (err) console.error('InviteQR: QR gen failed', err); });
         } else {
-            // Fallback for browsers without clipboard API (e.g. old Android WebView)
-            try {
-                const ta = document.createElement('textarea');
-                ta.value = url;
-                ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;';
-                document.body.appendChild(ta);
-                ta.focus();
-                ta.select();
-                document.execCommand('copy');
-                ta.remove();
-                succeed();
-            } catch { fail(); }
+            // Fallback: show the URL as text
+            const canvas = document.getElementById('inviteQrCanvas');
+            if (canvas) {
+                canvas.style.display = 'none';
+                const txt = document.createElement('div');
+                txt.className = 'sl-invite-url';
+                txt.textContent = joinUrl;
+                canvas.parentNode.insertBefore(txt, canvas.nextSibling);
+            }
         }
     },
 
@@ -510,91 +408,222 @@ const PlayerMode = {
 
     async boot(passport, joinCode) {
         // ══════════════════════════════════════════════════════════════════════
-        // BOOT — Two-layer init:
-        //   Layer 1 (Identity):  Instant, from localStorage. Shows name only.
-        //   Layer 2 (Session):   DB check. Decides what to do next.
+        // BOOT — Four-phase init. Each phase completes independently so the
+        // screen is never blank, even if the DB is slow or unreachable.
         //
-        // Session outcomes:
-        //   active  → player is in the squad → show live feed
-        //   pending → request exists but not approved → show waiting state
-        //   null    → no record → send join request to host
+        // PHASE 0 — Instant render     (synchronous, <1ms)
+        // PHASE 1 — Passport check     (synchronous localStorage read)
+        // PHASE 2 — Session handshake  (async DB call)
+        // PHASE 3 — Join or approve    (async, sets final status)
         // ══════════════════════════════════════════════════════════════════════
 
         this._joinCode = joinCode;
 
-        // ── Layer 1: Identity (instant, no network) ───────────────────────────
+        // ── PHASE 0: Instant frame render ─────────────────────────────────────
+        // BUG 1 FIX: Render the UI shell RIGHT NOW before any async work.
+        // Add .sl-booting so the status card pulses while we wait for the DB.
+        // Remove it once we have a real answer.
+        const panel = document.getElementById('sidelinePanel');
+        if (panel) panel.classList.add('sl-booting');
+
+        // Render whatever identity we have — even '—' is better than blank
         this._renderIdentity(passport);
         this._renderStats(passport);
 
-        // Show room code in the pill
         const codeEl = document.getElementById('slSessionCode');
-        if (codeEl) codeEl.textContent = joinCode || 'LIVE';
+        if (codeEl && joinCode) codeEl.textContent = joinCode;
 
-        // No joinCode at all — player opened URL manually without scanning
         if (!joinCode) {
+            if (panel) panel.classList.remove('sl-booting');
             this._promptForCode();
             return;
         }
 
-        // Set globals on window so sync.js (different script scope) can read them
-        window.currentRoomCode = joinCode;
-        window.isOnlineSession = true;
-        // Also assign bare names for any sync.js code that reads them via closure
-        if (typeof currentRoomCode !== 'undefined') currentRoomCode = joinCode;
-        if (typeof isOnlineSession !== 'undefined') isOnlineSession = true;
-
-        // If new player (no name yet), collect name first then proceed
-        if (!passport.playerName || !passport.playerName.trim()) {
+        // ── PHASE 1: Check localStorage passport ──────────────────────────────
+        // BUG 3 FIX: Do this synchronously right here — zero network wait.
+        // Show a personalised welcome message immediately if name exists.
+        const hasName = !!(passport.playerName && passport.playerName.trim());
+        if (hasName) {
+            // "Welcome back" message shown instantly from localStorage
+            this._showWelcomeBack(passport.playerName, joinCode);
+            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
+        } else {
+            // No name yet — show the name entry form immediately
+            // (replaces the blank "No active round yet" placeholder)
             this.setStatus('pending', 'Almost there…', 'Enter your name to join');
+            this._showNameEntry();
+            // Name entry is async — the rest of boot() waits here
             const name = await this._promptName();
-            if (!name) return;
+            if (!name) {
+                if (panel) panel.classList.remove('sl-booting');
+                return;
+            }
             Passport.rename(name);
-            passport = Passport.get();
-            this._renderIdentity(passport);
+            this._renderIdentity(Passport.get());
+            this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
         }
 
-        // Subscribe to realtime before DB call so we never miss an event
+        // ── Tier 1: sessionStorage fast-path ──────────────────────────────────
+        // Survives page refresh within the same tab session.
+        if (this._isApprovedInSession(joinCode)) {
+            if (panel) panel.classList.remove('sl-booting');
+            this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You're in the rotation');
+            this._subscribeAndPoll(joinCode, passport);
+            return;
+        }
+
+        // ── PHASE 2: DB handshake — show spinner while waiting ────────────────
+        // BUG 2 FIX: The DB call is now wrapped — if it returns null (session
+        // not found / network error) we show a "Searching for Court" state
+        // instead of crashing or staying blank.
         this._subscribeAndPoll(joinCode, passport);
 
-        // ── Layer 2: Session check (async DB) ─────────────────────────────────
-        // Check session_members for this UUID + room.
-        // member-upsert: creates pending row if none exists, returns current status.
-        this.setStatus('pending', `Hey ${passport.playerName}!`, 'Checking your status…');
+        // Show "Searching for Court…" while the DB responds
+        this._showSearchingSpinner();
 
         let upsertResult = null;
         try {
-            upsertResult = await this._memberUpsert(passport, joinCode);
-        } catch (e) {
-            console.error('[PlayerMode.boot] upsert error:', e);
+            upsertResult = await this._memberUpsert(Passport.get(), joinCode);
+        } catch (err) {
+            console.error('[PlayerMode.boot] member-upsert threw:', err);
+            // Treat as null — fall through to pending state
         }
 
+        // Stop pulsing — we have a result (or a failure)
+        if (panel) panel.classList.remove('sl-booting');
+        this._clearSearchingSpinner();
+
+        // ── BUG 2 FIX: Guard against null / missing session ───────────────────
         if (!upsertResult) {
-            // DB unreachable — send join request directly, which also creates the row
-            console.warn('[PlayerMode.boot] upsert returned null — sending join request directly');
-            await this._submitJoinRequest(passport, joinCode);
+            this.setStatus('pending',
+                'Court not found',
+                'The session may have ended. Check the room code.');
+            console.error('[CourtSide] Session lookup failed for room:', joinCode,
+                '— upsertResult was null. Check /api/member-upsert and network.');
+            // Show manual code entry so player isn't stuck
+            this._promptForCode();
             return;
         }
 
+        // ── RETURNING APPROVED PLAYER ─────────────────────────────────────────
         if (upsertResult.status === 'active') {
-            // Player is already in the squad (returning from refresh or same session)
             this._markApprovedInSession(joinCode);
             this._hydrateFromUpsert(upsertResult);
             const p = Passport.get();
-            this.setStatus('approved', `You're in, ${p.playerName}!`, 'Welcome back to the court ✅');
-            this._fetchLiveSessionState(joinCode, p);
+            this.setStatus('approved', `Welcome back, ${p.playerName}!`, 'You're in the squad ✅');
+            SidelineView.refresh();
+            setTimeout(() => this._updateStatus(p), 800);
             return;
         }
 
-        if (upsertResult.status === 'pending') {
-            // Row exists but not approved yet — send request so host sees notification,
-            // then show waiting state. play-request is idempotent on the session_members
-            // side (ignore-duplicates) and always writes to play_requests for the host.
-            await this._submitJoinRequest(passport, joinCode);
-            return;
+        // ── Tier 3: localStorage token fallback ───────────────────────────────
+        const savedToken = this._loadToken(joinCode);
+        if (savedToken) {
+            const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
+            if (valid) {
+                this._markApprovedInSession(joinCode);
+                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, 'You're in the squad');
+                return;
+            } else {
+                this._clearToken(joinCode);
+            }
         }
 
-        // Fallback — unknown status, send request
-        await this._submitJoinRequest(passport, joinCode);
+        // ── PHASE 3: New join — submit request, wait for host approval ────────
+        await this._submitJoinRequest(Passport.get(), joinCode);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // QUEUED STATE
+    // Renders in slCurrentMatches after the join request is sent.
+    // .sl-queued-state is a sentinel: SidelineView._renderMatches() skips
+    // rendering if this class is present, preventing game_state broadcasts
+    // from clobbering the waiting screen before the player is approved.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _showQueuedState(playerName) {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="sl-queued-state" id="slQueuedBlock">
+                <div class="sl-queued-icon">🏀</div>
+                <div class="sl-queued-title">REQUEST SENT</div>
+                <div class="sl-queued-sub">
+                    Waiting for the host to approve you.<br>
+                    You’ll be added to the rotation automatically.
+                </div>
+                <button class="sl-queued-resend" id="slResendBtn">Resend Request</button>
+                <div class="sl-queued-note">
+                    Already approved?
+                    <span class="sl-queued-check" id="slCheckBtn">Check now →</span>
+                </div>
+            </div>`;
+
+        document.getElementById('slResendBtn')?.addEventListener('click', () => PlayerMode._resendRequest());
+        document.getElementById('slCheckBtn')?.addEventListener('click',  () => PlayerMode._checkApprovalNow());
+    },
+
+    _clearQueuedState() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        if (container.querySelector('.sl-queued-state')) {
+            container.innerHTML = '<div class="sl-empty">No active round yet</div>';
+        }
+    },
+
+    async _resendRequest() {
+        const passport = Passport.get();
+        if (!passport || !this._joinCode) return;
+        const btn = document.getElementById('slResendBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+        try {
+            const res = await fetch('/api/play-request', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    room_code:   this._joinCode,
+                    name:        passport.playerName,
+                    player_uuid: passport.playerUUID,
+                }),
+            });
+            if (res.ok) {
+                if (btn) {
+                    btn.textContent = '✓ Sent!';
+                    setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = 'Resend Request'; } }, 5000);
+                }
+            } else { throw new Error('non-ok'); }
+        } catch {
+            if (btn) { btn.disabled = false; btn.textContent = 'Resend Request'; }
+        }
+    },
+
+    async _checkApprovalNow() {
+        const passport = Passport.get();
+        if (!passport || !this._joinCode) return;
+        const checkEl = document.getElementById('slCheckBtn');
+        if (checkEl) { checkEl.textContent = 'Checking…'; checkEl.style.pointerEvents = 'none'; }
+        try {
+            const result = await this._memberUpsert(passport, this._joinCode);
+            if (result && result.status === 'active') {
+                this._markApprovedInSession(this._joinCode);
+                this._hydrateFromUpsert(result);
+                const p = Passport.get();
+                this.setStatus('approved', `You're in, ${p.playerName}!`, 'You’ve been approved ✅');
+                this._clearQueuedState();
+                SidelineView.show();
+                if (window.Haptic) Haptic.success();
+                setTimeout(() => this._updateStatus(p), 800);
+            } else {
+                if (checkEl) {
+                    checkEl.textContent = 'Still pending…';
+                    setTimeout(() => {
+                        if (checkEl) { checkEl.textContent = 'Check now →'; checkEl.style.pointerEvents = 'auto'; }
+                    }, 3000);
+                }
+            }
+        } catch {
+            if (checkEl) { checkEl.textContent = 'Check now →'; checkEl.style.pointerEvents = 'auto'; }
+        }
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -621,14 +650,9 @@ const PlayerMode = {
     // Called at the top of boot() so the input is visible instantly.
     // ─────────────────────────────────────────────────────────────────────────
 
-    _showNameEntry(onSubmit) {
-        // Always re-render the form from scratch so the DOM nodes are brand-new.
-        // This prevents the "dead button" bug where a previous innerHTML write
-        // (e.g. from the DOMContentLoaded fast-render in index.html) created DOM
-        // nodes that look identical but have no JS event listeners attached.
+    _showNameEntry() {
         const container = document.getElementById('slCurrentMatches');
-        if (!container) return null;
-
+        if (!container) return;
         container.innerHTML = `
             <div class="sl-name-entry" id="slNameEntryForm">
                 <div class="sl-name-entry-title">ENTER YOUR NAME</div>
@@ -650,44 +674,7 @@ const PlayerMode = {
                     JOIN COURT →
                 </button>
             </div>`;
-
-        // Wire up the button in the SAME tick as the innerHTML write.
-        // This is atomic — nothing can run between the render and the listener
-        // attachment because there is no await, setTimeout, or Promise here.
-        const input = document.getElementById('slNameEntryInput');
-        const btn   = document.getElementById('slNameEntrySubmit');
-
-        if (onSubmit && input && btn) {
-            const submit = () => {
-                const val = (input.value || '').trim();
-                if (!val) {
-                    // Empty — shake the input and keep focus
-                    input.classList.add('sl-input-error');
-                    setTimeout(() => input.classList.remove('sl-input-error'), 600);
-                    input.focus();
-                    return;
-                }
-                // Passport guard: ensure global passport has a UUID before proceeding.
-                // Passport.init() is synchronous — it reads localStorage or creates a
-                // fresh object. Either way, uuid is guaranteed after this call.
-                if (typeof Passport !== 'undefined') {
-                    const p = Passport.init();
-                    // Keep the global `passport` variable in sync (defined in app.js).
-                    if (typeof window !== 'undefined') window._passport = p;
-                }
-                // Visual feedback — disable button and show spinner text
-                btn.disabled  = true;
-                btn.innerHTML = '<span class="sl-btn-spinner"></span> REQUESTING…';
-                onSubmit(val);
-            };
-
-            btn.addEventListener('click', submit);
-            input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
-        }
-
-        // Focus after a short tick so the mobile keyboard has time to open
-        setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 80);
-        return { input, btn };
+        setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 120);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -935,7 +922,10 @@ const PlayerMode = {
             this._renderIdentity(Passport.get());
         }
 
-        // 3. Show approved status
+        // 3. Clear the queued-state block so live feed can render
+        this._clearQueuedState();
+
+        // 4. Show approved status
         const p = Passport.get();
         this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
 
@@ -946,7 +936,7 @@ const PlayerMode = {
         // 5. Haptic + toast
         if (window.Haptic) Haptic.success();
         if (typeof showSessionToast === 'function') {
-            showSessionToast("🏀 You're approved! Welcome to the court.");
+            showSessionToast('🏀 You're approved! Welcome to the court.');
         }
     },
 
@@ -977,12 +967,16 @@ const PlayerMode = {
             if (data.alreadyActive) {
                 // Race condition: approved between upsert check and play-request submission
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "You're in the squad ✅");
+                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, 'You're in the squad ✅');
                 SidelineView.refresh();
                 setTimeout(() => this._updateStatus(passport), 800);
+                return;
             }
-            // Otherwise: stay on pending screen, wait for _onMemberActivated()
-            // which fires when the host approves via the realtime channel.
+
+            // ── SUCCESS: request sent, player is queued ────────────────────────────────
+            // Replace slCurrentMatches (frozen form or welcome-back card)
+            // with a clear “waiting for approval” UI state.
+            this._showQueuedState(passport.playerName);
 
         } catch(e) {
             this.setStatus('pending', 'Connection failed', 'Check your internet');
@@ -996,15 +990,8 @@ const PlayerMode = {
     },
 
     _subscribeAndPoll(joinCode, passport) {
-        // Subscribe to the Supabase Realtime WebSocket for this room so we receive:
-        //   - postgres_changes on session_members (approval notification)
-        //   - broadcast events (game_state, match_result, match_resolved)
-        //
-        // We call subscribeRealtime() directly instead of joinOnlineSession() because
-        // joinOnlineSession() also calls applyRemoteState() → renderSquad() which
-        // writes to host-only DOM elements that don't exist in player mode and throw.
-        if (typeof subscribeRealtime === 'function' && joinCode) {
-            subscribeRealtime(joinCode);
+        if (typeof joinOnlineSession === 'function') {
+            joinOnlineSession(joinCode).catch(() => {});
         }
         this._startSignalPoll(joinCode, passport);
     },
@@ -1056,56 +1043,6 @@ const PlayerMode = {
         } catch { }
     },
 
-    _clearApprovedInSession(roomCode) {
-        try {
-            const m = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
-            delete m[roomCode];
-            sessionStorage.setItem(SS_APPROVED, JSON.stringify(m));
-        } catch { }
-    },
-
-    // Fetch live session state and populate window.squad + window.currentMatches
-    // so Live Now and queue position render immediately without waiting for a broadcast.
-    _fetchLiveSessionState(joinCode) {
-        if (!joinCode) return;
-        fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                if (!data) return;
-                if (data.squad)           window.squad          = data.squad;
-                if (data.current_matches) window.currentMatches = data.current_matches;
-                SidelineView.show();
-                const p = Passport.get();
-                if (p) this._updateStatus(p);
-            })
-            .catch(() => {});
-    },
-
-    // Called when host removes this player — clear approval, show rejoin button
-    _onRemovedFromSession() {
-        const joinCode = this._joinCode;
-        this._clearApprovedInSession(joinCode);
-        if (joinCode) this._clearToken(joinCode);
-        this.setStatus('pending', 'Removed from court', 'The host removed you.');
-        const container = document.getElementById('slCurrentMatches');
-        if (container) {
-            container.innerHTML = `
-                <div class="sl-pending-card" style="padding:2rem 1rem;text-align:center">
-                    <div style="font-size:2.5rem;margin-bottom:.5rem">🚫</div>
-                    <div style="font-family:var(--font-display);font-size:1rem;font-weight:900;letter-spacing:2px;color:#ff6b6b;margin-bottom:.5rem">REMOVED BY HOST</div>
-                    <div style="font-size:.78rem;color:var(--text-muted);line-height:1.5;margin-bottom:1rem">You were removed from the session.<br>You can request to rejoin.</div>
-                    <button class="sl-name-submit" style="background:rgba(255,107,107,0.12);border-color:rgba(255,107,107,0.35);color:#ff6b6b"
-                        onclick="PlayerMode._requestRejoin()">Request to Rejoin →</button>
-                </div>`;
-        }
-    },
-
-    async _requestRejoin() {
-        const p = Passport.get();
-        if (!p || !this._joinCode) return;
-        await this._submitJoinRequest(p, this._joinCode);
-    },
-
     _loadToken(roomCode) {
         try { return JSON.parse(localStorage.getItem(LS_TOKENS) || '{}')[roomCode] || null; }
         catch { return null; }
@@ -1132,17 +1069,14 @@ const PlayerMode = {
             const res  = await fetch(`/api/session-get?code=${encodeURIComponent(roomCode)}`);
             if (!res.ok) return false;
             const data = await res.json();
-            // session-get returns fields directly on the response object,
-            // NOT nested under a `session` key. Reading data?.session was always
-            // undefined, making every token verification fail silently.
-            const approved = data?.approved_players || {};
+            const approved = data?.session?.approved_players || {};
             const entry    = approved[passport.playerUUID] || approved[passport.playerName];
             if (!entry || entry.token !== savedToken.token) return false;
-            if (data) {
-                window.squad          = data.squad           || [];
-                window.currentMatches = data.current_matches || [];
-                window._sessionUUIDMap  = data.uuid_map         || {};
-                window._approvedPlayers = data.approved_players || {};
+            if (data.session) {
+                window.squad          = data.session.squad           || [];
+                window.currentMatches = data.session.current_matches || [];
+                window._sessionUUIDMap  = data.session.uuid_map         || {};
+                window._approvedPlayers = data.session.approved_players || {};
             }
             return true;
         } catch { return false; }
@@ -1183,21 +1117,50 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // NAME ENTRY — resolves when player submits their name.
+    // NAME ENTRY — inline DOM form, never blocks render
     //
-    // This always calls _showNameEntry(callback), which renders the form AND
-    // wires the button listener in one synchronous operation. We never try to
-    // re-use a form that was pre-rendered by DOMContentLoaded — those nodes
-    // have no listeners attached and clicking them does nothing (the "dead
-    // button" bug). By always rendering fresh, we guarantee the listener is
-    // bound to the exact DOM node that is currently on screen.
+    // BUG 3 FIX: The old code used browser prompt() — a synchronous modal that
+    // BLOCKS all rendering. On mobile Safari this looks like a blank screen.
+    // This replacement renders a name form directly into slCurrentMatches.
+    // The Promise resolves when the player taps "Join Court".
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // NAME ENTRY — resolves when player submits their name.
+    // BUG 3 FIX: Uses the pre-rendered inline DOM form from _showNameEntry()
+    // (already on screen from PHASE 1 of boot). Never uses browser prompt().
     // ─────────────────────────────────────────────────────────────────────────
 
     _promptName() {
         return new Promise(resolve => {
-            // _showNameEntry renders the form AND wires the button in one tick.
-            // The callback fires when the player submits a non-empty name.
-            this._showNameEntry((name) => resolve(name));
+            // Re-use the form that _showNameEntry() already rendered, or create it
+            let input = document.getElementById('slNameEntryInput');
+            let btn   = document.getElementById('slNameEntrySubmit');
+
+            if (!input || !btn) {
+                // Form isn't on screen yet — render it now
+                const container = document.getElementById('slCurrentMatches');
+                if (!container) {
+                    // Absolute last resort: DOM not ready
+                    const n = window.prompt('Enter your name to join:');
+                    return resolve(n ? n.trim() : null);
+                }
+                this._showNameEntry();
+                input = document.getElementById('slNameEntryInput');
+                btn   = document.getElementById('slNameEntrySubmit');
+            }
+
+            const submit = () => {
+                const val = (input?.value || '').trim();
+                if (!val) { input?.focus(); return; }
+                if (btn) { btn.disabled = true; btn.textContent = 'JOINING…'; }
+                resolve(val);
+            };
+
+            // Attach listeners (guard against double-attach on re-render)
+            btn?.addEventListener('click', submit);
+            input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+            setTimeout(() => input?.focus(), 80);
         });
     },
 
