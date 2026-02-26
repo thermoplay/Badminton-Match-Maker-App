@@ -169,23 +169,74 @@ const SidelineView = {
     _renderMatches() {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
+
+        // Don't clobber the pending card while waiting for approval
+        if (container.querySelector('.sl-pending-card')) return;
+
         const matches = window.currentMatches || [];
-        if (!matches.length) { container.innerHTML = `<div class="sl-empty">No active round yet</div>`; return; }
-        const p      = Passport.get();
-        const myName = p?.playerName?.toLowerCase() || '';
-        container.innerHTML = matches.map((m, i) => {
+        const squad   = window.squad || [];
+        const p       = Passport.get();
+        const myName  = p?.playerName?.toLowerCase() || '';
+
+        if (!matches.length) {
+            // Show queue position if player is in squad
+            if (myName && squad.length) {
+                const activePlayers    = squad.filter(s => s.active);
+                const playingNames     = new Set(); // empty — no matches yet
+                const bench            = activePlayers.filter(s => !playingNames.has(s.name?.toLowerCase()));
+                const pos              = bench.findIndex(s => s.name?.toLowerCase() === myName);
+                if (pos >= 0) {
+                    const rank = pos + 1;
+                    const sfx  = rank===1?'st':rank===2?'nd':rank===3?'rd':'th';
+                    container.innerHTML = `
+                        <div class="sl-queue-card">
+                            <div class="sl-queue-number">#${rank}<span class="sl-queue-sfx">${sfx}</span></div>
+                            <div class="sl-queue-label">IN THE QUEUE</div>
+                            <div class="sl-queue-sub">out of ${bench.length} on bench</div>
+                        </div>`;
+                    return;
+                }
+            }
+            container.innerHTML = `<div class="sl-empty">No active round yet</div>`;
+            return;
+        }
+
+        const playingNames = new Set(matches.flatMap(m => [...(m.teams[0]||[]), ...(m.teams[1]||[])]).map(n => n.toLowerCase()));
+        const bench = (squad.filter(s => s.active && !playingNames.has(s.name?.toLowerCase())));
+        const myQueuePos = bench.findIndex(s => s.name?.toLowerCase() === myName);
+
+        let queueHtml = '';
+        if (myName && !playingNames.has(myName) && myQueuePos >= 0) {
+            const rank = myQueuePos + 1;
+            const sfx  = rank===1?'st':rank===2?'nd':rank===3?'rd':'th';
+            queueHtml = `
+                <div class="sl-queue-inline">
+                    <span class="sl-queue-inline-rank">#${rank}${sfx} in line</span>
+                    <span class="sl-queue-inline-total">${bench.length} on bench</span>
+                </div>`;
+        }
+
+        const matchCards = matches.map((m, i) => {
             const tA      = m.teams[0] || [];
             const tB      = m.teams[1] || [];
             const playing = myName && [...tA, ...tB].map(n => n.toLowerCase()).includes(myName);
-            return `<div class="sl-match-card ${playing ? 'sl-match-mine' : ''}">
-                <div class="sl-match-label">GAME ${i+1}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
-                <div class="sl-match-teams">
-                    <span class="sl-team">${tA.join(' &amp; ')}</span>
-                    <span class="sl-vs">VS</span>
-                    <span class="sl-team">${tB.join(' &amp; ')}</span>
-                </div>
-            </div>`;
+            const hasWinner = m.winnerTeamIndex !== null;
+            return `
+                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-done' : ''}">
+                    <div class="sl-match-label">
+                        GAME ${i+1}
+                        ${playing ? '<span class="sl-you-badge">YOU</span>' : ''}
+                        ${hasWinner ? '<span class="sl-done-badge">✓ DONE</span>' : '<span class="sl-live-badge">LIVE</span>'}
+                    </div>
+                    <div class="sl-match-teams">
+                        <span class="sl-team ${hasWinner && m.winnerTeamIndex===0 ? 'sl-team-winner' : ''}">${tA.join(' &amp; ')}</span>
+                        <span class="sl-vs">VS</span>
+                        <span class="sl-team ${hasWinner && m.winnerTeamIndex===1 ? 'sl-team-winner' : ''}">${tB.join(' &amp; ')}</span>
+                    </div>
+                </div>`;
         }).join('');
+
+        container.innerHTML = queueHtml + matchCards;
     },
     _renderNextUp() {
         const el    = document.getElementById('slNextUp');
@@ -418,8 +469,26 @@ const PlayerMode = {
         this._clearSearchingSpinner();
 
         if (!upsertResult) {
-            this.setStatus('pending', 'Court not found', 'The session may have ended. Check the room code.');
-            this._promptForCode();
+            // Network/API blip — do NOT show room code entry (player already has the code from QR).
+            // Stay on pending and let the realtime subscription deliver approval when it arrives.
+            this.setStatus('pending', 'Connecting…', 'Waiting for court to respond. Stay put 🏀');
+            // Retry upsert once after 3s in case of a cold-start delay
+            setTimeout(async () => {
+                try {
+                    const retry = await this._memberUpsert(Passport.get(), joinCode);
+                    if (retry?.status === 'active') {
+                        this._markApprovedInSession(joinCode);
+                        this._hydrateFromUpsert(retry);
+                        await this._fetchAndApplySessionState(joinCode);
+                        const cur = Passport.get();
+                        this.setStatus('approved', `Welcome back, ${cur.playerName}!`, "You're in the squad ✅");
+                        SidelineView.show();
+                        this._updateStatus(cur);
+                    } else if (retry?.status === 'pending') {
+                        await this._submitJoinRequest(Passport.get(), joinCode);
+                    }
+                } catch { /* stay on connecting state */ }
+            }, 3000);
             return;
         }
 
@@ -527,6 +596,25 @@ const PlayerMode = {
         }
     },
 
+    // ── _fetchAndApplySessionState ────────────────────────────────────────────
+    // Fetches the current session row and populates window.squad,
+    // window.currentMatches so Live Now and queue position are immediately correct.
+    // Called after approval (broadcast OR postgres_changes path).
+    async _fetchAndApplySessionState(joinCode) {
+        if (!joinCode) return;
+        try {
+            const res = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
+            if (!res.ok) return;
+            const data    = await res.json();
+            const session = data?.session || data;
+            if (session?.squad)           window.squad          = session.squad;
+            if (session?.current_matches) window.currentMatches = session.current_matches;
+            if (session?.uuid_map)        window._sessionUUIDMap  = session.uuid_map;
+            // Refresh sideline if it's visible
+            if (typeof SidelineView !== 'undefined' && SidelineView._visible) SidelineView.refresh();
+        } catch { /* silent — non-critical */ }
+    },
+
     async _memberUpsert(p, joinCode) {
         if (typeof memberUpsert !== 'function') return null;
         return await memberUpsert(p.playerUUID, p.playerName);
@@ -548,11 +636,18 @@ const PlayerMode = {
         if (!p || payload.playerUUID !== p.playerUUID) return;
         this._markApprovedInSession(this._joinCode);
         if (payload.token) this._saveToken(this._joinCode, payload.token, p.playerName, p.playerUUID);
+
+        // Apply squad/matches from broadcast payload immediately (fastest path)
         if (payload.squad)           window.squad          = payload.squad;
         if (payload.current_matches) window.currentMatches = payload.current_matches;
-        this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
-        this._subscribeAndPoll(this._joinCode, p);
-        setTimeout(() => this._updateStatus(p), 1500);
+
+        this.setStatus('approved', `You're in, ${p.playerName}! 🎉`, 'Added to the rotation ✅');
+        SidelineView.show();
+
+        // Also fetch full session state to guarantee Live Now is fresh
+        this._fetchAndApplySessionState(this._joinCode).then(() => {
+            this._updateStatus(Passport.get());
+        });
     },
 
     _onGameStateUpdate(payload) {
@@ -653,30 +748,53 @@ const PlayerMode = {
             this._renderIdentity(Passport.get());
         }
         const current = Passport.get();
-        this.setStatus('approved', `You're in, ${current.playerName}!`, 'Added to the rotation ✅');
-        SidelineView.show();
-        setTimeout(() => this._updateStatus(current), 1200);
+
+        // Fetch full session state immediately so Live Now + queue position are populated
+        this._fetchAndApplySessionState(this._joinCode).then(() => {
+            this.setStatus('approved', `You're in, ${current.playerName}! 🎉`, "Added to the rotation ✅");
+            SidelineView.show();
+            setTimeout(() => this._updateStatus(current), 400);
+        });
+
         if (window.Haptic) Haptic.success();
         if (typeof showSessionToast === 'function') showSessionToast("🏀 You're approved! Welcome to the court.");
     },
 
     async _submitJoinRequest(p, joinCode) {
-        this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
+        this.setStatus('pending', 'Request sent! ⏳', 'Waiting for host to approve…');
+
+        // Show a nice waiting card in the matches area
+        const container = document.getElementById('slCurrentMatches');
+        if (container) {
+            container.innerHTML = `
+                <div class="sl-pending-card">
+                    <div class="sl-pending-icon">🏀</div>
+                    <div class="sl-pending-title">REQUEST SENT</div>
+                    <div class="sl-pending-sub">The host will approve you shortly.<br>This screen will update automatically.</div>
+                </div>`;
+        }
+
         try {
             const res = await fetch('/api/play-request', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ room_code: joinCode, name: p.playerName, player_uuid: p.playerUUID }),
             });
-            if (!res.ok) { this.setStatus('pending', 'Could not join', 'Check the room code'); return; }
+            if (!res.ok) {
+                this.setStatus('pending', 'Could not join', 'Check your connection and try again');
+                return;
+            }
             const data = await res.json();
             if (data.alreadyActive) {
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${p.playerName}!`, "You're in the squad ✅");
-                SidelineView.refresh();
-                setTimeout(() => this._updateStatus(p), 800);
+                await this._fetchAndApplySessionState(joinCode);
+                const cur = Passport.get();
+                this.setStatus('approved', `Welcome back, ${cur.playerName}! 🎉`, "You're in the squad ✅");
+                SidelineView.show();
+                setTimeout(() => this._updateStatus(cur), 400);
             }
+            // Otherwise: realtime will deliver _onMemberActivated when host taps Approve
         } catch (e) {
-            this.setStatus('pending', 'Connection failed', 'Check your internet');
+            this.setStatus('pending', 'Connection failed', 'Check your internet and refresh');
             console.error('[PlayerMode] join request failed:', e);
         }
     },
