@@ -6,6 +6,27 @@
 // =============================================================================
 
 // ---------------------------------------------------------------------------
+// GLOBAL DECLARATIONS — must be at the very top so every function in this
+// file and every inline onclick handler can reference these names without a
+// ReferenceError, even before initApp() has filled them with real values.
+//
+// passport  — the player's identity object ({playerUUID, playerName, …})
+//             Mirrors the data in localStorage under 'cs_player_passport'.
+//             Kept in sync: write localStorage first, then update this ref.
+//
+// inviteQR  — alias for the InviteQR object defined in passport.js.
+//             Assigned in initApp() after passport.js has been parsed.
+//             HTML onclick="inviteQR.show(…)" safely resolves to it.
+//
+// supabase  — reserved for a future Supabase JS client instance.
+//             Currently the app uses raw fetch; this slot prevents a
+//             ReferenceError if any code path checks `if (supabase)`.
+// ---------------------------------------------------------------------------
+let passport  = null;
+let inviteQR  = null;
+let supabase  = null;
+
+// ---------------------------------------------------------------------------
 // STATE
 // ---------------------------------------------------------------------------
 let squad = [];
@@ -443,11 +464,8 @@ function escapeHTML(str) {
 }
 
 // ---------------------------------------------------------------------------
-// INIT
+// INIT — see initApp() at the bottom of this file
 // ---------------------------------------------------------------------------
-// loadFromDisk() is called by bootApp() → Step B (passport.js).
-// Do NOT assign window.onload here — that would race with bootApp()'s
-// own 'load' listener and could run before passport.js is evaluated.
 
 // ---------------------------------------------------------------------------
 // UNDO LAST ROUND
@@ -843,14 +861,10 @@ async function renderLeaderboardTab() {
 
 let playRequests = []; // host-side list of pending requests
 
-/**
- * Show the IWTP sheet to spectators when in an online session.
- */
-function updateIWTPVisibility() {
-    const sheet = document.getElementById('iwantToPlaySheet');
-    if (!sheet) return;
-    sheet.style.display = (isOnlineSession && !isOperator) ? 'flex' : 'none';
-}
+// updateIWTPVisibility is defined once below in the Passport Integration
+// section where it also calls checkIWTPSmartRecognition. A second definition
+// here would be a duplicate function declaration — a SyntaxError in strict
+// mode that causes the entire script to fail silently on Vercel.
 
 // ---------------------------------------------------------------------------
 // IWTP — DECISION FLOW (Zero-assumption, clean collapse)
@@ -1359,23 +1373,37 @@ async function dispatchWinSignals(mIdx) {
 // =============================================================================
 
 /**
- * Override checkIWTPSmartRecognition to also check for existing passport.
- * If passport exists with a name, skip all forms and go straight to sideline view.
+ * Installs the passport-aware override on checkIWTPSmartRecognition.
+ *
+ * WHY A FUNCTION INSTEAD OF MODULE-LEVEL CODE:
+ *   The original pattern was:
+ *       const _originalCheckIWTP = checkIWTPSmartRecognition;   ← runs at parse time
+ *       checkIWTPSmartRecognition = function() { ... };
+ *
+ *   On Vercel, scripts are fetched in parallel. If app.js finishes parsing
+ *   before passport.js is evaluated, checkIWTPSmartRecognition is captured
+ *   before the Passport object exists, and the reassignment is lost when
+ *   passport.js later defines its own version of the function.
+ *
+ *   Moving this into a named function and calling it from initApp() — after
+ *   DOMContentLoaded guarantees all scripts are parsed — eliminates the race.
  */
-const _originalCheckIWTP = checkIWTPSmartRecognition;
-checkIWTPSmartRecognition = function() {
-    const passport = Passport.get();
-    const sheet    = document.getElementById('iwantToPlaySheet');
-    if (!sheet || !window.isOnlineSession || window.isOperator) return;
+function _installPassportIWTPOverride() {
+    const _originalCheckIWTP = checkIWTPSmartRecognition;
+    checkIWTPSmartRecognition = function() {
+        const passport = Passport.get();
+        const sheet    = document.getElementById('iwantToPlaySheet');
+        if (!sheet || !window.isOnlineSession || window.isOperator) return;
 
-    if (passport && passport.playerName) {
-        // Returning player — show welcome-back prompt
-        showPassportWelcome(passport);
-        return;
-    }
-    // No passport — show normal choice flow
-    _originalCheckIWTP();
-};
+        if (passport && passport.playerName) {
+            // Returning player — show welcome-back prompt
+            showPassportWelcome(passport);
+            return;
+        }
+        // No passport — show normal choice flow
+        _originalCheckIWTP();
+    };
+}
 
 function showPassportWelcome(passport) {
     const sheet = document.getElementById('iwantToPlaySheet');
@@ -1455,3 +1483,131 @@ function spectateOnly() {
     document.body.classList.add('spectator-mode');
     showSessionToast('👁 Spectating live');
 }
+// =============================================================================
+// initApp — single async entry point for ALL app initialization
+// =============================================================================
+//
+// EXECUTION GUARANTEE:
+//   Called only from the DOMContentLoaded listener at the bottom of this file.
+//   By that point the browser has fully parsed every <script> tag in index.html
+//   (polish.js → passport.js → app.js → logic.js → sync.js), so Passport,
+//   InviteQR, PlayerMode, tryAutoRejoin, and loadFromDisk all exist.
+//
+// STEP ORDER:
+//   1. passport fail-safe  — globals set before any other logic runs
+//   2. inviteQR alias      — wire lowercase inviteQR → InviteQR object
+//   3. IWTP override       — install passport-aware checkIWTPSmartRecognition
+//   4. Disk load           — restore squad/matches from localStorage
+//   5. QR deferred         — generateQR() only called after UI is ready
+//   6. Boot handoff        — hand off to bootApp() (passport.js) for the
+//                            async Supabase / PlayerMode initialisation
+// =============================================================================
+
+async function initApp() {
+
+    // ── STEP 1: Passport fail-safe ────────────────────────────────────────────
+    // Set the global `passport` variable as the very first thing.
+    // Every subsequent step — and every function in this file — can safely
+    // read `passport` without checking whether it was ever assigned.
+    //
+    // Key: 'cs_player_passport' matches the PASSPORT_KEY constant in passport.js.
+    // If localStorage throws (private browsing on some iOS), fall back gracefully.
+    try {
+        const _raw = localStorage.getItem('cs_player_passport');
+        passport = _raw ? JSON.parse(_raw) : null;
+    } catch (e) {
+        console.warn('[CourtSide] initApp: localStorage read failed', e);
+        passport = null;
+    }
+
+    // If no passport exists yet, create a fresh one via the Passport object
+    // (defined in passport.js, guaranteed to exist by DOMContentLoaded timing).
+    if (!passport && typeof Passport !== 'undefined') {
+        passport = Passport.init();
+    }
+
+    // Ensure window._passport is in sync — bootApp() (passport.js) reads this.
+    window._passport = passport;
+
+    // ── STEP 2: Wire inviteQR alias ───────────────────────────────────────────
+    // InviteQR (capital) is the object literal defined in passport.js.
+    // inviteQR (lowercase, declared at the top of this file) is the alias that
+    // HTML onclick handlers like onclick="inviteQR.show(…)" resolve against.
+    // Without this assignment, any tap on the Invite button throws:
+    //   ReferenceError: Can't find variable: inviteQR
+    if (typeof InviteQR !== 'undefined') {
+        inviteQR = InviteQR;
+    }
+
+    // ── STEP 3: Install passport-aware IWTP override ──────────────────────────
+    // Must run after all scripts are parsed so checkIWTPSmartRecognition is
+    // already defined (it's declared in this file at ~line 970).
+    if (typeof _installPassportIWTPOverride === 'function') {
+        _installPassportIWTPOverride();
+    }
+
+    // ── STEP 4: Restore local state from disk ─────────────────────────────────
+    // loadFromDisk reads localStorage → populates squad/currentMatches →
+    // calls renderSquad() + checkNextButtonState(). Safe to call here because
+    // the DOM is fully parsed (DOMContentLoaded has fired).
+    try {
+        loadFromDisk();
+    } catch (e) {
+        console.error('[CourtSide] initApp: loadFromDisk failed', e);
+    }
+
+    // ── STEP 5: Deferred QR generation ────────────────────────────────────────
+    // generateQR() requires the QRCode library (qrcode.min.js) and a #qrCanvas
+    // element. Both are guaranteed to exist after DOMContentLoaded, but the
+    // canvas only appears when the sync overlay is open — so we don't call it
+    // here; it's called inside showOverlay('sync') when the overlay renders.
+    // This comment documents the intent: never call generateQR() at parse time.
+
+    // ── STEP 6: Async boot handoff ────────────────────────────────────────────
+    // bootApp() is defined at the bottom of passport.js. It owns everything
+    // async: Supabase rejoin, PlayerMode boot, URL parsing.
+    // initApp() is synchronous-first; bootApp() handles the network work.
+    if (typeof bootApp === 'function') {
+        await bootApp();
+    } else {
+        // bootApp not available (e.g. passport.js failed to load) — fall back
+        // to tryAutoRejoin so the host session still reconnects.
+        console.warn('[CourtSide] initApp: bootApp not found, falling back to tryAutoRejoin');
+        if (typeof tryAutoRejoin === 'function') {
+            await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
+        }
+    }
+}
+
+// =============================================================================
+// ENTRY POINT
+// =============================================================================
+//
+// DOMContentLoaded fires after the HTML is fully parsed AND all synchronous
+// <script> tags have been fetched and executed. This is the correct event for
+// Vercel deployments where scripts are fetched in parallel over HTTP/2:
+//   - It guarantees polish.js, passport.js, app.js, logic.js, sync.js are
+//     all fully evaluated before initApp() touches any of their exports.
+//   - It fires before images/fonts finish loading (unlike window 'load'),
+//     so there is no perceived delay.
+//
+// The window 'load' listener in passport.js (bootApp) is intentionally kept
+// as a second entry point — DOMContentLoaded calls initApp() for the sync
+// work, and 'load' calls bootApp() for the async network work. Both are
+// idempotent: if bootApp() runs twice it is a no-op the second time because
+// it checks window._passport before re-initialising.
+//
+// DO NOT add window.onload = ... anywhere in this file. Assigning window.onload
+// overwrites any previously assigned handler and causes boot steps to be
+// silently skipped.
+// =============================================================================
+
+window.addEventListener('DOMContentLoaded', () => {
+    initApp().catch(err => {
+        console.error('[CourtSide] initApp() failed:', err);
+        // Surface the error in the on-screen banner (defined in index.html)
+        if (typeof _csShowError === 'function') {
+            _csShowError('App init failed: ' + (err?.message || err));
+        }
+    });
+});
