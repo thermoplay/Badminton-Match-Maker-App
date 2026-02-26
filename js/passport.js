@@ -467,7 +467,7 @@ const PlayerMode = {
         // Survives page refresh within the same tab session.
         if (this._isApprovedInSession(joinCode)) {
             if (panel) panel.classList.remove('sl-booting');
-            this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You're in the rotation');
+            this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
             this._subscribeAndPoll(joinCode, passport);
             return;
         }
@@ -510,7 +510,7 @@ const PlayerMode = {
             this._markApprovedInSession(joinCode);
             this._hydrateFromUpsert(upsertResult);
             const p = Passport.get();
-            this.setStatus('approved', `Welcome back, ${p.playerName}!`, 'You're in the squad ✅');
+            this.setStatus('approved', `Welcome back, ${p.playerName}!`, "You're in the squad ✅");
             SidelineView.refresh();
             setTimeout(() => this._updateStatus(p), 800);
             return;
@@ -522,7 +522,7 @@ const PlayerMode = {
             const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
             if (valid) {
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, 'You're in the squad');
+                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, "You're in the squad");
                 return;
             } else {
                 this._clearToken(joinCode);
@@ -550,7 +550,7 @@ const PlayerMode = {
                 <div class="sl-queued-title">REQUEST SENT</div>
                 <div class="sl-queued-sub">
                     Waiting for the host to approve you.<br>
-                    You’ll be added to the rotation automatically.
+                    You'll be added to the rotation automatically.
                 </div>
                 <button class="sl-queued-resend" id="slResendBtn">Resend Request</button>
                 <div class="sl-queued-note">
@@ -608,7 +608,7 @@ const PlayerMode = {
                 this._markApprovedInSession(this._joinCode);
                 this._hydrateFromUpsert(result);
                 const p = Passport.get();
-                this.setStatus('approved', `You're in, ${p.playerName}!`, 'You’ve been approved ✅');
+                this.setStatus('approved', `You're in, ${p.playerName}!`, "You've been approved ✅");
                 this._clearQueuedState();
                 SidelineView.show();
                 if (window.Haptic) Haptic.success();
@@ -936,7 +936,7 @@ const PlayerMode = {
         // 5. Haptic + toast
         if (window.Haptic) Haptic.success();
         if (typeof showSessionToast === 'function') {
-            showSessionToast('🏀 You're approved! Welcome to the court.');
+            showSessionToast("🏀 You're approved! Welcome to the court.");
         }
     },
 
@@ -967,7 +967,7 @@ const PlayerMode = {
             if (data.alreadyActive) {
                 // Race condition: approved between upsert check and play-request submission
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, 'You're in the squad ✅');
+                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "You're in the squad ✅");
                 SidelineView.refresh();
                 setTimeout(() => this._updateStatus(passport), 800);
                 return;
