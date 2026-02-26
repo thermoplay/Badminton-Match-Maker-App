@@ -1084,3 +1084,213 @@ const PlayerMode = {
         await this._joinSession(Passport.get(), code);
     },
 };
+// =============================================================================
+// COURTSIDE PRO — bootApp()
+// Async boot sequence — guaranteed safe execution order.
+//
+// WHY THIS FILE:
+//   passport.js is the LAST file in the dependency chain
+//   (polish → passport → app → logic → sync). Putting bootApp() here
+//   means every object it references (Passport, PlayerMode, SidelineView,
+//   tryAutoRejoin, loadFromDisk) is already defined by the time this runs.
+//
+// EXECUTION ORDER:
+//   Step A — Init passport from localStorage (or create fresh)
+//   Step B — Init Supabase / sync layer (tryAutoRejoin or PlayerMode)
+//   Step C — Parse URL for roomCode + role
+//   Step D — renderUI() wires up the final visual state
+//
+// VERCEL / PRODUCTION SAFETY:
+//   • All localStorage access is gated behind the window 'load' event.
+//   • Each step is wrapped in try/catch so one failure cannot blank the screen.
+//   • A global `window._passport` reference is set in Step A so every module
+//     that needs the passport object reads the same instance.
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Global passport reference — set once in Step A, read everywhere.
+// Declaring it here (file scope, not function scope) means any module that
+// does `window._passport` or checks `typeof _passport !== 'undefined'`
+// will always see the same object after boot completes.
+// ---------------------------------------------------------------------------
+window._passport = null;
+
+// ---------------------------------------------------------------------------
+// _csBootError — surfaces errors visibly on mobile (no DevTools needed)
+// ---------------------------------------------------------------------------
+function _csBootError(label, err) {
+    console.error(`[CourtSide] ${label}:`, err);
+    // Show the on-screen error banner if it exists (defined in index.html)
+    if (typeof _csShowError === 'function') {
+        _csShowError(`${label}: ${err?.message || String(err)}`);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// bootApp — the single async entry point for ALL initialization
+// ---------------------------------------------------------------------------
+async function bootApp() {
+
+    // ── Guard: localStorage is only available after the window loads ─────────
+    // On Vercel, scripts are sometimes executed in a partial document context.
+    // This check ensures we never touch localStorage before window is ready.
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+        console.warn('[CourtSide] bootApp() called before window ready — aborting');
+        return;
+    }
+
+    // =========================================================================
+    // STEP A — Init passport
+    // Synchronous localStorage read. Sets window._passport so all subsequent
+    // steps and all other modules read the same object — no local shadow copies.
+    // =========================================================================
+    try {
+        window._passport = Passport.init();   // creates UUID if new, reads existing if not
+        console.log('[CourtSide] Step A: passport ready →', window._passport.playerUUID);
+    } catch (err) {
+        _csBootError('Step A (passport init)', err);
+        // Create a minimal in-memory passport so later steps don't null-crash.
+        // This is purely a safety net — it will NOT be persisted until Step D.
+        window._passport = {
+            playerUUID:          'fallback-' + Math.random().toString(36).slice(2),
+            playerName:          '',
+            privateLifetimeWins: 0,
+            privateTotalGames:   0,
+            createdAt:           Date.now(),
+        };
+    }
+
+    // =========================================================================
+    // STEP B — Init Supabase / sync layer
+    // tryAutoRejoin() (defined in sync.js) checks localStorage for a saved
+    // room code and reconnects the WebSocket if one is found. It is safe to
+    // call before Step C because it only touches sync state, not the UI.
+    // For player-mode this step is a no-op (PlayerMode.boot handles its own
+    // connection in Step D).
+    // =========================================================================
+    const params   = new URLSearchParams(window.location.search);
+    const role     = params.get('role');
+    const roomCode = (params.get('join') || '').trim().toUpperCase() || null;
+
+    // Strip ?join= from the URL bar so a hard-refresh doesn't re-trigger join
+    if (roomCode) {
+        const cleanUrl = window.location.origin + window.location.pathname +
+            (role ? `?role=${role}` : '');
+        window.history.replaceState({}, document.title, cleanUrl);
+    }
+
+    if (role !== 'player') {
+        // Host / spectator — init the Supabase sync layer now.
+        // Also loads local squad state via loadFromDisk (defined in app.js).
+        try {
+            if (typeof loadFromDisk === 'function') loadFromDisk();
+            console.log('[CourtSide] Step B: local disk loaded');
+        } catch (err) {
+            _csBootError('Step B (loadFromDisk)', err);
+        }
+
+        try {
+            if (typeof tryAutoRejoin === 'function') await tryAutoRejoin();
+            console.log('[CourtSide] Step B: Supabase rejoin complete');
+        } catch (err) {
+            _csBootError('Step B (tryAutoRejoin)', err);
+            // Non-fatal — app works offline, just won't be in a live session
+        }
+    }
+    // Player-mode Supabase init happens inside PlayerMode.boot() (Step D)
+    // because it needs the join code and passport to be known first.
+
+    // =========================================================================
+    // STEP C — URL parsing (already done above — stored in `role` + `roomCode`)
+    // This step is separated here as a named checkpoint for clarity and for
+    // any future logic that needs to run between B and D.
+    // =========================================================================
+    console.log('[CourtSide] Step C: URL parsed → role=%s roomCode=%s', role, roomCode);
+
+    // =========================================================================
+    // STEP D — renderUI()
+    // All async work is done. Wire up the final visual state.
+    // Called only after A, B, and C are all settled.
+    // =========================================================================
+    try {
+        await renderUI(role, roomCode);
+        console.log('[CourtSide] Step D: renderUI complete');
+    } catch (err) {
+        _csBootError('Step D (renderUI)', err);
+        // Remove booting pulse so the player doesn't see an infinite spinner
+        document.getElementById('sidelinePanel')?.classList.remove('sl-booting');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// renderUI — final render gate
+// Separated from bootApp() so it can be called independently in tests or
+// after a manual rejoin without re-running Steps A–C.
+// ---------------------------------------------------------------------------
+async function renderUI(role, roomCode) {
+    if (role === 'player') {
+        // ── PLAYER MODE ──────────────────────────────────────────────────────
+
+        // Hide host shell elements (belt + suspenders over the CSS rule)
+        const hostRoot = document.getElementById('hostRoot');
+        const hostNav  = document.getElementById('hostNav');
+        if (hostRoot) hostRoot.style.display = 'none';
+        if (hostNav)  hostNav.style.display  = 'none';
+
+        // Show and populate the sideline panel using the globally-set passport
+        if (typeof SidelineView !== 'undefined') {
+            SidelineView.show();
+        }
+
+        // Hand off to PlayerMode — uses window._passport, not a local copy.
+        // PlayerMode.boot() reads Passport.get() internally which is equivalent
+        // to window._passport after Step A; both refer to the same localStorage
+        // snapshot. No risk of stale data.
+        if (typeof PlayerMode !== 'undefined') {
+            await PlayerMode.boot(window._passport, roomCode);
+        }
+
+    } else {
+        // ── HOST / SPECTATOR MODE ─────────────────────────────────────────────
+
+        // Squad + matches already loaded in Step B (loadFromDisk).
+        // Render the squad list and check button state.
+        if (typeof renderSquad === 'function')         renderSquad();
+        if (typeof checkNextButtonState === 'function') checkNextButtonState();
+        if (typeof updateUndoButton === 'function')     updateUndoButton();
+
+        // Update the session badge and IWTP sheet visibility.
+        if (typeof updateSessionUI === 'function')          updateSessionUI();
+        if (typeof updateIWTPVisibility === 'function')     updateIWTPVisibility();
+    }
+}
+
+// =============================================================================
+// ENTRY POINT — single event listener, fires once after ALL scripts load
+//
+// WHY window 'load' and NOT DOMContentLoaded:
+//   DOMContentLoaded fires when the HTML is parsed but BEFORE external <script>
+//   tags finish downloading. On Vercel, parallel script fetching means
+//   passport.js / sync.js / app.js may not all be evaluated yet.
+//   window 'load' fires only after every script, stylesheet, and resource is
+//   fully parsed and executed — guaranteeing Passport, PlayerMode, tryAutoRejoin,
+//   loadFromDisk, etc. are all defined before bootApp() touches them.
+//
+// The DOMContentLoaded block in index.html that renders the instant UI frame
+// (player name, status card) is kept intentionally — it is purely cosmetic
+// raw DOM manipulation with NO JS object references, so it cannot crash.
+// =============================================================================
+window.addEventListener('load', function onWindowLoad() {
+    // Remove listener immediately — boot runs exactly once.
+    window.removeEventListener('load', onWindowLoad);
+
+    bootApp().catch(function (fatalErr) {
+        // Last-resort catch — bootApp's internal try/catches should prevent
+        // this from ever firing, but if they don't, at least log it clearly.
+        console.error('[CourtSide] FATAL: bootApp() threw outside all guards:', fatalErr);
+        if (typeof _csShowError === 'function') {
+            _csShowError('Fatal boot error: ' + (fatalErr?.message || fatalErr));
+        }
+        document.getElementById('sidelinePanel')?.classList.remove('sl-booting');
+    });
+});

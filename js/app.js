@@ -445,8 +445,9 @@ function escapeHTML(str) {
 // ---------------------------------------------------------------------------
 // INIT
 // ---------------------------------------------------------------------------
-
-window.onload = loadFromDisk;
+// loadFromDisk() is called by bootApp() → Step B (passport.js).
+// Do NOT assign window.onload here — that would race with bootApp()'s
+// own 'load' listener and could run before passport.js is evaluated.
 
 // ---------------------------------------------------------------------------
 // UNDO LAST ROUND

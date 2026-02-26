@@ -577,58 +577,16 @@
         });
 
         // ── FULL BOOT — runs after all scripts have loaded ────────────────────
-        // The frame is already visible from DOMContentLoaded above.
-        // This phase does the async work: DB handshake, realtime subscription,
-        // approval check. Errors here don't blank the screen.
-
-        const _originalLoad = window.onload;
-        window.onload = async function () {
-            try {
-                if (_originalLoad) _originalLoad();
-            } catch (e) {
-                console.error('[CourtSide] Original onload error:', e);
-            }
-
-            try {
-                const params   = new URLSearchParams(window.location.search);
-                const role     = params.get('role');
-                const joinCode = params.get('join');
-
-                if (role === 'player') {
-                    // ── PLAYER MODE ─────────────────────────────────────────
-                    // Frame is already on screen from DOMContentLoaded above.
-
-                    // 1. Init passport (creates UUID if new, returns existing if not)
-                    const passport = Passport.init();
-
-                    // 2. Ensure host shell is hidden (CSS already hides it, this
-                    //    is the explicit JS belt + suspenders)
-                    const hostRoot = document.getElementById('hostRoot');
-                    const hostNav  = document.getElementById('hostNav');
-                    if (hostRoot) hostRoot.style.display = 'none';
-                    if (hostNav)  hostNav.style.display  = 'none';
-
-                    // 3. Run SidelineView.show() — panel is already visible but
-                    //    this populates the SidelineView._visible flag and runs
-                    //    a full refresh to populate match data if available.
-                    SidelineView.show();
-
-                    // 4. Boot PlayerMode — the async DB handshake.
-                    //    The panel is already rendered; boot() only updates content.
-                    await PlayerMode.boot(passport, joinCode);
-
-                } else {
-                    // ── HOST / SPECTATOR MODE ────────────────────────────────
-                    await tryAutoRejoin();
-                }
-            } catch (bootErr) {
-                console.error('[CourtSide] window.onload boot failed:', bootErr);
-                _csShowError('Session boot failed: ' + bootErr.message);
-                // Remove pulsing state — show static error
-                const panel = document.getElementById('sidelinePanel');
-                if (panel) panel.classList.remove('sl-booting');
-            }
-        };
+        // ── FULL BOOT ────────────────────────────────────────────────────────
+        // Handled entirely by bootApp() defined at the bottom of passport.js.
+        //
+        // bootApp() attaches its own window 'load' listener and runs the
+        // ordered sequence: Step A (passport) → Step B (Supabase) →
+        // Step C (URL) → Step D (renderUI).
+        //
+        // DO NOT add a window.onload or window 'load' listener here.
+        // Doing so would race with bootApp() and risk running before
+        // passport.js / sync.js / app.js have finished evaluating.
     </script>
 </body>
 </html>
