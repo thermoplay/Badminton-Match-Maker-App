@@ -58,7 +58,8 @@ export default async function handler(req, res) {
                         member,
                     });
                 }
-                // Status is 'pending' — update name in case it changed, fall through to notify host
+                // Status is 'pending' — update name in case it changed, then fall through
+                // to insert into play_requests so the host gets the notification.
                 if (member.player_name !== trimmed) {
                     await sbFetch(
                         `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
@@ -69,8 +70,8 @@ export default async function handler(req, res) {
                         }
                     );
                 }
-                // Don't create a duplicate play_request if one already exists
-                return res.status(200).json({ ok: true, alreadyActive: false });
+                // DO NOT return early — fall through to Step 3 so play_requests
+                // gets the row and the host sees the notification badge.
             }
         }
 
