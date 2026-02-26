@@ -296,13 +296,17 @@ async function memberRename(playerUUID, newName) {
  * to decide whether to bypass the pending screen.
  */
 async function memberUpsert(playerUUID, playerName) {
-    if (!currentRoomCode || !playerUUID || !playerName) return null;
+    // currentRoomCode is a `let` in sync.js scope.
+    // passport.js sets window.currentRoomCode before calling — use that as fallback.
+    const roomCode = currentRoomCode || window.currentRoomCode || null;
+    if (!roomCode || !playerUUID || !playerName) return null;
+    currentRoomCode = roomCode; // keep local var in sync for everything else
     try {
         const r = await fetch('/api/member-upsert', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
-                room_code:   currentRoomCode,
+                room_code:   roomCode,
                 player_uuid: playerUUID,
                 player_name: playerName,
             }),

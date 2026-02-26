@@ -554,6 +554,12 @@ const PlayerMode = {
         //
         // Instead we set the three globals that sync.js functions depend on
         // directly and synchronously — zero network cost, zero DOM side effects.
+        // Write to window so sync.js's memberUpsert() can read it.
+        // sync.js declares `let currentRoomCode` in its own scope — passport.js
+        // cannot write to that variable directly. window.currentRoomCode crosses
+        // the script boundary and is read as a fallback in memberUpsert().
+        window.currentRoomCode = joinCode;
+        window.isOnlineSession = true;
         if (typeof currentRoomCode !== 'undefined') currentRoomCode = joinCode;
         if (typeof isOnlineSession !== 'undefined') isOnlineSession  = true;
         // isOperator stays false — players are never operators
