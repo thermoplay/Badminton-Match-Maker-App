@@ -327,19 +327,6 @@ function _handleBroadcast(payload) {
         return;
     }
 
-    // Player removed by host — clear approval, show rejoin button
-    if (type === 'player_removed') {
-        if (!isOperator && typeof PlayerMode !== 'undefined') {
-            const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
-            if (p && (payload.playerUUID === p.playerUUID || payload.playerName === p.playerName)) {
-                if (typeof PlayerMode._onRemovedFromSession === 'function') {
-                    PlayerMode._onRemovedFromSession();
-                }
-            }
-        }
-        return;
-    }
-
     // BUG 2: Live game state — update player feed immediately
     if (type === 'game_state') {
         if (!isOperator) {
@@ -607,11 +594,6 @@ function _handleMemberChange(record, oldRecord, eventType) {
         if (typeof PlayerMode !== 'undefined') {
             PlayerMode._onMemberActivated(record);
         }
-    } else if (eventType === 'DELETE' || record.status === 'pending') {
-        // Host removed/kicked this player — notify them so they can re-request
-        if (typeof PlayerMode !== 'undefined' && typeof PlayerMode._onRemovedFromSession === 'function') {
-            PlayerMode._onRemovedFromSession();
-        }
     }
 }
 
@@ -633,6 +615,13 @@ function leaveSession() {
 }
 
 function showReconnectingIndicator(show) {
+    // For players: never show the UI indicator — log to console only.
+    // For host: show the non-blocking drop-down pill.
+    if (!isOperator) {
+        if (show) console.info('[CourtSide] Connection interrupted, attempting to reconnect…');
+        else      console.info('[CourtSide] Reconnected.');
+        return;
+    }
     let el = document.getElementById('reconnectIndicator');
     if (!el) {
         el = document.createElement('div');
