@@ -97,7 +97,10 @@ function editPlayerName() {
 
 function deletePlayer() {
     if (!confirm('Remove this player?')) return;
-    const removedName = squad[selectedPlayerIndex].name;
+    const removed = squad[selectedPlayerIndex];
+    const removedName = removed.name;
+    const removedUUID = removed.uuid || null;
+
     squad.splice(selectedPlayerIndex, 1);
     currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
     closeMenu();
@@ -107,6 +110,11 @@ function deletePlayer() {
     renderSavedMatches();
     checkNextButtonState();
     saveToDisk();
+
+    // Tell the removed player's screen immediately
+    if (isOnlineSession && typeof _broadcast === 'function') {
+        _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
+    }
 }
 
 function toggleRestingState() {
