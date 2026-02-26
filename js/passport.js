@@ -410,28 +410,88 @@ const PlayerMode = {
 
         if (!joinCode) { this._promptForCode(); return; }
 
-        // sessionStorage: fast refresh skip (survives refresh, clears on tab close)
+        // ── TIER 1: sessionStorage fast-path ─────────────────────────────
+        // Survives page refresh within the same browser tab session.
+        // Written when we receive approval (broadcast or DB); clears on tab close.
         if (this._isApprovedInSession(joinCode)) {
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You\'re in the rotation');
             this._subscribeAndPoll(joinCode, passport);
             return;
         }
 
-        // localStorage token: slower but cross-session
+        // ── TIER 2: "Invisible Passport" — DB handshake ───────────────────
+        // The player has a localStorage passport with a UUID.
+        // Subscribe to realtime FIRST (so we catch the approval event even if
+        // the DB write happens before we finish polling).
+        this._subscribeAndPoll(joinCode, passport);
+
+        // Call member-upsert: creates pending row if new, or returns existing
+        // status if returning. This is non-blocking from the UI perspective.
+        this.setStatus('pending', 'Checking session…', 'Looking up your passport…');
+
+        const upsertResult = await this._memberUpsert(passport, joinCode);
+
+        if (upsertResult?.status === 'active') {
+            // ── RETURNING APPROVED PLAYER ─────────────────────────────────
+            // This is the "Approval Memory" path — DB already has them as active.
+            // Bypass the pending screen entirely.
+            this._markApprovedInSession(joinCode);
+            this._hydrateFromUpsert(upsertResult);
+            this.setStatus('approved', `Welcome back, ${passport.playerName}!`, 'You\'re in the squad ✅');
+            SidelineView.refresh();
+            setTimeout(() => this._updateStatus(passport), 800);
+            return;
+        }
+
+        // ── TIER 3: localStorage token fallback ──────────────────────────
+        // For older sessions where session_members may not have this player.
         const savedToken = this._loadToken(joinCode);
         if (savedToken) {
             const valid = await this._verifyToken(joinCode, savedToken, passport);
             if (valid) {
                 this._markApprovedInSession(joinCode);
                 this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You\'re in the squad');
-                this._subscribeAndPoll(joinCode, passport);
                 return;
             } else {
                 this._clearToken(joinCode);
             }
         }
 
-        await this._joinSession(passport, joinCode);
+        // ── TIER 4: New join — show pending screen ────────────────────────
+        // The realtime subscription is already active (started in Tier 2).
+        // _onMemberActivated() will fire when the host approves.
+        if (!passport.playerName) {
+            // No name yet — prompt once
+            const name = await this._promptName();
+            if (!name) return;
+            Passport.rename(name);
+            this._renderIdentity(Passport.get());
+        }
+
+        await this._submitJoinRequest(Passport.get(), joinCode);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MEMBER UPSERT — calls /api/member-upsert (via sync.js helper)
+    // Returns { status: 'pending'|'active', member } or null on failure.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async _memberUpsert(passport, joinCode) {
+        if (typeof memberUpsert !== 'function') return null;
+        return await memberUpsert(passport.playerUUID, passport.playerName);
+    },
+
+    _hydrateFromUpsert(upsertResult) {
+        // Optionally update local name if server has a different one
+        // (e.g. host edited it, or player joined from a different device)
+        if (upsertResult?.member?.player_name) {
+            const serverName = upsertResult.member.player_name;
+            const passport   = Passport.get();
+            if (passport && passport.playerName !== serverName) {
+                Passport.rename(serverName);
+                this._renderIdentity(Passport.get());
+            }
+        }
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -613,34 +673,84 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // JOIN SESSION
+    // DB APPROVAL — broadcast 'session_members' postgres_changes UPDATE
+    // Fired by _handleMemberChange in sync.js when status flips to 'active'.
+    // This is the "Approval Memory" realtime delivery path.
     // ─────────────────────────────────────────────────────────────────────────
 
-    async _joinSession(passport, joinCode) {
-        this.setStatus('pending', 'Joining session…', 'Connecting to ' + joinCode);
+    _onMemberActivated(memberRecord) {
+        const passport = Passport.get();
+        if (!passport) return;
+        // Strict UUID check — only react to our own row
+        if (memberRecord.player_uuid !== passport.playerUUID) return;
+
+        // 1. Write sessionStorage first (enables fast refresh skip next time)
+        this._markApprovedInSession(this._joinCode);
+
+        // 2. Update name if host edited it during approval
+        if (memberRecord.player_name && memberRecord.player_name !== passport.playerName) {
+            Passport.rename(memberRecord.player_name);
+            this._renderIdentity(Passport.get());
+        }
+
+        // 3. Show approved status
+        const p = Passport.get();
+        this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
+
+        // 4. Show sideline view and compute queue position
+        SidelineView.show();
+        setTimeout(() => this._updateStatus(p), 1200);
+
+        // 5. Haptic + toast
+        if (window.Haptic) Haptic.success();
+        if (typeof showSessionToast === 'function') {
+            showSessionToast('🏀 You're approved! Welcome to the court.');
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // JOIN SESSION — submit the play request to host
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async _submitJoinRequest(passport, joinCode) {
+        this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
         try {
-            this._subscribeAndPoll(joinCode, passport);
-            let name = passport.playerName;
-            if (!name) {
-                name = await this._promptName();
-                if (!name) return;
-                Passport.rename(name);
-                this._renderIdentity(Passport.get());
-            }
             const res = await fetch('/api/play-request', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ room_code: joinCode, name, player_uuid: passport.playerUUID }),
+                body:    JSON.stringify({
+                    room_code:   joinCode,
+                    name:        passport.playerName,
+                    player_uuid: passport.playerUUID,
+                }),
             });
-            if (res.ok) {
-                this.setStatus('pending', 'Request sent!', 'Waiting for host to approve…');
-            } else {
+
+            if (!res.ok) {
                 this.setStatus('pending', 'Could not join', 'Check the room code and try again');
+                return;
             }
+
+            const data = await res.json();
+
+            if (data.alreadyActive) {
+                // Race condition: approved between upsert check and play-request submission
+                this._markApprovedInSession(joinCode);
+                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, 'You're in the squad ✅');
+                SidelineView.refresh();
+                setTimeout(() => this._updateStatus(passport), 800);
+            }
+            // Otherwise: stay on pending screen, wait for _onMemberActivated()
+            // which fires when the host approves via the realtime channel.
+
         } catch(e) {
             this.setStatus('pending', 'Connection failed', 'Check your internet');
-            console.error('[PlayerMode] join failed:', e);
+            console.error('[PlayerMode] join request failed:', e);
         }
+    },
+
+    // Legacy _joinSession — kept for compatibility with any external callers
+    async _joinSession(passport, joinCode) {
+        return this._submitJoinRequest(passport, joinCode);
     },
 
     _subscribeAndPoll(joinCode, passport) {

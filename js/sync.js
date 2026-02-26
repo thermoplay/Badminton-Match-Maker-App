@@ -26,6 +26,10 @@ let operatorKeyHash   = null;
 let realtimeChannel   = null;
 let syncDebounceTimer = null;
 
+// session_members realtime state
+// Key: player_uuid → { player_uuid, player_name, status, room_code }
+window._sessionMembers = {};
+
 const _RT_URL = 'wss://crqwaqovoqmlyvqeekhk.supabase.co/realtime/v1/websocket';
 const _RT_KEY = 'sb_publishable_2NEOSY4wadPb93X55k_uvg_ASydylcv';
 
@@ -240,6 +244,75 @@ function broadcastNameUpdate(playerUUID, oldName, newName) {
 }
 
 // ---------------------------------------------------------------------------
+// SESSION MEMBERS — DB operations called from app.js
+// ---------------------------------------------------------------------------
+
+/**
+ * Called by approvePlayRequest() in app.js after adding the player to squad.
+ * Flips session_members.status → 'active' via the serverless API.
+ * This DB write triggers a Supabase Realtime postgres_changes UPDATE event
+ * that the player's phone receives in _handleMemberChange().
+ */
+async function memberApprove(playerUUID) {
+    if (!isOperator || !currentRoomCode || !operatorKey || !playerUUID) return;
+    try {
+        const r = await fetch('/api/member-approve', {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:    currentRoomCode,
+                player_uuid:  playerUUID,
+                operator_key: operatorKey,
+            }),
+        });
+        if (!r.ok) console.error('[CourtSide] member-approve failed:', r.status);
+    } catch (e) { console.error('[CourtSide] member-approve error:', e); }
+}
+
+/**
+ * Called by passportRename() in app.js after the player updates their name.
+ * Updates session_members.player_name → triggers host realtime listener.
+ */
+async function memberRename(playerUUID, newName) {
+    if (!currentRoomCode || !playerUUID || !newName) return;
+    try {
+        const r = await fetch('/api/member-rename', {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:   currentRoomCode,
+                player_uuid: playerUUID,
+                new_name:    newName,
+            }),
+        });
+        if (!r.ok) console.error('[CourtSide] member-rename failed:', r.status);
+    } catch (e) { console.error('[CourtSide] member-rename error:', e); }
+}
+
+/**
+ * Called by PlayerMode.boot() in passport.js.
+ * Upserts a session_members row (pending if new, preserves active if returning).
+ * Returns { status: 'pending' | 'active', member } — caller uses this
+ * to decide whether to bypass the pending screen.
+ */
+async function memberUpsert(playerUUID, playerName) {
+    if (!currentRoomCode || !playerUUID || !playerName) return null;
+    try {
+        const r = await fetch('/api/member-upsert', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:   currentRoomCode,
+                player_uuid: playerUUID,
+                player_name: playerName,
+            }),
+        });
+        if (!r.ok) { console.error('[CourtSide] member-upsert failed:', r.status); return null; }
+        return await r.json();  // { ok, status, member }
+    } catch (e) { console.error('[CourtSide] member-upsert error:', e); return null; }
+}
+
+// ---------------------------------------------------------------------------
 // HANDLE INCOMING BROADCAST EVENTS
 // ---------------------------------------------------------------------------
 
@@ -365,6 +438,28 @@ function subscribeRealtime(roomCode) {
             payload: { config: { broadcast: { self: false } } },
             ref: '2',
         }));
+
+        // Channel 3: postgres_changes on session_members
+        // HOST:   receives ALL member changes for this room (name updates, new joins)
+        // PLAYER: receives their OWN row change (status flip pending→active = approval)
+        // Both use the same channel but filter differently client-side in _handleMemberChange.
+        ws.send(JSON.stringify({
+            topic: `realtime:public:session_members`,
+            event: 'phx_join',
+            payload: {
+                config: {
+                    broadcast:        { self: false },
+                    presence:         { key: '' },
+                    postgres_changes: [{
+                        event:  '*',        // INSERT, UPDATE, DELETE
+                        schema: 'public',
+                        table:  'session_members',
+                        filter: `room_code=eq.${roomCode}`,
+                    }],
+                },
+            },
+            ref: '3',
+        }));
     };
 
     ws.onmessage = (msg) => {
@@ -375,10 +470,22 @@ function subscribeRealtime(roomCode) {
                 ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: '3' }));
                 return;
             }
-            // postgres_changes — non-operators only (spectators, players)
-            if (data.event === 'postgres_changes' && !isOperator) {
+            // postgres_changes — route by table
+            if (data.event === 'postgres_changes') {
+                const table  = data.payload?.data?.table || data.payload?.table;
                 const record = data.payload?.data?.record;
-                if (record) applyRemoteState(record);
+                const old    = data.payload?.data?.old_record;
+
+                if (table === 'session_members' || data.payload?.data?.table === 'session_members') {
+                    // session_members change — ALL subscribers handle this
+                    if (record) _handleMemberChange(record, old, data.payload?.data?.type);
+                    return;
+                }
+
+                // sessions table change — non-operators only (legacy full-state sync)
+                if (!isOperator && record) {
+                    applyRemoteState(record);
+                }
                 return;
             }
             // Broadcast events — all subscribers
@@ -438,6 +545,56 @@ function applyRemoteState(session) {
         if (typeof checkIWTPSmartRecognition === 'function') checkIWTPSmartRecognition();
     }
     if (currentMatches.length > 0 && currentMatches.length !== prevCount) Haptic.bump();
+}
+
+// ---------------------------------------------------------------------------
+// SESSION MEMBERS — realtime change handler
+// Called for ANY postgres_changes event on session_members for this room.
+// ---------------------------------------------------------------------------
+
+function _handleMemberChange(record, oldRecord, eventType) {
+    if (!record) return;
+
+    const uuid = record.player_uuid;
+    const name = record.player_name;
+
+    // ── HOST: member roster update ─────────────────────────────────────────
+    // Update _sessionMembers cache, then refresh squad names + notification badge.
+    if (isOperator) {
+        if (eventType === 'INSERT') {
+            // New pending member — add to cache
+            window._sessionMembers[uuid] = record;
+            // No immediate squad change — host approves via the notification
+            // (play_requests table still drives the approval UI)
+
+        } else if (eventType === 'UPDATE') {
+            const prev = window._sessionMembers[uuid] || {};
+            window._sessionMembers[uuid] = record;
+
+            // Name change? Update squad in-memory and re-render.
+            if (prev.player_name && prev.player_name !== name) {
+                // Delegate to _applyNameUpdate which handles uuid_map + squad + render
+                _applyNameUpdate(uuid, prev.player_name, name);
+                showSessionToast(`✏️ ${prev.player_name} → ${name}`);
+            }
+        } else if (eventType === 'DELETE') {
+            delete window._sessionMembers[uuid];
+        }
+        return;
+    }
+
+    // ── PLAYER: own-row status change ──────────────────────────────────────
+    // Check if this record belongs to THIS player's passport.
+    const passport = (typeof Passport !== 'undefined') ? Passport.get() : null;
+    if (!passport || uuid !== passport.playerUUID) return;
+
+    if (record.status === 'active') {
+        // Host approved us — bypass pending screen, show sideline view immediately.
+        // This fires on BOTH initial approval AND on page refresh (if already active).
+        if (typeof PlayerMode !== 'undefined') {
+            PlayerMode._onMemberActivated(record);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

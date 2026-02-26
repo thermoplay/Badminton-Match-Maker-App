@@ -1118,6 +1118,14 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     showSessionToast(`✅ ${name} added`);
     Haptic.success();
 
+    // PART 1: Flip session_members.status → 'active' in the database.
+    // This DB write triggers a Supabase Realtime postgres_changes event that
+    // the player's phone receives in _handleMemberChange() → _onMemberActivated().
+    // This is the "Approval Memory" mechanism — survives page refresh.
+    if (typeof memberApprove === 'function' && playerUUID) {
+        memberApprove(playerUUID);   // non-blocking, fire and forget
+    }
+
     // BUG 1 FIX: broadcast approval INSTANTLY via the broadcast channel.
     // The player's _onApprovalReceived handler catches this, matches UUID,
     // saves token to sessionStorage, and flips UI to active sideline view.
@@ -1222,6 +1230,13 @@ function passportRename() {
         if (typeof broadcastNameUpdate === 'function') {
             broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
         }
+    }
+
+    // 5. PART 1: Also write new name to session_members table.
+    // This triggers the host's postgres_changes listener (_handleMemberChange)
+    // which updates the squad name on the big screen in real-time — no refresh.
+    if (window.isOnlineSession && window.currentRoomCode && typeof memberRename === 'function') {
+        memberRename(passport.playerUUID, trimmed);   // non-blocking
     }
 
     showSessionToast(`✅ Name updated to ${trimmed}`);
