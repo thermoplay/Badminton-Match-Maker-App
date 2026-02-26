@@ -358,10 +358,18 @@ const InviteQR = {
         // Remove any existing overlay before creating a new one
         if (this._overlay) this._overlay.remove();
 
-        // Build the join URL — same format the host QR uses
-        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${code}&role=player`;
+        // ── JOIN URL — identical construction to the host's Session Hub QR ──────
+        // MUST use ?join= because that is the parameter read by:
+        //   index.html boot    → params.get('join')
+        //   sync.js            → urlParams.get('join')
+        //   PlayerMode.boot()  → joinCode argument from index.html
+        // Using any other parameter name produces "No Room Code" on the player screen.
+        const joinUrl = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
 
-        // Build overlay DOM
+        // Log so both host and player can verify in console
+        console.log('[CourtSide] InviteQR generating for:', joinUrl);
+
+        // Build overlay DOM — use a div for the QR so qrcodejs can append into it
         this._overlay = document.createElement('div');
         this._overlay.className = 'sl-invite-overlay';
         this._overlay.innerHTML = `
@@ -371,7 +379,7 @@ const InviteQR = {
                     <button class="sl-invite-close" id="inviteCloseBtn">✕</button>
                 </div>
                 <div class="sl-invite-sub">Scan to join this session</div>
-                <canvas id="inviteQrCanvas" class="sl-invite-canvas"></canvas>
+                <div id="inviteQrDiv" class="sl-invite-canvas" style="display:flex;justify-content:center;margin:0 auto;"></div>
                 <div class="sl-invite-code">${code}</div>
                 <div class="sl-invite-hint">Players who scan will see the player view</div>
                 <button class="sl-invite-copy-btn" id="inviteCopyBtn">
@@ -399,24 +407,38 @@ const InviteQR = {
         // Animate in on next frame
         requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
 
-        // Generate QR code — same options as the host's QR in showOverlay('sync')
-        if (window.QRCode) {
-            QRCode.toCanvas(
-                this._overlay.querySelector('#inviteQrCanvas'),
-                joinUrl,
+        // ── QR GENERATION — mirrors host QR exactly ───────────────────────────
+        // QRCodeConstructor (qrcodejs) is saved in index.html before qrcode@1.5.1
+        // overwrites the global. Fall back to QRCode.toCanvas if only one library loaded.
+        const qrDiv  = this._overlay.querySelector('#inviteQrDiv');
+        const QRCtor = window.QRCodeConstructor;
+
+        if (qrDiv && QRCtor) {
+            // Use the same constructor API as the host QR
+            new QRCtor(qrDiv, {
+                text:         joinUrl,
+                width:        220,
+                height:       220,
+                colorDark:    '#0a0a0f',
+                colorLight:   '#ffffff',
+                correctLevel: QRCtor.CorrectLevel?.H || 0,
+            });
+        } else if (qrDiv && window.QRCode && typeof window.QRCode.toCanvas === 'function') {
+            // Fallback: qrcode@1.5.1 toCanvas API (canvas element needed)
+            const canvas = document.createElement('canvas');
+            qrDiv.appendChild(canvas);
+            window.QRCode.toCanvas(canvas, joinUrl,
                 { width: 220, margin: 2, color: { dark: '#0a0a0f', light: '#ffffff' } },
                 err => { if (err) console.error('[InviteQR] QR gen failed:', err); }
             );
-        } else {
-            // QRCode library not loaded — show the URL as tappable text instead
-            const canvas = this._overlay.querySelector('#inviteQrCanvas');
-            if (canvas) {
-                canvas.style.display = 'none';
-                const txt = document.createElement('div');
-                txt.className   = 'sl-invite-url';
-                txt.textContent = joinUrl;
-                canvas.parentNode.insertBefore(txt, canvas.nextSibling);
-            }
+        } else if (qrDiv) {
+            // Both libraries unavailable — show the URL as tappable text
+            console.warn('[InviteQR] No QRCode library available, showing plain URL');
+            const txt = document.createElement('div');
+            txt.className   = 'sl-invite-url';
+            txt.textContent = joinUrl;
+            txt.style.cssText = 'word-break:break-all;font-size:11px;color:#00ffa3;padding:12px;text-align:center;';
+            qrDiv.appendChild(txt);
         }
     },
 

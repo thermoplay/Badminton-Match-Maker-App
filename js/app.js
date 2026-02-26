@@ -286,7 +286,7 @@ function showOverlay(type) {
                     <p style="font-size:0.7rem; color:var(--text-muted); margin:0 0 20px;">
                         ${isOperator ? 'Share this code — anyone can join as spectator' : 'You are viewing as spectator'}
                     </p>
-                    <canvas id="qrCanvas"></canvas>
+                    <div id="qrcode" style="display:flex;justify-content:center;margin:0 auto 8px;"></div>
                     <button class="btn-main" style="width:100%; margin-top:16px; background:var(--accent); color:#000;"
                         onclick="copySyncToken()">Copy Room Code</button>
                     ${isOperator ? `
@@ -354,12 +354,44 @@ function showOverlay(type) {
         `;
 
         if (isOnlineSession) {
-            // QR encodes the full join URL so scanning opens the app and auto-joins
-            const joinUrl = `${window.location.origin}${window.location.pathname}?join=${currentRoomCode}&role=player`;
-            QRCode.toCanvas(document.getElementById('qrCanvas'), joinUrl, {
-                width: 200, margin: 2,
-                color: { dark: '#000000', light: '#ffffff' }
-            });
+            // ── HOST QR CODE ────────────────────────────────────────────────────
+            // Null guard: currentRoomCode must be set before we generate the QR.
+            // If it's missing the session was never properly created — show an error
+            // instead of encoding an invalid URL that leaves players with "No Room Code".
+            if (!currentRoomCode) {
+                console.error('[CourtSide] generateQR: currentRoomCode is null or undefined — QR not generated');
+                const qrDiv = document.getElementById('qrcode');
+                if (qrDiv) qrDiv.innerHTML = '<p style="color:#ef4444;font-size:12px;text-align:center;">Room code missing — try ending and restarting the session.</p>';
+            } else {
+                // URL construction: ?join= is the parameter that index.html,
+                // sync.js (tryAutoRejoin), and passport.js (InviteQR) all read.
+                // Using ?room= here would break every reader and produce "No Room Code".
+                const joinUrl = window.location.origin + window.location.pathname + '?join=' + currentRoomCode + '&role=player';
+
+                // Verify the URL in the host console before the QR renders
+                console.log('[CourtSide] Generating QR for:', joinUrl);
+
+                // Use the qrcodejs constructor API as instructed.
+                // QRCodeConstructor is saved in index.html before qrcode@1.5.1 overwrites the global.
+                const QRCtor = window.QRCodeConstructor || window.QRCode;
+                const qrDiv  = document.getElementById('qrcode');
+                if (qrDiv && QRCtor) {
+                    // Clear any previous QR (e.g. overlay reopened)
+                    qrDiv.innerHTML = '';
+                    new QRCtor(qrDiv, {
+                        text:          joinUrl,
+                        width:         200,
+                        height:        200,
+                        colorDark:     '#000000',
+                        colorLight:    '#ffffff',
+                        correctLevel:  QRCtor.CorrectLevel?.H || 0,
+                    });
+                } else if (qrDiv) {
+                    // Both QR libraries unavailable (CDN failure) — show the URL as tap-to-copy text
+                    console.warn('[CourtSide] QRCode library not loaded, showing plain URL');
+                    qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
+                }
+            }
         }
     }
 }
@@ -374,15 +406,20 @@ function closeOverlay() {
 // ---------------------------------------------------------------------------
 
 function generateQR() {
+    // Local backup path — encodes squad+matches as a base64 token (not a URL).
+    // Uses the same div#qrcode element as the host session QR.
     const token = btoa(JSON.stringify({ squad, currentMatches }));
-    const canvas = document.getElementById('qrCanvas');
-    if (!canvas) return;
-    QRCode.toCanvas(canvas, token, {
-        width: 200,
-        margin: 2,
-        color: { dark: '#000000', light: '#ffffff' }
-    }, err => {
-        if (err) console.error('CourtSide: QR generation failed.', err);
+    const qrDiv = document.getElementById('qrcode');
+    if (!qrDiv) return;
+    qrDiv.innerHTML = '';
+    const QRCtor = window.QRCodeConstructor || window.QRCode;
+    if (!QRCtor) { console.error('[CourtSide] generateQR: QRCode library not loaded'); return; }
+    new QRCtor(qrDiv, {
+        text:         token,
+        width:        200,
+        height:       200,
+        colorDark:    '#000000',
+        colorLight:   '#ffffff',
     });
 }
 
@@ -954,19 +991,11 @@ async function submitIWantToPlay() {
 
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
-    // Resolve player UUID from Passport so the host can fire approval memory.
-    // Without player_uuid, approvePlayRequest() gets null, memberApprove(null)
-    // is skipped, and the Supabase Realtime approval signal never fires — the
-    // player is stuck on "pending" even after the host taps Approve.
-    const playerUUID = (typeof Passport !== 'undefined')
-        ? (Passport.get()?.playerUUID || Passport.init().playerUUID)
-        : null;
-
     try {
         const res = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ room_code: currentRoomCode, name, player_uuid: playerUUID }),
+            body:    JSON.stringify({ room_code: currentRoomCode, name }),
         });
 
         if (res.ok) {
@@ -1230,115 +1259,39 @@ function passportInit() {
 /**
  * Rename flow — triggered by tapping the player name in sideline view.
  */
-/**
- * Rename flow — triggered by tapping the ✏️ Edit name button in sideline view.
- *
- * WHY NO prompt():
- *   iOS Safari blocks window.prompt() in standalone PWA mode (home screen installs)
- *   and in some WKWebView contexts. It silently returns null — the user taps, nothing
- *   happens. We replace it with an in-page overlay that works everywhere.
- */
 function passportRename() {
     const passport = Passport.get();
     if (!passport) return;
 
-    // Build an in-page rename overlay (works in PWA / iOS standalone mode)
-    const existing = document.getElementById('_renameOverlay');
-    if (existing) existing.remove();
+    const newName = prompt('Update your name:', passport.playerName);
+    if (!newName || !newName.trim()) return;
 
-    const overlay = document.createElement('div');
-    overlay.id = '_renameOverlay';
-    overlay.style.cssText = [
-        'position:fixed', 'inset:0', 'z-index:9998',
-        'background:rgba(0,0,0,0.75)', 'display:flex',
-        'align-items:center', 'justify-content:center',
-        'padding:24px', 'box-sizing:border-box',
-    ].join(';');
+    const trimmed = newName.trim();
+    const oldName = passport.playerName;
 
-    overlay.innerHTML = `
-        <div style="
-            background:#1a1a2e; border:1px solid rgba(255,255,255,0.1);
-            border-radius:16px; padding:28px 24px; width:100%; max-width:340px;
-            box-shadow:0 20px 60px rgba(0,0,0,0.6);
-        ">
-            <div style="font-size:13px;font-weight:700;letter-spacing:2px;color:rgba(255,255,255,0.45);margin-bottom:16px;">
-                EDIT NAME
-            </div>
-            <input id="_renameInput" type="text"
-                value="${(passport.playerName || '').replace(/"/g, '&quot;')}"
-                maxlength="30"
-                autocomplete="off" autocorrect="off" autocapitalize="words"
-                style="
-                    width:100%; box-sizing:border-box;
-                    background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15);
-                    border-radius:10px; padding:14px 16px; color:#fff;
-                    font-size:17px; font-weight:600; outline:none;
-                    -webkit-appearance:none;
-                "
-            >
-            <div style="display:flex;gap:10px;margin-top:16px;">
-                <button id="_renameCancel" style="
-                    flex:1; padding:13px; border-radius:10px;
-                    background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
-                    color:rgba(255,255,255,0.6); font-size:15px; font-weight:600; cursor:pointer;
-                ">Cancel</button>
-                <button id="_renameSave" style="
-                    flex:2; padding:13px; border-radius:10px;
-                    background:#00ffa3; border:none;
-                    color:#000; font-size:15px; font-weight:700; cursor:pointer;
-                ">Save Name</button>
-            </div>
-        </div>`;
+    // BUG 3 FIX: write localStorage FIRST, then update UI, then broadcast.
+    // This order prevents any render reading stale data.
+    Passport.rename(trimmed);                   // 1. localStorage
+    if (typeof PlayerMode !== 'undefined') {
+        PlayerMode._renderIdentity(Passport.get()); // 2. identity card
+    }
+    SidelineView.refresh();                     // 3. full view
 
-    document.body.appendChild(overlay);
-
-    const input  = document.getElementById('_renameInput');
-    const saveBtn = document.getElementById('_renameSave');
-    const cancelBtn = document.getElementById('_renameCancel');
-
-    // Select all text so user can start typing immediately
-    setTimeout(() => { input.focus(); input.select(); }, 60);
-
-    const doSave = () => {
-        const trimmed = (input.value || '').trim();
-        if (!trimmed) {
-            input.style.border = '1px solid #ff4d4d';
-            input.focus();
-            return;
+    // 4. Broadcast to host via the broadcast channel (not a dead API route)
+    if (window.isOnlineSession && window.currentRoomCode) {
+        if (typeof broadcastNameUpdate === 'function') {
+            broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
         }
-        const oldName = passport.playerName;
-        overlay.remove();
+    }
 
-        // 1. localStorage FIRST, then UI, then network — standard write order
-        Passport.rename(trimmed);
-        if (typeof PlayerMode !== 'undefined') {
-            PlayerMode._renderIdentity(Passport.get());
-        }
-        SidelineView.refresh();
+    // 5. PART 1: Also write new name to session_members table.
+    // This triggers the host's postgres_changes listener (_handleMemberChange)
+    // which updates the squad name on the big screen in real-time — no refresh.
+    if (window.isOnlineSession && window.currentRoomCode && typeof memberRename === 'function') {
+        memberRename(passport.playerUUID, trimmed);   // non-blocking
+    }
 
-        // 2. Broadcast name change to host via WebSocket
-        if (window.isOnlineSession && window.currentRoomCode) {
-            if (typeof broadcastNameUpdate === 'function') {
-                broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
-            }
-            // 3. Also write to session_members table (triggers host postgres_changes)
-            if (typeof memberRename === 'function') {
-                memberRename(passport.playerUUID, trimmed);
-            }
-        }
-
-        showSessionToast(`✅ Name updated to ${trimmed}`);
-        if (typeof Haptic !== 'undefined') Haptic.success();
-    };
-
-    const doCancel = () => overlay.remove();
-
-    saveBtn.addEventListener('click', doSave);
-    cancelBtn.addEventListener('click', doCancel);
-    // Tap outside the card to cancel
-    overlay.addEventListener('click', e => { if (e.target === overlay) doCancel(); });
-    // Enter key submits
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') doSave(); });
+    showSessionToast(`✅ Name updated to ${trimmed}`);
 }
 
 /**
@@ -1526,78 +1479,8 @@ async function passportJoinSession() {
 
 async function passportRenameAndJoin() {
     const passport = Passport.get();
-    if (!passport) return;
-
-    // Can't use prompt() in PWA/iOS standalone mode — show an in-page input instead.
-    // We reuse the same rename overlay pattern but resolve with the new name on save.
-    const newName = await new Promise(resolve => {
-        const existing = document.getElementById('_renameOverlay');
-        if (existing) existing.remove();
-
-        const overlay = document.createElement('div');
-        overlay.id = '_renameOverlay';
-        overlay.style.cssText = [
-            'position:fixed', 'inset:0', 'z-index:9998',
-            'background:rgba(0,0,0,0.75)', 'display:flex',
-            'align-items:center', 'justify-content:center',
-            'padding:24px', 'box-sizing:border-box',
-        ].join(';');
-        overlay.innerHTML = `
-            <div style="
-                background:#1a1a2e; border:1px solid rgba(255,255,255,0.1);
-                border-radius:16px; padding:28px 24px; width:100%; max-width:340px;
-                box-shadow:0 20px 60px rgba(0,0,0,0.6);
-            ">
-                <div style="font-size:13px;font-weight:700;letter-spacing:2px;color:rgba(255,255,255,0.45);margin-bottom:16px;">
-                    JOIN WITH A DIFFERENT NAME
-                </div>
-                <input id="_renameInput" type="text"
-                    value="${(passport.playerName || '').replace(/"/g, '&quot;')}"
-                    maxlength="30" autocomplete="off" autocorrect="off" autocapitalize="words"
-                    style="
-                        width:100%; box-sizing:border-box;
-                        background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15);
-                        border-radius:10px; padding:14px 16px; color:#fff;
-                        font-size:17px; font-weight:600; outline:none; -webkit-appearance:none;
-                    ">
-                <div style="display:flex;gap:10px;margin-top:16px;">
-                    <button id="_renameCancel" style="
-                        flex:1; padding:13px; border-radius:10px;
-                        background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
-                        color:rgba(255,255,255,0.6); font-size:15px; font-weight:600; cursor:pointer;">
-                        Cancel</button>
-                    <button id="_renameSave" style="
-                        flex:2; padding:13px; border-radius:10px;
-                        background:#00ffa3; border:none;
-                        color:#000; font-size:15px; font-weight:700; cursor:pointer;">
-                        Continue →</button>
-                </div>
-            </div>`;
-        document.body.appendChild(overlay);
-
-        const input     = document.getElementById('_renameInput');
-        const saveBtn   = document.getElementById('_renameSave');
-        const cancelBtn = document.getElementById('_renameCancel');
-        setTimeout(() => { input.focus(); input.select(); }, 60);
-
-        const done = (val) => { overlay.remove(); resolve(val); };
-        saveBtn.addEventListener('click', () => {
-            const v = (input.value || '').trim();
-            if (!v) { input.style.border = '1px solid #ff4d4d'; input.focus(); return; }
-            done(v);
-        });
-        cancelBtn.addEventListener('click', () => done(null));
-        overlay.addEventListener('click', e => { if (e.target === overlay) done(null); });
-        input.addEventListener('keydown', e => {
-            if (e.key === 'Enter') {
-                const v = (input.value || '').trim();
-                if (!v) { input.style.border = '1px solid #ff4d4d'; return; }
-                done(v);
-            }
-        });
-    });
-
-    if (!newName) return;
+    const newName  = prompt('Enter name for this session:', passport?.playerName || '');
+    if (!newName || !newName.trim()) return;
     Passport.rename(newName.trim());
     await submitPassportJoinRequest(newName.trim(), passport.playerUUID);
 }

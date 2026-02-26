@@ -24,7 +24,16 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="css/style.css">
-    <!-- QRCode loaded before app scripts so it's available when needed -->
+    <!-- QRCode libraries loaded before app scripts so they're available when needed.
+         Load order matters:
+           1. qrcodejs  → defines window.QRCode as a constructor (new QRCode(div, url))
+           2. Inline shim → saves that constructor as window.QRCodeConstructor before step 3 overwrites it
+           3. qrcode@1.5.1 → overwrites window.QRCode with the toCanvas/toDataURL object API
+         After load: window.QRCode.toCanvas() works (qrcode@1.5.1),
+                     window.QRCodeConstructor(div,url) works (qrcodejs).
+    -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script>window.QRCodeConstructor = window.QRCode;</script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
     <!-- html2canvas for Aura poster export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -596,15 +605,6 @@
                     // Frame is already on screen from DOMContentLoaded above.
 
                     // 1. Init passport (creates UUID if new, returns existing if not)
-                    // Guard: if passport.js failed to load (404, parse error, wrong
-                    // path), Passport will be undefined and we surface a clear error
-                    // instead of the cryptic "Can't find variable: Passport" crash.
-                    if (typeof Passport === 'undefined') {
-                        throw new Error(
-                            'passport.js failed to load — verify the file exists at js/passport.js ' +
-                            'and the server is serving it correctly.'
-                        );
-                    }
                     const passport = Passport.init();
 
                     // 2. Ensure host shell is hidden (CSS already hides it, this
