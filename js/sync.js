@@ -327,6 +327,19 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // Player removed by host — update removed player's screen immediately
+    if (type === 'player_removed') {
+        if (!isOperator && typeof PlayerMode !== 'undefined') {
+            const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
+            if (p && (payload.playerUUID === p.playerUUID || payload.playerName === p.playerName)) {
+                if (typeof PlayerMode._onRemovedFromSession === 'function') {
+                    PlayerMode._onRemovedFromSession();
+                }
+            }
+        }
+        return;
+    }
+
     // BUG 2: Live game state — update player feed immediately
     if (type === 'game_state') {
         if (!isOperator) {
@@ -589,10 +602,11 @@ function _handleMemberChange(record, oldRecord, eventType) {
     if (!passport || uuid !== passport.playerUUID) return;
 
     if (record.status === 'active') {
-        // Host approved us — bypass pending screen, show sideline view immediately.
-        // This fires on BOTH initial approval AND on page refresh (if already active).
-        if (typeof PlayerMode !== 'undefined') {
-            PlayerMode._onMemberActivated(record);
+        if (typeof PlayerMode !== 'undefined') PlayerMode._onMemberActivated(record);
+    } else if (record.status === 'pending' || eventType === 'DELETE') {
+        // Host removed or reset this player
+        if (typeof PlayerMode !== 'undefined' && typeof PlayerMode._onRemovedFromSession === 'function') {
+            PlayerMode._onRemovedFromSession();
         }
     }
 }
@@ -615,13 +629,6 @@ function leaveSession() {
 }
 
 function showReconnectingIndicator(show) {
-    // For players: never show the UI indicator — log to console only.
-    // For host: show the non-blocking drop-down pill.
-    if (!isOperator) {
-        if (show) console.info('[CourtSide] Connection interrupted, attempting to reconnect…');
-        else      console.info('[CourtSide] Reconnected.');
-        return;
-    }
     let el = document.getElementById('reconnectIndicator');
     if (!el) {
         el = document.createElement('div');

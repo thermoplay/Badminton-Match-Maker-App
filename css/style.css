@@ -4356,44 +4356,27 @@ button:active,
     cursor: default;
 }
 .sl-invite-copy-icon { font-size: 1rem; }
-/* ═══════════════════════════════════════════════════════════════════════════
-   PLAYER MODE v6 — Two-Layer Architecture UI States
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ── State A / Removed: Join block ───────────────────────────────────────── */
+/* ── Player Mode: Join / Removed / Retry block ──────────────────────────── */
 .sl-join-block {
     display: flex;
     flex-direction: column;
     align-items: center;
     text-align: center;
-    padding: 1.5rem 1rem 1rem;
+    padding: 1.5rem 0.5rem 0.5rem;
     gap: 10px;
 }
-.sl-join-icon {
-    font-size: 2.8rem;
-    margin-bottom: 4px;
-}
+.sl-join-icon { font-size: 2.6rem; }
 .sl-join-title {
     font-family: var(--font-display);
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 900;
     letter-spacing: 3px;
     color: var(--text);
 }
 .sl-join-sub {
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     color: var(--text-muted);
-    line-height: 1.5;
-    margin-bottom: 4px;
-}
-.sl-join-label {
-    font-family: var(--font-display);
-    font-size: 0.6rem;
-    font-weight: 900;
-    letter-spacing: 3px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    margin-bottom: 6px;
+    line-height: 1.55;
 }
 .sl-join-btn {
     width: 100%;
@@ -4407,45 +4390,9 @@ button:active,
     font-weight: 900;
     letter-spacing: 2px;
     cursor: pointer;
-    margin-top: 6px;
+    margin-top: 4px;
     transition: opacity 0.15s, transform 0.1s;
     -webkit-appearance: none;
 }
-.sl-join-btn:active {
-    opacity: 0.85;
-    transform: scale(0.97);
-}
-.sl-join-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
-}
-
-/* ── State B: Pending / request sent ─────────────────────────────────────── */
-.sl-pending-block {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding: 2rem 1rem;
-    gap: 10px;
-}
-.sl-pending-block .sl-pending-icon {
-    font-size: 2.5rem;
-    animation: sl-bounce 1.4s ease-in-out infinite;
-}
-.sl-pending-block .sl-pending-title {
-    font-family: var(--font-display);
-    font-size: 1.1rem;
-    font-weight: 900;
-    letter-spacing: 3px;
-    color: var(--accent);
-}
-.sl-pending-block .sl-pending-sub {
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    line-height: 1.6;
-}
-@keyframes sl-bounce {
-    0%, 100% { transform: translateY(0); }
-    50%       { transform: translateY(-8px); }
-}
+.sl-join-btn:active { opacity: 0.82; transform: scale(0.97); }
+.sl-join-btn:disabled { opacity: 0.45; cursor: default; }

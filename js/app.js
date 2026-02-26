@@ -144,24 +144,17 @@ function deletePlayer() {
     const removedUUID = removed.uuid || null;
 
     squad.splice(selectedPlayerIndex, 1);
-
-    // FIX: Remove any match that included the deleted player to prevent stale references
-    currentMatches = currentMatches.filter(
-        m => !m.teams.flat().includes(removedName)
-    );
+    currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
 
     closeMenu();
     renderSquad();
-
-    // Re-render match container — some matches may have been removed
     const container = document.getElementById('matchContainer');
     container.innerHTML = '';
     renderSavedMatches();
-
     checkNextButtonState();
     saveToDisk();
 
-    // Tell the removed player's screen immediately via realtime broadcast
+    // Notify the removed player's screen immediately
     if (isOnlineSession && typeof _broadcast === 'function') {
         _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
     }
