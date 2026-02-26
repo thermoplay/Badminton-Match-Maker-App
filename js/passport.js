@@ -585,25 +585,12 @@ const PlayerMode = {
             this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
         }
 
-        // ── Tier 1: sessionStorage fast-path ──────────────────────────────────
-        // Survives page refresh within the same tab session.
-        if (this._isApprovedInSession(joinCode)) {
-            if (panel) panel.classList.remove('sl-booting');
-            const cur = Passport.get();
-            this.setStatus('approved', `Welcome back, ${cur.playerName}! 🎉`, "You're in the rotation ✅");
-            this._subscribeAndPoll(joinCode, cur);
-            // Fetch live state so matches + queue position appear immediately
-            this._fetchLiveSessionState(joinCode);
-            return;
-        }
-
-        // ── PHASE 2: DB handshake — show spinner while waiting ────────────────
-        // BUG 2 FIX: The DB call is now wrapped — if it returns null (session
-        // not found / network error) we show a "Searching for Court" state
-        // instead of crashing or staying blank.
+        // ── DB verification — always check current status before showing welcome ─
+        // sessionStorage / localStorage tells us the player's NAME (instant UI),
+        // but the HOST decides who is actually in the squad. The player's status
+        // may be 'pending' (new session) or their row may not exist at all.
+        // We ALWAYS hit the DB before deciding whether to welcome back or request.
         this._subscribeAndPoll(joinCode, passport);
-
-        // Show "Searching for Court…" while the DB responds
         this._showSearchingSpinner();
 
         let upsertResult = null;
@@ -611,19 +598,14 @@ const PlayerMode = {
             upsertResult = await this._memberUpsert(Passport.get(), joinCode);
         } catch (err) {
             console.error('[PlayerMode.boot] member-upsert threw:', err);
-            // Treat as null — fall through to pending state
         }
 
-        // Stop pulsing — we have a result (or a failure)
         if (panel) panel.classList.remove('sl-booting');
         this._clearSearchingSpinner();
 
-        // ── BUG 2 FIX: Guard against null / missing session ───────────────────
+        // Network blip — retry silently, never show room code prompt
         if (!upsertResult) {
-            // Don't show room code entry — player came from QR so they already have the code.
-            // Show a friendly retry state and let realtime deliver approval.
-            this.setStatus('pending', 'Connecting…', 'Waiting for court to respond. Stay put 🏀');
-            // Retry once after 3s (cold-start / network blip)
+            this.setStatus('pending', 'Connecting…', 'Waiting for court to respond 🏀');
             setTimeout(async () => {
                 try {
                     const retry = await this._memberUpsert(Passport.get(), joinCode);
@@ -633,7 +615,9 @@ const PlayerMode = {
                         const cur = Passport.get();
                         this.setStatus('approved', `Welcome back, ${cur.playerName}! 🎉`, "You're in the rotation ✅");
                         this._fetchLiveSessionState(joinCode);
-                    } else if (retry?.status === 'pending') {
+                    } else {
+                        // pending or missing — send a fresh join request
+                        this._clearApprovedInSession(joinCode);
                         await this._submitJoinRequest(Passport.get(), joinCode);
                     }
                 } catch { /* stay on connecting state */ }
@@ -641,31 +625,19 @@ const PlayerMode = {
             return;
         }
 
-        // ── RETURNING APPROVED PLAYER ─────────────────────────────────────────
+        // ── DB says ACTIVE — player is genuinely in the squad ────────────────
         if (upsertResult.status === 'active') {
             this._markApprovedInSession(joinCode);
             this._hydrateFromUpsert(upsertResult);
             const p = Passport.get();
             this.setStatus('approved', `Welcome back, ${p.playerName}! 🎉`, "You're in the rotation ✅");
-            // Fetch live session state so matches + queue position render immediately
             this._fetchLiveSessionState(joinCode);
             return;
         }
 
-        // ── Tier 3: localStorage token fallback ───────────────────────────────
-        const savedToken = this._loadToken(joinCode);
-        if (savedToken) {
-            const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
-            if (valid) {
-                this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, "You're in the squad");
-                return;
-            } else {
-                this._clearToken(joinCode);
-            }
-        }
-
-        // ── PHASE 3: New join — submit request, wait for host approval ────────
+        // ── DB says PENDING — new session or was removed. Request to join. ───
+        // Clear any stale sessionStorage approval so next scan starts fresh.
+        this._clearApprovedInSession(joinCode);
         await this._submitJoinRequest(Passport.get(), joinCode);
     },
 
@@ -1115,50 +1087,6 @@ const PlayerMode = {
     // TOKEN & SESSION STORAGE
     // ─────────────────────────────────────────────────────────────────────────
 
-    // ── _fetchLiveSessionState ────────────────────────────────────────────────
-    // Hits /api/session-get, populates window.squad + window.currentMatches,
-    // then re-renders Live Now and queue position. Fire-and-forget (no await).
-    _fetchLiveSessionState(joinCode) {
-        if (!joinCode) return;
-        fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(data => {
-                if (!data) return;
-                if (data.squad)           window.squad          = data.squad;
-                if (data.current_matches) window.currentMatches = data.current_matches;
-                SidelineView.show();
-                const p = Passport.get();
-                if (p) this._updateStatus(p);
-            })
-            .catch(() => {/* non-critical */});
-    },
-
-    // ── _onRemovedFromSession ─────────────────────────────────────────────────
-    // Called when host deletes or kicks this player.
-    _onRemovedFromSession() {
-        const joinCode = this._joinCode;
-        this._clearApprovedInSession(joinCode);
-        if (joinCode) this._clearToken(joinCode);
-        this.setStatus('pending', 'Removed from court', 'The host removed you.');
-        const container = document.getElementById('slCurrentMatches');
-        if (container) {
-            container.innerHTML = `
-                <div class="sl-pending-card">
-                    <div class="sl-pending-icon">🚫</div>
-                    <div class="sl-pending-title" style="color:#ff6b6b">REMOVED BY HOST</div>
-                    <div class="sl-pending-sub">You were removed from the session.<br>You can request to rejoin below.</div>
-                    <button class="sl-name-submit" style="margin-top:1rem;background:rgba(255,107,107,0.15);border-color:rgba(255,107,107,0.4);color:#ff6b6b"
-                        onclick="PlayerMode._requestRejoin()">Request to Rejoin →</button>
-                </div>`;
-        }
-    },
-
-    async _requestRejoin() {
-        const p = Passport.get();
-        if (!p || !this._joinCode) return;
-        await this._submitJoinRequest(p, this._joinCode);
-    },
-
     _isApprovedInSession(roomCode) {
         try { return !!JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}')[roomCode]; }
         catch { return false; }
@@ -1178,6 +1106,48 @@ const PlayerMode = {
             delete m[roomCode];
             sessionStorage.setItem(SS_APPROVED, JSON.stringify(m));
         } catch { }
+    },
+
+    // Fetch live session state and populate window.squad + window.currentMatches
+    // so Live Now and queue position render immediately without waiting for a broadcast.
+    _fetchLiveSessionState(joinCode) {
+        if (!joinCode) return;
+        fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (!data) return;
+                if (data.squad)           window.squad          = data.squad;
+                if (data.current_matches) window.currentMatches = data.current_matches;
+                SidelineView.show();
+                const p = Passport.get();
+                if (p) this._updateStatus(p);
+            })
+            .catch(() => {});
+    },
+
+    // Called when host removes this player — clear approval, show rejoin button
+    _onRemovedFromSession() {
+        const joinCode = this._joinCode;
+        this._clearApprovedInSession(joinCode);
+        if (joinCode) this._clearToken(joinCode);
+        this.setStatus('pending', 'Removed from court', 'The host removed you.');
+        const container = document.getElementById('slCurrentMatches');
+        if (container) {
+            container.innerHTML = `
+                <div class="sl-pending-card" style="padding:2rem 1rem;text-align:center">
+                    <div style="font-size:2.5rem;margin-bottom:.5rem">🚫</div>
+                    <div style="font-family:var(--font-display);font-size:1rem;font-weight:900;letter-spacing:2px;color:#ff6b6b;margin-bottom:.5rem">REMOVED BY HOST</div>
+                    <div style="font-size:.78rem;color:var(--text-muted);line-height:1.5;margin-bottom:1rem">You were removed from the session.<br>You can request to rejoin.</div>
+                    <button class="sl-name-submit" style="background:rgba(255,107,107,0.12);border-color:rgba(255,107,107,0.35);color:#ff6b6b"
+                        onclick="PlayerMode._requestRejoin()">Request to Rejoin →</button>
+                </div>`;
+        }
+    },
+
+    async _requestRejoin() {
+        const p = Passport.get();
+        if (!p || !this._joinCode) return;
+        await this._submitJoinRequest(p, this._joinCode);
     },
 
     _loadToken(roomCode) {
