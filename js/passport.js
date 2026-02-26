@@ -1,13 +1,26 @@
 // =============================================================================
-// PASSPORT.JS — Private Player Identity System  v4
+// PASSPORT.JS — Private Player Identity System  v5
 // =============================================================================
 // PRIVACY CONTRACT:
 //   - playerUUID and playerName travel over the wire (handshake only)
-//   - privateLifetimeWins and privateTotalGames NEVER leave this device
-//   - localStorage is written BEFORE any UI re-render (prevents data loss)
+//   - privateLifetimeWins, privateTotalGames, matchHistory NEVER leave device
+//   - localStorage is always written BEFORE any UI re-render
+//
+// FIVE BUGS / FEATURES:
+//   #3  Name sync:       editName → localStorage → broadcast NAME_UPDATE
+//   #4  Win tracking:    MATCH_RESOLVED → UUID check → recordWin/recordLoss
+//   #NEW Performance Lab: last 5 match results stored in localStorage
+//   #NEW Invite QR:      show session QR so players can invite friends
+//   #TechVerify UUID:    UUID stored on squad member, survives name changes
 // =============================================================================
 
-const PASSPORT_KEY = 'cs_player_passport';
+const PASSPORT_KEY  = 'cs_player_passport';
+const MATCH_HIST_KEY = 'cs_match_history';   // [{result, opponent, date, gameLabel}]
+const MAX_HIST       = 5;
+
+// =============================================================================
+// PASSPORT — localStorage-only identity
+// =============================================================================
 
 const Passport = {
 
@@ -43,30 +56,31 @@ const Passport = {
         return { playerUUID: p.playerUUID, playerName: p.playerName };
     },
 
-    // BUG 3: write localStorage FIRST, then caller can update UI
+    /** Write localStorage FIRST, caller updates UI after */
     rename(newName) {
         const p = this.get();
         if (!p) return null;
         p.playerName = newName.trim();
-        this.save(p);   // localStorage written before any render
+        this.save(p);
         return p;
     },
 
-    // BUG 4: write localStorage FIRST before any UI update
+    /** WIN: increment wins AND games. localStorage first. */
     recordWin() {
         const p = this.get();
         if (!p) return null;
         p.privateLifetimeWins++;
         p.privateTotalGames++;
-        this.save(p);   // localStorage written first
+        this.save(p);
         return p;
     },
 
+    /** LOSS: increment games only. localStorage first. */
     recordLoss() {
         const p = this.get();
         if (!p) return null;
         p.privateTotalGames++;
-        this.save(p);   // localStorage written first
+        this.save(p);
         return p;
     },
 
@@ -82,6 +96,71 @@ const Passport = {
             const r = Math.random() * 16 | 0;
             return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
         });
+    },
+};
+
+// =============================================================================
+// MATCH HISTORY — localStorage, max 5 entries
+// =============================================================================
+
+const MatchHistory = {
+
+    get() {
+        try {
+            return JSON.parse(localStorage.getItem(MATCH_HIST_KEY) || '[]');
+        } catch { return []; }
+    },
+
+    /**
+     * Add a result entry.
+     * @param {'WIN'|'LOSS'} result
+     * @param {string}       opponentNames  — e.g. "Alice & Bob"
+     * @param {string}       gameLabel      — e.g. "Game 1"
+     */
+    push(result, opponentNames, gameLabel) {
+        const hist = this.get();
+        hist.unshift({
+            result,
+            opponents: opponentNames || 'Unknown',
+            gameLabel: gameLabel || '',
+            date:      Date.now(),
+        });
+        // Keep only last MAX_HIST entries
+        if (hist.length > MAX_HIST) hist.splice(MAX_HIST);
+        try { localStorage.setItem(MATCH_HIST_KEY, JSON.stringify(hist)); } catch { }
+        return hist;
+    },
+
+    clear() {
+        try { localStorage.removeItem(MATCH_HIST_KEY); } catch { }
+    },
+
+    /** Format a timestamp as "Today 14:32" or "Mon 09:15" */
+    _formatDate(ts) {
+        const d   = new Date(ts);
+        const now = new Date();
+        const isToday = d.toDateString() === now.toDateString();
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        return isToday ? `Today ${hh}:${mm}` : `${days[d.getDay()]} ${hh}:${mm}`;
+    },
+
+    renderList() {
+        const hist = this.get();
+        if (hist.length === 0) {
+            return `<div class="sl-lab-empty">No matches recorded yet.<br>Play a game to start your history.</div>`;
+        }
+        return hist.map(h => `
+            <div class="sl-hist-item sl-hist-${h.result === 'WIN' ? 'win' : 'loss'}">
+                <div class="sl-hist-badge">${h.result === 'WIN' ? 'W' : 'L'}</div>
+                <div class="sl-hist-details">
+                    <div class="sl-hist-label">${h.gameLabel || 'Match'}</div>
+                    <div class="sl-hist-opp">vs ${h.opponents}</div>
+                </div>
+                <div class="sl-hist-time">${this._formatDate(h.date)}</div>
+            </div>
+        `).join('');
     },
 };
 
@@ -108,16 +187,23 @@ const SidelineView = {
         if (!this._visible) return;
         const passport = Passport.get();
         if (!passport) return;
+
+        // Identity
         const nameEl  = document.getElementById('slPassportName');
+        if (nameEl) nameEl.textContent = passport.playerName;
+
+        // Stats
         const winsEl  = document.getElementById('slPrivateWins');
         const gamesEl = document.getElementById('slPrivateGames');
         const wrEl    = document.getElementById('slPrivateWR');
-        if (nameEl)  nameEl.textContent  = passport.playerName;
         if (winsEl)  winsEl.textContent  = passport.privateLifetimeWins;
         if (gamesEl) gamesEl.textContent = passport.privateTotalGames;
         if (wrEl)    wrEl.textContent    = Passport.winRate();
+
         this._renderMatches();
         this._renderNextUp();
+        this._renderLastWinner();
+        this._renderPerformanceLab();
     },
 
     _renderMatches() {
@@ -125,7 +211,7 @@ const SidelineView = {
         if (!container) return;
         const matches = window.currentMatches || [];
         if (matches.length === 0) {
-            container.innerHTML = `<div class="sl-empty">No active matches yet</div>`;
+            container.innerHTML = `<div class="sl-empty">No active round yet</div>`;
             return;
         }
         const passport = Passport.get();
@@ -147,17 +233,32 @@ const SidelineView = {
     },
 
     _renderNextUp() {
-        const el     = document.getElementById('slNextUp');
-        const rowEl  = document.getElementById('slNextUpRow');
-        const ticker = document.getElementById('nextUpNames');
+        const el    = document.getElementById('slNextUp');
+        const rowEl = document.getElementById('slNextUpRow');
         if (!el || !rowEl) return;
-        const text = ticker?.textContent?.trim() || window._lastNextUp || '';
-        if (text) {
-            el.textContent          = text;
-            rowEl.style.display     = 'flex';
+        const text = window._lastNextUp || (document.getElementById('nextUpNames')?.textContent?.trim() || '');
+        if (text) { el.textContent = text; rowEl.style.display = 'flex'; }
+        else { rowEl.style.display = 'none'; }
+    },
+
+    /** Last match winner — shown after MATCH_RESOLVED */
+    _renderLastWinner() {
+        const el = document.getElementById('slLastWinner');
+        const rowEl = document.getElementById('slLastWinnerRow');
+        if (!el || !rowEl) return;
+        if (window._lastMatchWinner) {
+            el.textContent       = window._lastMatchWinner;
+            rowEl.style.display  = 'flex';
         } else {
             rowEl.style.display = 'none';
         }
+    },
+
+    /** Performance Lab — match history list */
+    _renderPerformanceLab() {
+        const container = document.getElementById('slLabHistory');
+        if (!container) return;
+        container.innerHTML = MatchHistory.renderList();
     },
 };
 
@@ -208,9 +309,7 @@ const VictoryCard = {
                     await navigator.share({ title: 'The Court Side Pro', text: `${name} just won! 🏆`, files: [file] });
                 } else {
                     const a = document.createElement('a');
-                    a.href = URL.createObjectURL(blob);
-                    a.download = 'courtside-victory.png';
-                    a.click();
+                    a.href = URL.createObjectURL(blob); a.download = 'courtside-victory.png'; a.click();
                 }
                 if (window.Haptic) Haptic.success();
             }, 'image/png');
@@ -219,22 +318,79 @@ const VictoryCard = {
 };
 
 // =============================================================================
-// PLAYER MODE — boot controller for ?role=player
-//
-// FOUR BUGS FIXED:
-//   Bug 1 (Stuck Request): _onApprovalReceived catches 'session_joined' broadcast,
-//          matches UUID, saves token to sessionStorage, flips UI to active.
-//   Bug 2 (Blind Player):  _onGameStateUpdate catches 'game_state' broadcast,
-//          updates live feed in real-time. Queue position computed precisely.
-//   Bug 3 (Name Revert):   passportRename writes localStorage FIRST, then calls
-//          broadcastNameUpdate so host receives the change via broadcast.
-//   Bug 4 (Win Counter):   _onMatchResult catches 'match_result' broadcast,
-//          strict UUID equality, localStorage written before any UI update.
+// INVITE QR — shows session join QR on player's phone
 // =============================================================================
 
-// Storage keys
-const LS_TOKENS = 'cs_session_tokens';  // { roomCode: { token, approvedAt } }
-const SS_APPROVED = 'cs_approved';      // sessionStorage — { roomCode: true }
+const InviteQR = {
+    _overlay: null,
+
+    /**
+     * Show the invite QR overlay.
+     * Uses the same URL format as the host's QR: ?join=XXXX-XXXX&role=player
+     */
+    show(roomCode) {
+        if (!roomCode) { alert('No active session to share.'); return; }
+
+        // Remove any existing overlay
+        if (this._overlay) this._overlay.remove();
+
+        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${roomCode}&role=player`;
+
+        this._overlay = document.createElement('div');
+        this._overlay.className = 'sl-invite-overlay';
+        this._overlay.innerHTML = `
+            <div class="sl-invite-card">
+                <div class="sl-invite-header">
+                    <div class="sl-invite-title">INVITE TO COURT</div>
+                    <button class="sl-invite-close" onclick="InviteQR.hide()">✕</button>
+                </div>
+                <div class="sl-invite-sub">Scan to join this session</div>
+                <canvas id="inviteQrCanvas" class="sl-invite-canvas"></canvas>
+                <div class="sl-invite-code">${roomCode}</div>
+                <div class="sl-invite-hint">Players who scan will see the player view</div>
+            </div>
+        `;
+        document.body.appendChild(this._overlay);
+        requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
+
+        // Tap outside to dismiss
+        this._overlay.addEventListener('click', e => {
+            if (e.target === this._overlay) this.hide();
+        });
+
+        // Generate QR
+        if (window.QRCode) {
+            QRCode.toCanvas(document.getElementById('inviteQrCanvas'), joinUrl, {
+                width:  220,
+                margin: 2,
+                color: { dark: '#0a0a0f', light: '#ffffff' },
+            }, err => { if (err) console.error('InviteQR: QR gen failed', err); });
+        } else {
+            // Fallback: show the URL as text
+            const canvas = document.getElementById('inviteQrCanvas');
+            if (canvas) {
+                canvas.style.display = 'none';
+                const txt = document.createElement('div');
+                txt.className = 'sl-invite-url';
+                txt.textContent = joinUrl;
+                canvas.parentNode.insertBefore(txt, canvas.nextSibling);
+            }
+        }
+    },
+
+    hide() {
+        if (!this._overlay) return;
+        this._overlay.classList.remove('sl-invite-open');
+        setTimeout(() => { this._overlay?.remove(); this._overlay = null; }, 300);
+    },
+};
+
+// =============================================================================
+// PLAYER MODE — boot controller for ?role=player  v5
+// =============================================================================
+
+const LS_TOKENS  = 'cs_session_tokens';
+const SS_APPROVED = 'cs_approved';
 
 const PlayerMode = {
 
@@ -252,26 +408,20 @@ const PlayerMode = {
         const codeEl = document.getElementById('slSessionCode');
         if (codeEl && joinCode) codeEl.textContent = joinCode;
 
-        if (!joinCode) {
-            this._promptForCode();
-            return;
-        }
+        if (!joinCode) { this._promptForCode(); return; }
 
-        // ── BUG 1: Check sessionStorage for in-session approval ────────────
-        // sessionStorage survives page refresh but clears when tab closes.
-        const ssApproved = this._isApprovedInSession(joinCode);
-        if (ssApproved) {
+        // sessionStorage: fast refresh skip (survives refresh, clears on tab close)
+        if (this._isApprovedInSession(joinCode)) {
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You\'re in the rotation');
             this._subscribeAndPoll(joinCode, passport);
             return;
         }
 
-        // ── Check localStorage for a persisted token (cross-session) ──────
+        // localStorage token: slower but cross-session
         const savedToken = this._loadToken(joinCode);
         if (savedToken) {
             const valid = await this._verifyToken(joinCode, savedToken, passport);
             if (valid) {
-                // Re-save to sessionStorage for fast refresh
                 this._markApprovedInSession(joinCode);
                 this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You\'re in the squad');
                 this._subscribeAndPoll(joinCode, passport);
@@ -281,71 +431,51 @@ const PlayerMode = {
             }
         }
 
-        // No token — send fresh join request
         await this._joinSession(passport, joinCode);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // BUG 1: APPROVAL RECEIVED via broadcast 'session_joined'
+    // APPROVAL — broadcast 'session_joined'
     // ─────────────────────────────────────────────────────────────────────────
 
     _onApprovalReceived(payload) {
         const passport = Passport.get();
         if (!passport) return;
+        if (payload.playerUUID !== passport.playerUUID) return;  // strict UUID match
 
-        // Strict UUID match — only the approved player reacts
-        if (payload.playerUUID !== passport.playerUUID) return;
-
-        // 1. Write sessionStorage BEFORE any render
+        // 1. Storage writes BEFORE any render
         this._markApprovedInSession(this._joinCode);
+        if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
 
-        // 2. Write localStorage token for cross-session persistence
-        if (payload.token) {
-            this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
-        }
-
-        // 3. Update globals with the payload data (squad + matches arrived with approval)
+        // 2. Hydrate globals
         if (payload.squad)           window.squad          = payload.squad;
         if (payload.current_matches) window.currentMatches = payload.current_matches;
 
-        // 4. Update UI
+        // 3. UI
         this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
-
-        // 5. Start full live feed
         this._subscribeAndPoll(this._joinCode, passport);
-
-        // 6. After brief celebration, show real position
         setTimeout(() => this._updateStatus(passport), 1500);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // BUG 2: LIVE MATCH FEED via broadcast 'game_state'
+    // LIVE FEED — broadcast 'game_state'
     // ─────────────────────────────────────────────────────────────────────────
 
     _onGameStateUpdate(payload) {
         const passport = Passport.get();
         if (!passport) return;
-
-        // Globals already updated by sync.js _handleBroadcast before this call
-        // Cache next_up for SidelineView._renderNextUp
         if (payload.next_up) window._lastNextUp = payload.next_up;
-
-        // Render match cards
         SidelineView.refresh();
-
-        // Update status
         this._updateStatus(passport);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // BUG 3: SESSION UPDATE via postgres_changes (fallback for heavy sync)
+    // POSTGRES FALLBACK — 'postgres_changes'
     // ─────────────────────────────────────────────────────────────────────────
 
     _onSessionUpdate(session) {
         const passport = Passport.get();
         if (!passport) return;
-
-        // Check for approval in DB (fallback if broadcast was missed)
         const approved = session.approved_players || {};
         const myEntry  = approved[passport.playerUUID] || approved[passport.playerName];
         if (myEntry && !this._isApprovedInSession(this._joinCode)) {
@@ -355,18 +485,21 @@ const PlayerMode = {
             setTimeout(() => this._updateLiveFeed(session, passport), 1500);
             return;
         }
-
         this._updateLiveFeed(session, passport);
     },
 
     _updateLiveFeed(session, passport) {
-        // Globals are already set by applyRemoteState before this call
         SidelineView.refresh();
         this._updateStatus(passport);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // BUG 4: MATCH RESULT via broadcast 'match_result'
+    // MATCH RESULT — broadcast 'match_result' (per-UUID private stat update)
+    //
+    // Issue #4 — BUG FIX:
+    //   The `playerUUID` in the broadcast comes from squad[n].uuid (stored at
+    //   approval), which is the SAME uuid as passport.playerUUID (generated
+    //   locally and sent in the play-request). Strict equality check.
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResult(payload) {
@@ -377,31 +510,73 @@ const PlayerMode = {
         const isMe = playerUUID === passport.playerUUID;
 
         if (event === 'WIN' && isMe) {
-            // 1. Write localStorage FIRST, before any UI
+            // 1. localStorage first
             const updated = Passport.recordWin();
-            // 2. Then update stats display
+            // 2. UI update
             this._renderStats(updated);
-            // 3. Show victory card
+            SidelineView.refresh();
             VictoryCard.show(passport.playerName);
-
         } else if (event === 'LOSS') {
-            // Only record loss if this player was actually in the match
-            const name = passport.playerName?.toLowerCase();
-            const matches = window.currentMatches || [];
-            const wasPlaying = matches.some(m =>
-                [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n => n.toLowerCase()).includes(name)
+            const myName = passport.playerName?.toLowerCase();
+            const wasPlaying = (window.currentMatches || []).some(m =>
+                [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n => n.toLowerCase()).includes(myName)
             );
             if (wasPlaying || isMe) {
-                // 1. Write localStorage FIRST
                 const updated = Passport.recordLoss();
-                // 2. Then update UI
                 this._renderStats(updated);
+                SidelineView.refresh();
             }
         }
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // STATUS CARD — computes current position from live squad/matches
+    // MATCH RESOLVED — broadcast 'match_resolved' (round-level event)
+    //
+    // Issue #4 — "Next Round" button trigger:
+    //   This is fired by processAndNext() in logic.js (the Next Round button).
+    //   All players receive it. Handles:
+    //     - Win/loss stat recording (delegates to _onMatchResult)
+    //     - Last Match Winner display on sideline feed
+    //     - Match history entry for Performance Lab
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _onMatchResolved(payload) {
+        const passport = Passport.get();
+        if (!passport) return;
+
+        const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel } = payload;
+        const myUUID = passport.playerUUID;
+
+        // Determine this player's outcome
+        const isWinner = winnerUUIDs.includes(myUUID);
+        const isLoser  = loserUUIDs.includes(myUUID);
+        const wasInMatch = isWinner || isLoser;
+
+        // 1. Write localStorage FIRST, before any UI
+        if (isWinner) {
+            Passport.recordWin();
+            MatchHistory.push('WIN', '—', gameLabel);
+            VictoryCard.show(passport.playerName);
+        } else if (isLoser) {
+            Passport.recordLoss();
+            MatchHistory.push('LOSS', winnerNames, gameLabel);
+        }
+
+        // 2. Show "Last Match Winner" on feed for ALL players
+        window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
+
+        // 3. Update UI after storage writes
+        this._renderStats(Passport.get());
+        SidelineView.refresh();
+
+        // 4. Haptic feedback
+        if (wasInMatch && window.Haptic) {
+            isWinner ? Haptic.success() : Haptic.bump();
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STATUS CARD
     // ─────────────────────────────────────────────────────────────────────────
 
     _updateStatus(passport) {
@@ -414,7 +589,6 @@ const PlayerMode = {
         );
         const inSquad = squad.some(p => p.name?.toLowerCase() === name);
 
-        // Bench queue: active squad members not currently playing
         const playingNames = new Set(
             matches.flatMap(m => [...(m.teams[0]||[]), ...(m.teams[1]||[])])
                    .map(n => n.toLowerCase())
@@ -422,10 +596,8 @@ const PlayerMode = {
         const bench = squad.filter(p => p.active && !playingNames.has(p.name?.toLowerCase()));
         const qPos  = bench.findIndex(p => p.name?.toLowerCase() === name);
 
-        // Next Up names from broadcast payload
         const nextUpRaw = window._lastNextUp || '';
-        const nextNames = nextUpRaw.split('·').map(s => s.trim().toLowerCase()).filter(Boolean);
-        const isNextUp  = name && nextNames.includes(name);
+        const isNextUp  = name && nextUpRaw.toLowerCase().includes(name);
 
         if (playing) {
             this.setStatus('playing', 'You\'re on court!', 'Give it everything 🏀');
@@ -434,22 +606,20 @@ const PlayerMode = {
         } else if (inSquad && qPos >= 0) {
             const pos = qPos + 1;
             const sfx = pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th';
-            this.setStatus('resting', `#${pos}${sfx} in line`, `${bench.length} player${bench.length !== 1 ? 's' : ''} on the bench`);
+            this.setStatus('resting', `#${pos}${sfx} in line`, `${bench.length} player${bench.length !== 1 ? 's' : ''} on bench`);
         } else if (inSquad) {
             this.setStatus('resting', 'In the squad', 'Waiting for next rotation');
         }
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // JOIN SESSION (no token, first time)
+    // JOIN SESSION
     // ─────────────────────────────────────────────────────────────────────────
 
     async _joinSession(passport, joinCode) {
         this.setStatus('pending', 'Joining session…', 'Connecting to ' + joinCode);
         try {
-            // Subscribe FIRST — so we catch the approval broadcast
             this._subscribeAndPoll(joinCode, passport);
-
             let name = passport.playerName;
             if (!name) {
                 name = await this._promptName();
@@ -457,13 +627,11 @@ const PlayerMode = {
                 Passport.rename(name);
                 this._renderIdentity(Passport.get());
             }
-
             const res = await fetch('/api/play-request', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({ room_code: joinCode, name, player_uuid: passport.playerUUID }),
             });
-
             if (res.ok) {
                 this.setStatus('pending', 'Request sent!', 'Waiting for host to approve…');
             } else {
@@ -476,16 +644,14 @@ const PlayerMode = {
     },
 
     _subscribeAndPoll(joinCode, passport) {
-        // Join the Supabase realtime channel via sync.js
         if (typeof joinOnlineSession === 'function') {
             joinOnlineSession(joinCode).catch(() => {});
         }
-        // Signal poll as backup (catches signals if WS drops)
         this._startSignalPoll(joinCode, passport);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SIGNAL POLL — backup for when WS broadcast is missed
+    // SIGNAL POLL — DB fallback if WS broadcast missed
     // ─────────────────────────────────────────────────────────────────────────
 
     _startSignalPoll(joinCode, passport) {
@@ -500,13 +666,11 @@ const PlayerMode = {
             );
             const d = await r.json();
             if (d.signal) {
-                // Convert API signal format to broadcast payload format and reuse _onMatchResult
                 this._onMatchResult({
                     playerUUID: d.signal.player_uuid,
                     event:      d.signal.event,
                     gameLabel:  d.signal.game_label,
                 });
-                // Acknowledge
                 await fetch('/api/passport-signal', {
                     method:  'DELETE',
                     headers: { 'Content-Type': 'application/json' },
@@ -520,43 +684,37 @@ const PlayerMode = {
     // TOKEN & SESSION STORAGE
     // ─────────────────────────────────────────────────────────────────────────
 
-    // sessionStorage: survives refresh, clears when tab closes
     _isApprovedInSession(roomCode) {
-        try {
-            const map = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
-            return !!map[roomCode];
-        } catch { return false; }
+        try { return !!JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}')[roomCode]; }
+        catch { return false; }
     },
 
     _markApprovedInSession(roomCode) {
         try {
-            const map = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
-            map[roomCode] = true;
-            sessionStorage.setItem(SS_APPROVED, JSON.stringify(map));
+            const m = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
+            m[roomCode] = true;
+            sessionStorage.setItem(SS_APPROVED, JSON.stringify(m));
         } catch { }
     },
 
-    // localStorage: persists across sessions
     _loadToken(roomCode) {
-        try {
-            const map = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
-            return map[roomCode] || null;
-        } catch { return null; }
+        try { return JSON.parse(localStorage.getItem(LS_TOKENS) || '{}')[roomCode] || null; }
+        catch { return null; }
     },
 
     _saveToken(roomCode, token, name, uuid) {
         try {
-            const map = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
-            map[roomCode] = { token, name, uuid, savedAt: Date.now() };
-            localStorage.setItem(LS_TOKENS, JSON.stringify(map));
+            const m = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
+            m[roomCode] = { token, name, uuid, savedAt: Date.now() };
+            localStorage.setItem(LS_TOKENS, JSON.stringify(m));
         } catch { }
     },
 
     _clearToken(roomCode) {
         try {
-            const map = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
-            delete map[roomCode];
-            localStorage.setItem(LS_TOKENS, JSON.stringify(map));
+            const m = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
+            delete m[roomCode];
+            localStorage.setItem(LS_TOKENS, JSON.stringify(m));
         } catch { }
     },
 
@@ -568,7 +726,6 @@ const PlayerMode = {
             const approved = data?.session?.approved_players || {};
             const entry    = approved[passport.playerUUID] || approved[passport.playerName];
             if (!entry || entry.token !== savedToken.token) return false;
-            // Hydrate globals
             if (data.session) {
                 window.squad          = data.session.squad           || [];
                 window.currentMatches = data.session.current_matches || [];

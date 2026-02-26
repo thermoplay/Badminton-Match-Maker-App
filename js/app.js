@@ -1101,7 +1101,7 @@ function closePlayRequests() {
 async function approvePlayRequest(name, id, playerUUID = null) {
     // Add to squad
     if (!squad.find(p => p.name === name)) {
-        squad.push({ name, rating: 1000, wins: 0, games: 0, streak: 0, active: true });
+        squad.push({ name, uuid: playerUUID || null, rating: 1000, wins: 0, games: 0, streak: 0, active: true });
     }
 
     // UUID map for win signal dispatch
@@ -1277,41 +1277,65 @@ async function handlePassportSignal(signal, passport) {
  * Called from setWinner() in logic.js.
  * Resolves player names → UUIDs using the session's uuid_map.
  */
+/**
+ * Called from setWinner() in logic.js when host selects a winner.
+ * Also called from processAndNext() to ensure signal fires even if
+ * setWinner was called before Next Round.
+ *
+ * UUID RESOLUTION — UUID-first priority chain (survives name changes):
+ *   1. squad[n].uuid    — stored at approval time, never changes with renames
+ *   2. uuidMap[name]    — fallback, may be stale if name changed
+ */
 async function dispatchWinSignals(mIdx) {
     if (!window.isOperator || !window.currentRoomCode) return;
     const m = currentMatches[mIdx];
     if (!m || m.winnerTeamIndex === null) return;
 
-    const winIdx   = m.winnerTeamIndex;
-    const loseIdx  = winIdx === 0 ? 1 : 0;
-    const uuidMap  = window._sessionUUIDMap || {};
-    const label    = `Game ${mIdx + 1}`;
+    const winIdx  = m.winnerTeamIndex;
+    const loseIdx = winIdx === 0 ? 1 : 0;
+    const uuidMap = window._sessionUUIDMap || {};
+    const label   = `Game ${mIdx + 1}`;
 
-    const winnerUUIDs = m.teams[winIdx] .map(n => uuidMap[n]).filter(Boolean);
-    const loserUUIDs  = m.teams[loseIdx].map(n => uuidMap[n]).filter(Boolean);
+    // UUID resolution: squad member uuid > uuidMap name lookup
+    const resolveUUID = (name) => {
+        const member = squad.find(p => p.name === name);
+        return member?.uuid || uuidMap[name] || null;
+    };
 
-    // BUG 4 FIX: broadcast match_result instantly via the broadcast channel.
-    // Each player's _onMatchResult does a strict UUID equality check:
-    //   if playerUUID === myUUID → recordWin()  (localStorage first)
-    //   else if wasPlaying       → recordLoss() (localStorage first)
+    const winnerNames = m.teams[winIdx]  || [];
+    const loserNames  = m.teams[loseIdx] || [];
+    const winnerUUIDs = winnerNames.map(resolveUUID).filter(Boolean);
+    const loserUUIDs  = loserNames .map(resolveUUID).filter(Boolean);
+
+    // Record who won for the player sideline "Last Match Winner" display
+    // Broadcast MATCH_RESOLVED with winner names so all players see it
+    const winnerDisplayNames = winnerNames.join(' & ');
+    if (typeof _broadcast === 'function' && isOnlineSession) {
+        _broadcast('match_resolved', {
+            winnerNames:  winnerDisplayNames,
+            winnerUUIDs,
+            loserUUIDs,
+            gameLabel:    label,
+        });
+    }
+
+    // Also broadcast individual match_result events (for private stat updates)
     if (typeof broadcastMatchResult === 'function') {
         broadcastMatchResult(winnerUUIDs, loserUUIDs, label);
     }
 
-    // Also write to passport_signals table as durable fallback
-    // (catches devices that lost the WS connection momentarily)
+    // Durable DB fallback — catches devices that momentarily lost WS
     const signals = [
         ...winnerUUIDs.map(uuid => ({ player_uuid: uuid, event: 'WIN'  })),
         ...loserUUIDs .map(uuid => ({ player_uuid: uuid, event: 'LOSS' })),
     ];
-    if (signals.length === 0) return;
-    try {
-        await fetch('/api/passport-signal', {
+    if (signals.length > 0) {
+        fetch('/api/passport-signal', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ room_code: currentRoomCode, signals, game_label: label }),
-        });
-    } catch (e) { console.error('Signal dispatch failed:', e); }
+        }).catch(e => console.error('Signal dispatch failed:', e));
+    }
 }
 
 // =============================================================================

@@ -338,6 +338,28 @@
                 Stored on this device only. Never sent to host or other players.
             </div>
 
+            <!-- ── LAST MATCH WINNER ──────────────────────────────────────── -->
+            <div class="sl-last-winner-row" id="slLastWinnerRow" style="display:none;">
+                <span class="sl-last-winner-label">LAST MATCH</span>
+                <span class="sl-last-winner-name" id="slLastWinner"></span>
+            </div>
+
+            <!-- ── PERFORMANCE LAB ────────────────────────────────────────── -->
+            <div class="sl-section-label sl-section-lab">
+                <span class="sl-dot-lab">⚡</span>PERFORMANCE LAB
+                <span class="sl-lab-badge">Last 5</span>
+            </div>
+            <div class="sl-lab-history" id="slLabHistory">
+                <div class="sl-lab-empty">No matches recorded yet.<br>Play a game to start your history.</div>
+            </div>
+
+            <!-- ── INVITE TO COURT ────────────────────────────────────────── -->
+            <button class="sl-invite-btn" onclick="InviteQR.show(window.currentRoomCode)">
+                <span class="sl-invite-icon">📲</span>
+                Invite to Court
+                <span class="sl-invite-hint-inline">Share QR</span>
+            </button>
+
         </div><!-- /.sl-inner -->
     </div><!-- /#sidelinePanel -->
 

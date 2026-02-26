@@ -269,10 +269,19 @@ function _handleBroadcast(payload) {
         return;
     }
 
-    // BUG 4: Match result — UUID-matched stat update
+    // BUG 4: Individual match_result — UUID-matched private stat update
     if (type === 'match_result') {
         if (!isOperator && typeof PlayerMode !== 'undefined') {
             PlayerMode._onMatchResult(payload);
+        }
+        return;
+    }
+
+    // MATCH_RESOLVED: round-level event with winner name display + individual UUIDs
+    // All players receive this; only UUID-matched ones increment wins
+    if (type === 'match_resolved') {
+        if (!isOperator && typeof PlayerMode !== 'undefined') {
+            PlayerMode._onMatchResolved(payload);
         }
         return;
     }
@@ -287,21 +296,34 @@ function _handleBroadcast(payload) {
 }
 
 // Host applies a name change broadcast from a player
+// Issue #3 FIX: UUID-first lookup so name changes survive previous renames.
+// squad member has .uuid stored at approval time — that never changes.
 function _applyNameUpdate(playerUUID, oldName, newName) {
     if (!newName?.trim() || !playerUUID) return;
     const trimmed = newName.trim();
-    const player  = squad.find(p => p.name === oldName);
-    if (player) player.name = trimmed;
-    // Update UUID map key
+
+    // 1. Find player by UUID (stored on squad member at approval) — rename-safe
+    let player = squad.find(p => p.uuid === playerUUID);
+    // 2. Fallback: find by oldName if uuid not yet on squad member
+    if (!player) player = squad.find(p => p.name === oldName);
+
+    if (!player) return;  // player not in squad yet, ignore
+
+    const prevName = player.name;
+    player.name    = trimmed;
+    player.uuid    = playerUUID;   // ensure uuid is set for future lookups
+
+    // Update uuid_map: rename the key, ensure new key exists
     const uuidMap = window._sessionUUIDMap || {};
-    if (uuidMap[oldName] === playerUUID) {
-        uuidMap[trimmed] = playerUUID;
-        delete uuidMap[oldName];
-        window._sessionUUIDMap = uuidMap;
-    }
+    // Remove old name key if it points to this UUID
+    if (uuidMap[prevName] === playerUUID) delete uuidMap[prevName];
+    // Always write new name key
+    uuidMap[trimmed] = playerUUID;
+    window._sessionUUIDMap = uuidMap;
+
     renderSquad();
     saveToDisk();
-    showSessionToast(`✏️ ${oldName} → ${trimmed}`);
+    showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -42,6 +42,7 @@ function processAndNext() {
             alert('Operations Hold: Please select winners for all active games.');
             return;
         }
+
         // Snapshot state BEFORE applying ELO — needed for undo
         const snapshot = {
             squadSnapshot: squad.map(p => ({ ...p })),
@@ -49,8 +50,20 @@ function processAndNext() {
             timestamp:     Date.now(),
         };
         roundHistory.push(snapshot);
+
         // Archive to Supabase match_history for weekly leaderboard
         if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
+
+        // MATCH_RESOLVED: re-dispatch signals at Next Round time.
+        // setWinner fires signals on winner selection, but processAndNext
+        // is the canonical "round is over" moment. This is the guaranteed
+        // delivery point — all player passports record their stats here.
+        if (typeof dispatchWinSignals === 'function') {
+            currentMatches.forEach((m, idx) => {
+                if (m.winnerTeamIndex !== null) dispatchWinSignals(idx);
+            });
+        }
+
         applyELOResults();
         updateUndoButton();
     }
