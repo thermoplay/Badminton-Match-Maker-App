@@ -402,75 +402,206 @@ const PlayerMode = {
     // ─────────────────────────────────────────────────────────────────────────
 
     async boot(passport, joinCode) {
+        // ══════════════════════════════════════════════════════════════════════
+        // BOOT — Four-phase init. Each phase completes independently so the
+        // screen is never blank, even if the DB is slow or unreachable.
+        //
+        // PHASE 0 — Instant render     (synchronous, <1ms)
+        // PHASE 1 — Passport check     (synchronous localStorage read)
+        // PHASE 2 — Session handshake  (async DB call)
+        // PHASE 3 — Join or approve    (async, sets final status)
+        // ══════════════════════════════════════════════════════════════════════
+
         this._joinCode = joinCode;
+
+        // ── PHASE 0: Instant frame render ─────────────────────────────────────
+        // BUG 1 FIX: Render the UI shell RIGHT NOW before any async work.
+        // Add .sl-booting so the status card pulses while we wait for the DB.
+        // Remove it once we have a real answer.
+        const panel = document.getElementById('sidelinePanel');
+        if (panel) panel.classList.add('sl-booting');
+
+        // Render whatever identity we have — even '—' is better than blank
         this._renderIdentity(passport);
         this._renderStats(passport);
+
         const codeEl = document.getElementById('slSessionCode');
         if (codeEl && joinCode) codeEl.textContent = joinCode;
 
-        if (!joinCode) { this._promptForCode(); return; }
+        if (!joinCode) {
+            if (panel) panel.classList.remove('sl-booting');
+            this._promptForCode();
+            return;
+        }
 
-        // ── TIER 1: sessionStorage fast-path ─────────────────────────────
-        // Survives page refresh within the same browser tab session.
-        // Written when we receive approval (broadcast or DB); clears on tab close.
+        // ── PHASE 1: Check localStorage passport ──────────────────────────────
+        // BUG 3 FIX: Do this synchronously right here — zero network wait.
+        // Show a personalised welcome message immediately if name exists.
+        const hasName = !!(passport.playerName && passport.playerName.trim());
+        if (hasName) {
+            // "Welcome back" message shown instantly from localStorage
+            this._showWelcomeBack(passport.playerName, joinCode);
+            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
+        } else {
+            // No name yet — show the name entry form immediately
+            // (replaces the blank "No active round yet" placeholder)
+            this.setStatus('pending', 'Almost there…', 'Enter your name to join');
+            this._showNameEntry();
+            // Name entry is async — the rest of boot() waits here
+            const name = await this._promptName();
+            if (!name) {
+                if (panel) panel.classList.remove('sl-booting');
+                return;
+            }
+            Passport.rename(name);
+            this._renderIdentity(Passport.get());
+            this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
+        }
+
+        // ── Tier 1: sessionStorage fast-path ──────────────────────────────────
+        // Survives page refresh within the same tab session.
         if (this._isApprovedInSession(joinCode)) {
-            this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You\'re in the rotation');
+            if (panel) panel.classList.remove('sl-booting');
+            this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You're in the rotation');
             this._subscribeAndPoll(joinCode, passport);
             return;
         }
 
-        // ── TIER 2: "Invisible Passport" — DB handshake ───────────────────
-        // The player has a localStorage passport with a UUID.
-        // Subscribe to realtime FIRST (so we catch the approval event even if
-        // the DB write happens before we finish polling).
+        // ── PHASE 2: DB handshake — show spinner while waiting ────────────────
+        // BUG 2 FIX: The DB call is now wrapped — if it returns null (session
+        // not found / network error) we show a "Searching for Court" state
+        // instead of crashing or staying blank.
         this._subscribeAndPoll(joinCode, passport);
 
-        // Call member-upsert: creates pending row if new, or returns existing
-        // status if returning. This is non-blocking from the UI perspective.
-        this.setStatus('pending', 'Checking session…', 'Looking up your passport…');
+        // Show "Searching for Court…" while the DB responds
+        this._showSearchingSpinner();
 
-        const upsertResult = await this._memberUpsert(passport, joinCode);
+        let upsertResult = null;
+        try {
+            upsertResult = await this._memberUpsert(Passport.get(), joinCode);
+        } catch (err) {
+            console.error('[PlayerMode.boot] member-upsert threw:', err);
+            // Treat as null — fall through to pending state
+        }
 
-        if (upsertResult?.status === 'active') {
-            // ── RETURNING APPROVED PLAYER ─────────────────────────────────
-            // This is the "Approval Memory" path — DB already has them as active.
-            // Bypass the pending screen entirely.
-            this._markApprovedInSession(joinCode);
-            this._hydrateFromUpsert(upsertResult);
-            this.setStatus('approved', `Welcome back, ${passport.playerName}!`, 'You\'re in the squad ✅');
-            SidelineView.refresh();
-            setTimeout(() => this._updateStatus(passport), 800);
+        // Stop pulsing — we have a result (or a failure)
+        if (panel) panel.classList.remove('sl-booting');
+        this._clearSearchingSpinner();
+
+        // ── BUG 2 FIX: Guard against null / missing session ───────────────────
+        if (!upsertResult) {
+            this.setStatus('pending',
+                'Court not found',
+                'The session may have ended. Check the room code.');
+            console.error('[CourtSide] Session lookup failed for room:', joinCode,
+                '— upsertResult was null. Check /api/member-upsert and network.');
+            // Show manual code entry so player isn't stuck
+            this._promptForCode();
             return;
         }
 
-        // ── TIER 3: localStorage token fallback ──────────────────────────
-        // For older sessions where session_members may not have this player.
+        // ── RETURNING APPROVED PLAYER ─────────────────────────────────────────
+        if (upsertResult.status === 'active') {
+            this._markApprovedInSession(joinCode);
+            this._hydrateFromUpsert(upsertResult);
+            const p = Passport.get();
+            this.setStatus('approved', `Welcome back, ${p.playerName}!`, 'You're in the squad ✅');
+            SidelineView.refresh();
+            setTimeout(() => this._updateStatus(p), 800);
+            return;
+        }
+
+        // ── Tier 3: localStorage token fallback ───────────────────────────────
         const savedToken = this._loadToken(joinCode);
         if (savedToken) {
-            const valid = await this._verifyToken(joinCode, savedToken, passport);
+            const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
             if (valid) {
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You\'re in the squad');
+                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, 'You're in the squad');
                 return;
             } else {
                 this._clearToken(joinCode);
             }
         }
 
-        // ── TIER 4: New join — show pending screen ────────────────────────
-        // The realtime subscription is already active (started in Tier 2).
-        // _onMemberActivated() will fire when the host approves.
-        if (!passport.playerName) {
-            // No name yet — prompt once
-            const name = await this._promptName();
-            if (!name) return;
-            Passport.rename(name);
-            this._renderIdentity(Passport.get());
-        }
-
+        // ── PHASE 3: New join — submit request, wait for host approval ────────
         await this._submitJoinRequest(Passport.get(), joinCode);
     },
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // WELCOME-BACK CARD — instant render from localStorage
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _showWelcomeBack(playerName, roomCode) {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="sl-welcome-back">
+                <div class="sl-welcome-back-icon">🏀</div>
+                <div class="sl-welcome-back-text">
+                    <div class="sl-welcome-back-name">Welcome back, ${
+                        playerName.toUpperCase()
+                    }</div>
+                    <div class="sl-welcome-back-sub">Joining court ${roomCode}…</div>
+                </div>
+            </div>`;
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // NAME ENTRY TRIGGER — shows the form without waiting for _promptName()
+    // Called at the top of boot() so the input is visible instantly.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _showNameEntry() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="sl-name-entry" id="slNameEntryForm">
+                <div class="sl-name-entry-title">ENTER YOUR NAME</div>
+                <div class="sl-name-entry-sub">
+                    The host will approve your request to join the court.
+                </div>
+                <input
+                    type="text"
+                    id="slNameEntryInput"
+                    class="sl-name-input"
+                    placeholder="Your name..."
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="words"
+                    maxlength="30"
+                    inputmode="text"
+                >
+                <button class="sl-name-submit" id="slNameEntrySubmit">
+                    JOIN COURT →
+                </button>
+            </div>`;
+        setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 120);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SEARCHING SPINNER — shown while DB responds (BUG 2)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _showSearchingSpinner() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        // Only replace if it still has the welcome-back card or is empty
+        if (container.querySelector('.sl-name-entry')) return; // name entry takes priority
+        container.innerHTML = `
+            <div class="sl-searching">
+                <div class="sl-searching-spinner"></div>
+                <div class="sl-searching-text">SEARCHING FOR COURT…</div>
+            </div>`;
+    },
+
+    _clearSearchingSpinner() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        if (container.querySelector('.sl-searching')) {
+            container.innerHTML = '<div class="sl-empty">No active round yet</div>';
+        }
+    },
     // ─────────────────────────────────────────────────────────────────────────
     // MEMBER UPSERT — calls /api/member-upsert (via sync.js helper)
     // Returns { status: 'pending'|'active', member } or null on failure.
@@ -880,10 +1011,51 @@ const PlayerMode = {
         if (r) r.textContent = Passport.winRate()    || '—';
     },
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // NAME ENTRY — inline DOM form, never blocks render
+    //
+    // BUG 3 FIX: The old code used browser prompt() — a synchronous modal that
+    // BLOCKS all rendering. On mobile Safari this looks like a blank screen.
+    // This replacement renders a name form directly into slCurrentMatches.
+    // The Promise resolves when the player taps "Join Court".
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // NAME ENTRY — resolves when player submits their name.
+    // BUG 3 FIX: Uses the pre-rendered inline DOM form from _showNameEntry()
+    // (already on screen from PHASE 1 of boot). Never uses browser prompt().
+    // ─────────────────────────────────────────────────────────────────────────
+
     _promptName() {
         return new Promise(resolve => {
-            const n = prompt('Enter your name to join:');
-            resolve(n ? n.trim() : null);
+            // Re-use the form that _showNameEntry() already rendered, or create it
+            let input = document.getElementById('slNameEntryInput');
+            let btn   = document.getElementById('slNameEntrySubmit');
+
+            if (!input || !btn) {
+                // Form isn't on screen yet — render it now
+                const container = document.getElementById('slCurrentMatches');
+                if (!container) {
+                    // Absolute last resort: DOM not ready
+                    const n = window.prompt('Enter your name to join:');
+                    return resolve(n ? n.trim() : null);
+                }
+                this._showNameEntry();
+                input = document.getElementById('slNameEntryInput');
+                btn   = document.getElementById('slNameEntrySubmit');
+            }
+
+            const submit = () => {
+                const val = (input?.value || '').trim();
+                if (!val) { input?.focus(); return; }
+                if (btn) { btn.disabled = true; btn.textContent = 'JOINING…'; }
+                resolve(val);
+            };
+
+            // Attach listeners (guard against double-attach on re-render)
+            btn?.addEventListener('click', submit);
+            input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+            setTimeout(() => input?.focus(), 80);
         });
     },
 

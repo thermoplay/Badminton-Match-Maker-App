@@ -406,45 +406,227 @@
     <script src="js/app.js"></script>
     <script src="js/logic.js"></script>
     <script src="js/sync.js"></script>
+    <!-- ═══ ERROR BANNER (BUG 4) ═══════════════════════════════════════════ -->
+    <!-- Visible only when a JS error is caught. Surfaced in the UI so     -->
+    <!-- errors are visible on mobile without DevTools.                    -->
+    <div id="sl-error-banner" aria-live="assertive"></div>
+
     <script>
-        // ── URL-BASED CONDITIONAL RENDERING ──────────────────────────────────
-        // Runs synchronously before paint so there's zero flash of host UI.
-        (function() {
-            const params = new URLSearchParams(window.location.search);
-            const role   = params.get('role');
-            if (role === 'player') {
-                // Mark body immediately — CSS handles the rest
+        // ══════════════════════════════════════════════════════════════════════
+        // COURTSIDE PRO — Boot Script  (Part 1 Render Fixes)
+        //
+        // FIX SUMMARY:
+        //   BUG 1 — DOMContentLoaded renders the frame BEFORE scripts load
+        //   BUG 2 — null-guard on missing session / slow DB
+        //   BUG 3 — inline name form replaces blocking prompt()
+        //   BUG 4 — CSS auto-show + global error handler
+        // ══════════════════════════════════════════════════════════════════════
+
+        // ── BUG 4: Global error catch-all ────────────────────────────────────
+        // Catches any thrown error or unhandled promise rejection and surfaces
+        // it in the UI error banner so it's visible on mobile without DevTools.
+
+        function _csShowError(msg, source) {
+            const banner = document.getElementById('sl-error-banner');
+            if (!banner) return;
+            const time = new Date().toLocaleTimeString('en', { hour12: false });
+            banner.innerHTML = `
+                <strong>⚠ RENDER ERROR [${time}]</strong>
+                ${String(msg).slice(0, 200)}
+                ${source ? '<br><span style="opacity:0.6;">' + String(source).slice(0, 120) + '</span>' : ''}`;
+            banner.classList.add('visible');
+            // Auto-dismiss after 12s
+            clearTimeout(banner._timer);
+            banner._timer = setTimeout(() => banner.classList.remove('visible'), 12000);
+        }
+
+        window.addEventListener('error', (e) => {
+            console.error('[CourtSide] Unhandled error:', e.message, e.filename, e.lineno);
+            _csShowError(e.message, (e.filename || '').split('/').pop() + ':' + e.lineno);
+        });
+
+        window.addEventListener('unhandledrejection', (e) => {
+            const msg = e.reason?.message || String(e.reason) || 'Unhandled promise rejection';
+            console.error('[CourtSide] Unhandled rejection:', msg, e.reason);
+            _csShowError(msg);
+        });
+
+        // ── BUG 1 + BUG 4: DOMContentLoaded instant render ───────────────────
+        // Fires as soon as the HTML is parsed — BEFORE external scripts load.
+        // This guarantees the player sees the UI frame within ~50ms of opening
+        // the QR link, regardless of network speed or script parse time.
+
+        document.addEventListener('DOMContentLoaded', function () {
+            try {
+                const params   = new URLSearchParams(window.location.search);
+                const role     = params.get('role');
+                const joinCode = params.get('join');
+
+                if (role !== 'player') return;  // Host mode — skip
+
+                // ── Step 1: Mark body immediately (CSS safety net fires here) ──
+                // body.player-mode #sidelinePanel { display: flex !important }
+                // This rule in style.css makes the panel visible via CSS alone —
+                // no JS objects needed, no async wait, no blank screen.
                 document.body.classList.add('player-mode');
+
+                // ── Step 2: Make sidelinePanel visible RIGHT NOW ──────────────
+                // Belt + suspenders: also set inline style so it works even if
+                // the stylesheet hasn't finished parsing on very slow connections.
+                const panel = document.getElementById('sidelinePanel');
+                if (panel) {
+                    panel.style.display = 'flex';
+                    panel.classList.add('sl-booting');  // Pulse animation while loading
+                }
+
+                // ── Step 3: Stamp the room code immediately ───────────────────
+                // The slSessionCode pill shows the room code from the URL at once
+                // — the player sees it before the DB call completes.
+                if (joinCode) {
+                    const codeEl = document.getElementById('slSessionCode');
+                    if (codeEl) codeEl.textContent = joinCode;
+                }
+
+                // ── Step 4: BUG 3 — Passport check from localStorage ─────────
+                // This is a SYNCHRONOUS read — zero network wait.
+                // Show personalised welcome or name-entry form immediately.
+                try {
+                    const raw      = localStorage.getItem('cs_player_passport');
+                    const passport = raw ? JSON.parse(raw) : null;
+
+                    const nameEl   = document.getElementById('slPassportName');
+                    const avatarEl = document.getElementById('slPassportAvatar');
+                    const statusTextEl = document.getElementById('slStatusText');
+                    const statusSubEl  = document.getElementById('slStatusSub');
+                    const matchesEl    = document.getElementById('slCurrentMatches');
+
+                    if (passport && passport.playerName) {
+                        // ── RETURNING PLAYER — welcome back immediately ────────
+                        // This text appears on screen before any JS objects init.
+                        if (nameEl)   nameEl.textContent   = passport.playerName;
+                        if (avatarEl) avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
+
+                        if (statusTextEl) statusTextEl.textContent =
+                            'Welcome back, ' + passport.playerName;
+                        if (statusSubEl)  statusSubEl.textContent  = 'Joining court…';
+
+                        // Show welcome card in the matches area
+                        if (matchesEl && joinCode) {
+                            matchesEl.innerHTML =
+                                '<div class="sl-welcome-back">' +
+                                    '<div class="sl-welcome-back-icon">🏀</div>' +
+                                    '<div class="sl-welcome-back-text">' +
+                                        '<div class="sl-welcome-back-name">WELCOME BACK, ' +
+                                            passport.playerName.toUpperCase() +
+                                        '</div>' +
+                                        '<div class="sl-welcome-back-sub">Joining court ' + joinCode + '…</div>' +
+                                    '</div>' +
+                                '</div>';
+                        }
+                    } else {
+                        // ── NEW PLAYER — show name entry form immediately ──────
+                        // No network call needed — form is HTML, renders instantly.
+                        if (statusTextEl) statusTextEl.textContent = 'Almost there…';
+                        if (statusSubEl)  statusSubEl.textContent  = 'Enter your name to join the court';
+
+                        if (matchesEl) {
+                            matchesEl.innerHTML =
+                                '<div class="sl-name-entry" id="slNameEntryForm">' +
+                                    '<div class="sl-name-entry-title">ENTER YOUR NAME</div>' +
+                                    '<div class="sl-name-entry-sub">' +
+                                        'The host will approve your request to join.' +
+                                    '</div>' +
+                                    '<input type="text" id="slNameEntryInput" class="sl-name-input"' +
+                                        ' placeholder="Your name..." autocomplete="off"' +
+                                        ' autocorrect="off" autocapitalize="words"' +
+                                        ' maxlength="30" inputmode="text">' +
+                                    '<button class="sl-name-submit" id="slNameEntrySubmit">' +
+                                        'JOIN COURT →' +
+                                    '</button>' +
+                                '</div>';
+                            // Focus after a tick so mobile keyboard opens
+                            setTimeout(function () {
+                                document.getElementById('slNameEntryInput')?.focus();
+                            }, 200);
+                        }
+                    }
+
+                    // ── Step 5: Private stats from localStorage ───────────────
+                    if (passport) {
+                        const wEl = document.getElementById('slPrivateWins');
+                        const gEl = document.getElementById('slPrivateGames');
+                        const rEl = document.getElementById('slPrivateWR');
+                        if (wEl) wEl.textContent = passport.privateLifetimeWins || 0;
+                        if (gEl) gEl.textContent = passport.privateTotalGames   || 0;
+                        if (rEl && passport.privateTotalGames > 0) {
+                            rEl.textContent = Math.round(
+                                (passport.privateLifetimeWins / passport.privateTotalGames) * 100
+                            ) + '%';
+                        }
+                    }
+
+                } catch (lsErr) {
+                    console.error('[CourtSide] localStorage read failed:', lsErr);
+                    // Still show the panel — don't let a storage error blank the screen
+                }
+
+            } catch (domErr) {
+                console.error('[CourtSide] DOMContentLoaded boot failed:', domErr);
+                _csShowError('Boot failed: ' + domErr.message);
             }
-        })();
+        });
 
-        // ── BOOT ─────────────────────────────────────────────────────────────
+        // ── FULL BOOT — runs after all scripts have loaded ────────────────────
+        // The frame is already visible from DOMContentLoaded above.
+        // This phase does the async work: DB handshake, realtime subscription,
+        // approval check. Errors here don't blank the screen.
+
         const _originalLoad = window.onload;
-        window.onload = async function() {
-            if (_originalLoad) _originalLoad();
+        window.onload = async function () {
+            try {
+                if (_originalLoad) _originalLoad();
+            } catch (e) {
+                console.error('[CourtSide] Original onload error:', e);
+            }
 
-            const params   = new URLSearchParams(window.location.search);
-            const role     = params.get('role');
-            const joinCode = params.get('join');
+            try {
+                const params   = new URLSearchParams(window.location.search);
+                const role     = params.get('role');
+                const joinCode = params.get('join');
 
-            if (role === 'player') {
-                // ── PLAYER MODE ──
-                // 1. Init or retrieve passport
-                const passport = Passport.init();
+                if (role === 'player') {
+                    // ── PLAYER MODE ─────────────────────────────────────────
+                    // Frame is already on screen from DOMContentLoaded above.
 
-                // 2. Hide host shell immediately
-                const hostRoot = document.getElementById('hostRoot');
-                const hostNav  = document.getElementById('hostNav');
-                if (hostRoot) hostRoot.style.display = 'none';
-                if (hostNav)  hostNav.style.display  = 'none';
+                    // 1. Init passport (creates UUID if new, returns existing if not)
+                    const passport = Passport.init();
 
-                // 3. Show sideline panel right away with passport data
-                SidelineView.show();
-                PlayerMode.boot(passport, joinCode);
+                    // 2. Ensure host shell is hidden (CSS already hides it, this
+                    //    is the explicit JS belt + suspenders)
+                    const hostRoot = document.getElementById('hostRoot');
+                    const hostNav  = document.getElementById('hostNav');
+                    if (hostRoot) hostRoot.style.display = 'none';
+                    if (hostNav)  hostNav.style.display  = 'none';
 
-            } else {
-                // ── HOST / SPECTATOR MODE ──
-                await tryAutoRejoin();
+                    // 3. Run SidelineView.show() — panel is already visible but
+                    //    this populates the SidelineView._visible flag and runs
+                    //    a full refresh to populate match data if available.
+                    SidelineView.show();
+
+                    // 4. Boot PlayerMode — the async DB handshake.
+                    //    The panel is already rendered; boot() only updates content.
+                    await PlayerMode.boot(passport, joinCode);
+
+                } else {
+                    // ── HOST / SPECTATOR MODE ────────────────────────────────
+                    await tryAutoRejoin();
+                }
+            } catch (bootErr) {
+                console.error('[CourtSide] window.onload boot failed:', bootErr);
+                _csShowError('Session boot failed: ' + bootErr.message);
+                // Remove pulsing state — show static error
+                const panel = document.getElementById('sidelinePanel');
+                if (panel) panel.classList.remove('sl-booting');
             }
         };
     </script>

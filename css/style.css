@@ -57,6 +57,211 @@ body.player-mode .play-requests-badge {
     display: none !important;
 }
 
+/* ── BUG 4 FIX: CSS auto-show for sidelinePanel ─────────────────────────────
+   If JS sets body.player-mode before scripts finish loading, the panel becomes
+   visible via CSS — no JS required. This is the zero-JS safety net that
+   guarantees something renders on screen immediately.
+   SidelineView.show() also sets display:flex explicitly (belt + suspenders).  */
+body.player-mode #sidelinePanel {
+    display: flex !important;
+}
+
+/* ── Loading skeleton — shown while DB responds ──────────────────────────────
+   The .sl-booting class is on the panel during the async init window.
+   It shows a pulsing placeholder so the screen never looks broken.           */
+.sl-panel.sl-booting .sl-status-card {
+    animation: sl-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes sl-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.45; }
+}
+
+/* ── Error banner — visible on any caught JS error ───────────────────────────
+   Rendered by the global error handler in index.html boot script.
+   Only appears when something actually fails — invisible otherwise.          */
+#sl-error-banner {
+    display: none;
+    position: fixed;
+    bottom: 80px;
+    left: 16px;
+    right: 16px;
+    z-index: 9999;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 0.72rem;
+    color: #fca5a5;
+    font-family: var(--font-body);
+    line-height: 1.45;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+#sl-error-banner.visible {
+    display: block;
+    animation: sl-err-in 0.3s ease;
+}
+
+@keyframes sl-err-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0);   }
+}
+
+#sl-error-banner strong {
+    display: block;
+    color: #ef4444;
+    font-size: 0.75rem;
+    margin-bottom: 3px;
+    font-family: var(--font-display);
+    letter-spacing: 0.05em;
+}
+
+/* ── Name-entry form — inline in slCurrentMatches ────────────────────────────
+   Replaces the browser prompt() for new player name entry.
+   High-end dark aesthetic matching the rest of the sideline UI.             */
+.sl-name-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+}
+
+.sl-name-entry-title {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text);
+}
+
+.sl-name-entry-sub {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: -0.4rem;
+    line-height: 1.45;
+}
+
+.sl-name-input {
+    width: 100%;
+    background: var(--bg2);
+    border: 1.5px solid var(--border);
+    color: #fff;
+    padding: 14px 16px;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-family: var(--font-body);
+    outline: none;
+    box-sizing: border-box;
+    transition: border-color 0.2s;
+    -webkit-appearance: none;
+}
+
+.sl-name-input:focus {
+    border-color: var(--accent);
+}
+
+.sl-name-input::placeholder {
+    color: rgba(255,255,255,0.25);
+}
+
+.sl-name-submit {
+    width: 100%;
+    background: var(--accent);
+    color: #000;
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    border: none;
+    border-radius: 12px;
+    padding: 15px;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+    -webkit-appearance: none;
+}
+
+.sl-name-submit:active { transform: scale(0.97); opacity: 0.85; }
+
+.sl-name-submit:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* ── "Searching for Court" spinner ───────────────────────────────────────────
+   Shown when joinCode is in URL but DB hasn't responded yet.                */
+.sl-searching {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1.5rem 0;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.sl-searching-spinner {
+    width: 32px;
+    height: 32px;
+    border: 2.5px solid rgba(255,255,255,0.1);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: sl-spin 0.8s linear infinite;
+}
+
+@keyframes sl-spin {
+    to { transform: rotate(360deg); }
+}
+
+.sl-searching-text {
+    font-size: 0.8rem;
+    font-family: var(--font-display);
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+/* ── Welcome-back card — shown when passport exists on load ─────────────────*/
+.sl-welcome-back {
+    background: linear-gradient(135deg, rgba(var(--accent-rgb),0.08), rgba(var(--accent-rgb),0.03));
+    border: 1px solid rgba(var(--accent-rgb),0.2);
+    border-radius: 14px;
+    padding: 1rem 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    animation: sl-fade-up 0.35s ease;
+}
+
+@keyframes sl-fade-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.sl-welcome-back-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.sl-welcome-back-text {
+    flex: 1;
+}
+
+.sl-welcome-back-name {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 0.04em;
+}
+
+.sl-welcome-back-sub {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
 body {
     font-family: var(--font-body);
     background-color: var(--bg);
