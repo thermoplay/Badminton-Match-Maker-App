@@ -259,9 +259,9 @@ function setWinner(mIdx, tIdx) {
 
     checkNextButtonState();
     saveToDisk();
-
-    // Dispatch win/loss signals to player passports (non-blocking)
-    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx);
+    // NOTE: dispatchWinSignals is intentionally NOT called here.
+    // It fires exactly once from processAndNext() after all winners are set.
+    // Calling it here too would double-count every win.
 }
 
 // ---------------------------------------------------------------------------

@@ -701,9 +701,18 @@ const PlayerMode = {
         const p = Passport.get();
         if (!p) return;
         const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel } = payload;
-        const myUUID  = p.playerUUID;
+        const myUUID   = p.playerUUID;
         const isWinner = winnerUUIDs.includes(myUUID);
         const isLoser  = loserUUIDs.includes(myUUID);
+
+        // ── DEDUP GUARD ────────────────────────────────────────────────────────
+        // Prevent double-counting if both the realtime broadcast AND the DB poll
+        // deliver the same result. The key is UUID + gameLabel + outcome.
+        const dedupKey = `${myUUID}-${gameLabel}-${isWinner ? 'WIN' : 'LOSS'}`;
+        if (isWinner || isLoser) {
+            if (this._processedSignalIds.has(dedupKey)) return;
+            this._processedSignalIds.add(dedupKey);
+        }
 
         if (isWinner) {
             Passport.recordWin();
@@ -806,6 +815,10 @@ const PlayerMode = {
         this._startSignalPoll(joinCode, p);
     },
 
+    // Processed signal IDs — prevents the DB poll from recording a win
+    // that was already recorded by the realtime broadcast.
+    _processedSignalIds: new Set(),
+
     _startSignalPoll(joinCode, p) {
         clearInterval(this._pollTimer);
         this._pollTimer = setInterval(() => this._pollSignal(joinCode, p), 8000);
@@ -816,7 +829,22 @@ const PlayerMode = {
             const r = await fetch(`/api/passport-signal?player_uuid=${encodeURIComponent(p.playerUUID)}&room_code=${encodeURIComponent(joinCode)}`);
             const d = await r.json();
             if (d.signal) {
-                this._onMatchResult({ playerUUID: d.signal.player_uuid, event: d.signal.event, gameLabel: d.signal.game_label });
+                const sigId = `${d.signal.player_uuid}-${d.signal.game_label}-${d.signal.event}`;
+                // Skip if already processed via the realtime broadcast
+                if (this._processedSignalIds.has(sigId)) {
+                    // Still ACK so it gets deleted from DB
+                } else {
+                    this._processedSignalIds.add(sigId);
+                    // Route through _onMatchResolved for consistent stat recording
+                    const isWin = d.signal.event === 'WIN';
+                    this._onMatchResolved({
+                        winnerNames:  isWin ? p.playerName : '—',
+                        winnerUUIDs:  isWin ? [p.playerUUID] : [],
+                        loserUUIDs:   isWin ? [] : [p.playerUUID],
+                        gameLabel:    d.signal.game_label,
+                    });
+                }
+                // Always ACK the signal so it's cleared from the DB
                 await fetch('/api/passport-signal', {
                     method: 'DELETE', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ player_uuid: p.playerUUID, room_code: joinCode }),

@@ -891,11 +891,21 @@ async function dispatchWinSignals(mIdx) {
 
     window._lastMatchWinner = winnerNames.join(' & ');
 
+    // Broadcast match_resolved ONCE — players' _onMatchResolved handles win/loss recording.
+    // Do NOT also call broadcastMatchResult — that fires individual match_result events
+    // which would cause _onMatchResult to record the win a second time (double-count).
     if (typeof _broadcast === 'function' && isOnlineSession) {
-        _broadcast('match_resolved', { winnerNames: window._lastMatchWinner, winnerUUIDs, loserUUIDs, gameLabel: label });
+        _broadcast('match_resolved', {
+            winnerNames: window._lastMatchWinner,
+            winnerUUIDs,
+            loserUUIDs,
+            gameLabel: label,
+        });
     }
-    if (typeof broadcastMatchResult === 'function') broadcastMatchResult(winnerUUIDs, loserUUIDs, label);
 
+    // DB fallback: write to passport_signals for players who missed the WS broadcast.
+    // The poll in _pollSignal routes through _onMatchResult which ALSO records stats,
+    // so we track which signals have been processed to prevent double-counting.
     const signals = [
         ...winnerUUIDs.map(uuid => ({ player_uuid: uuid, event: 'WIN'  })),
         ...loserUUIDs .map(uuid => ({ player_uuid: uuid, event: 'LOSS' })),

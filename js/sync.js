@@ -227,15 +227,7 @@ function broadcastGameState() {
     });
 }
 
-function broadcastMatchResult(winnerUUIDs, loserUUIDs, gameLabel) {
-    if (!isOperator) return;
-    winnerUUIDs.forEach(uuid => {
-        _broadcast('match_result', { playerUUID: uuid, event: 'WIN', gameLabel });
-    });
-    loserUUIDs.forEach(uuid => {
-        _broadcast('match_result', { playerUUID: uuid, event: 'LOSS', gameLabel });
-    });
-}
+// broadcastMatchResult removed — match_resolved carries UUIDs, no need for per-player broadcasts
 
 function broadcastNameUpdate(playerUUID, oldName, newName) {
     if (!realtimeChannel || realtimeChannel.readyState !== WebSocket.OPEN) return;
@@ -327,12 +319,9 @@ function _handleBroadcast(payload) {
         return;
     }
 
-    if (type === 'match_result') {
-        if (!isOperator && typeof PlayerMode !== 'undefined') {
-            PlayerMode._onMatchResult(payload);
-        }
-        return;
-    }
+    // match_result (individual per-UUID) is intentionally NOT handled here.
+    // match_resolved already carries winnerUUIDs + loserUUIDs and is the
+    // single canonical stat-recording path. Handling both would double-count.
 
     if (type === 'match_resolved') {
         if (!isOperator && typeof PlayerMode !== 'undefined') {
