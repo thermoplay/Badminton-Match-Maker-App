@@ -954,11 +954,19 @@ async function submitIWantToPlay() {
 
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
+    // Resolve player UUID from Passport so the host can fire approval memory.
+    // Without player_uuid, approvePlayRequest() gets null, memberApprove(null)
+    // is skipped, and the Supabase Realtime approval signal never fires — the
+    // player is stuck on "pending" even after the host taps Approve.
+    const playerUUID = (typeof Passport !== 'undefined')
+        ? (Passport.get()?.playerUUID || Passport.init().playerUUID)
+        : null;
+
     try {
         const res = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ room_code: currentRoomCode, name }),
+            body:    JSON.stringify({ room_code: currentRoomCode, name, player_uuid: playerUUID }),
         });
 
         if (res.ok) {
@@ -1222,39 +1230,115 @@ function passportInit() {
 /**
  * Rename flow — triggered by tapping the player name in sideline view.
  */
+/**
+ * Rename flow — triggered by tapping the ✏️ Edit name button in sideline view.
+ *
+ * WHY NO prompt():
+ *   iOS Safari blocks window.prompt() in standalone PWA mode (home screen installs)
+ *   and in some WKWebView contexts. It silently returns null — the user taps, nothing
+ *   happens. We replace it with an in-page overlay that works everywhere.
+ */
 function passportRename() {
     const passport = Passport.get();
     if (!passport) return;
 
-    const newName = prompt('Update your name:', passport.playerName);
-    if (!newName || !newName.trim()) return;
+    // Build an in-page rename overlay (works in PWA / iOS standalone mode)
+    const existing = document.getElementById('_renameOverlay');
+    if (existing) existing.remove();
 
-    const trimmed = newName.trim();
-    const oldName = passport.playerName;
+    const overlay = document.createElement('div');
+    overlay.id = '_renameOverlay';
+    overlay.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:9998',
+        'background:rgba(0,0,0,0.75)', 'display:flex',
+        'align-items:center', 'justify-content:center',
+        'padding:24px', 'box-sizing:border-box',
+    ].join(';');
 
-    // BUG 3 FIX: write localStorage FIRST, then update UI, then broadcast.
-    // This order prevents any render reading stale data.
-    Passport.rename(trimmed);                   // 1. localStorage
-    if (typeof PlayerMode !== 'undefined') {
-        PlayerMode._renderIdentity(Passport.get()); // 2. identity card
-    }
-    SidelineView.refresh();                     // 3. full view
+    overlay.innerHTML = `
+        <div style="
+            background:#1a1a2e; border:1px solid rgba(255,255,255,0.1);
+            border-radius:16px; padding:28px 24px; width:100%; max-width:340px;
+            box-shadow:0 20px 60px rgba(0,0,0,0.6);
+        ">
+            <div style="font-size:13px;font-weight:700;letter-spacing:2px;color:rgba(255,255,255,0.45);margin-bottom:16px;">
+                EDIT NAME
+            </div>
+            <input id="_renameInput" type="text"
+                value="${(passport.playerName || '').replace(/"/g, '&quot;')}"
+                maxlength="30"
+                autocomplete="off" autocorrect="off" autocapitalize="words"
+                style="
+                    width:100%; box-sizing:border-box;
+                    background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15);
+                    border-radius:10px; padding:14px 16px; color:#fff;
+                    font-size:17px; font-weight:600; outline:none;
+                    -webkit-appearance:none;
+                "
+            >
+            <div style="display:flex;gap:10px;margin-top:16px;">
+                <button id="_renameCancel" style="
+                    flex:1; padding:13px; border-radius:10px;
+                    background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
+                    color:rgba(255,255,255,0.6); font-size:15px; font-weight:600; cursor:pointer;
+                ">Cancel</button>
+                <button id="_renameSave" style="
+                    flex:2; padding:13px; border-radius:10px;
+                    background:#00ffa3; border:none;
+                    color:#000; font-size:15px; font-weight:700; cursor:pointer;
+                ">Save Name</button>
+            </div>
+        </div>`;
 
-    // 4. Broadcast to host via the broadcast channel (not a dead API route)
-    if (window.isOnlineSession && window.currentRoomCode) {
-        if (typeof broadcastNameUpdate === 'function') {
-            broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
+    document.body.appendChild(overlay);
+
+    const input  = document.getElementById('_renameInput');
+    const saveBtn = document.getElementById('_renameSave');
+    const cancelBtn = document.getElementById('_renameCancel');
+
+    // Select all text so user can start typing immediately
+    setTimeout(() => { input.focus(); input.select(); }, 60);
+
+    const doSave = () => {
+        const trimmed = (input.value || '').trim();
+        if (!trimmed) {
+            input.style.border = '1px solid #ff4d4d';
+            input.focus();
+            return;
         }
-    }
+        const oldName = passport.playerName;
+        overlay.remove();
 
-    // 5. PART 1: Also write new name to session_members table.
-    // This triggers the host's postgres_changes listener (_handleMemberChange)
-    // which updates the squad name on the big screen in real-time — no refresh.
-    if (window.isOnlineSession && window.currentRoomCode && typeof memberRename === 'function') {
-        memberRename(passport.playerUUID, trimmed);   // non-blocking
-    }
+        // 1. localStorage FIRST, then UI, then network — standard write order
+        Passport.rename(trimmed);
+        if (typeof PlayerMode !== 'undefined') {
+            PlayerMode._renderIdentity(Passport.get());
+        }
+        SidelineView.refresh();
 
-    showSessionToast(`✅ Name updated to ${trimmed}`);
+        // 2. Broadcast name change to host via WebSocket
+        if (window.isOnlineSession && window.currentRoomCode) {
+            if (typeof broadcastNameUpdate === 'function') {
+                broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
+            }
+            // 3. Also write to session_members table (triggers host postgres_changes)
+            if (typeof memberRename === 'function') {
+                memberRename(passport.playerUUID, trimmed);
+            }
+        }
+
+        showSessionToast(`✅ Name updated to ${trimmed}`);
+        if (typeof Haptic !== 'undefined') Haptic.success();
+    };
+
+    const doCancel = () => overlay.remove();
+
+    saveBtn.addEventListener('click', doSave);
+    cancelBtn.addEventListener('click', doCancel);
+    // Tap outside the card to cancel
+    overlay.addEventListener('click', e => { if (e.target === overlay) doCancel(); });
+    // Enter key submits
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') doSave(); });
 }
 
 /**
@@ -1442,8 +1526,78 @@ async function passportJoinSession() {
 
 async function passportRenameAndJoin() {
     const passport = Passport.get();
-    const newName  = prompt('Enter name for this session:', passport?.playerName || '');
-    if (!newName || !newName.trim()) return;
+    if (!passport) return;
+
+    // Can't use prompt() in PWA/iOS standalone mode — show an in-page input instead.
+    // We reuse the same rename overlay pattern but resolve with the new name on save.
+    const newName = await new Promise(resolve => {
+        const existing = document.getElementById('_renameOverlay');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = '_renameOverlay';
+        overlay.style.cssText = [
+            'position:fixed', 'inset:0', 'z-index:9998',
+            'background:rgba(0,0,0,0.75)', 'display:flex',
+            'align-items:center', 'justify-content:center',
+            'padding:24px', 'box-sizing:border-box',
+        ].join(';');
+        overlay.innerHTML = `
+            <div style="
+                background:#1a1a2e; border:1px solid rgba(255,255,255,0.1);
+                border-radius:16px; padding:28px 24px; width:100%; max-width:340px;
+                box-shadow:0 20px 60px rgba(0,0,0,0.6);
+            ">
+                <div style="font-size:13px;font-weight:700;letter-spacing:2px;color:rgba(255,255,255,0.45);margin-bottom:16px;">
+                    JOIN WITH A DIFFERENT NAME
+                </div>
+                <input id="_renameInput" type="text"
+                    value="${(passport.playerName || '').replace(/"/g, '&quot;')}"
+                    maxlength="30" autocomplete="off" autocorrect="off" autocapitalize="words"
+                    style="
+                        width:100%; box-sizing:border-box;
+                        background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15);
+                        border-radius:10px; padding:14px 16px; color:#fff;
+                        font-size:17px; font-weight:600; outline:none; -webkit-appearance:none;
+                    ">
+                <div style="display:flex;gap:10px;margin-top:16px;">
+                    <button id="_renameCancel" style="
+                        flex:1; padding:13px; border-radius:10px;
+                        background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
+                        color:rgba(255,255,255,0.6); font-size:15px; font-weight:600; cursor:pointer;">
+                        Cancel</button>
+                    <button id="_renameSave" style="
+                        flex:2; padding:13px; border-radius:10px;
+                        background:#00ffa3; border:none;
+                        color:#000; font-size:15px; font-weight:700; cursor:pointer;">
+                        Continue →</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const input     = document.getElementById('_renameInput');
+        const saveBtn   = document.getElementById('_renameSave');
+        const cancelBtn = document.getElementById('_renameCancel');
+        setTimeout(() => { input.focus(); input.select(); }, 60);
+
+        const done = (val) => { overlay.remove(); resolve(val); };
+        saveBtn.addEventListener('click', () => {
+            const v = (input.value || '').trim();
+            if (!v) { input.style.border = '1px solid #ff4d4d'; input.focus(); return; }
+            done(v);
+        });
+        cancelBtn.addEventListener('click', () => done(null));
+        overlay.addEventListener('click', e => { if (e.target === overlay) done(null); });
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                const v = (input.value || '').trim();
+                if (!v) { input.style.border = '1px solid #ff4d4d'; return; }
+                done(v);
+            }
+        });
+    });
+
+    if (!newName) return;
     Passport.rename(newName.trim());
     await submitPassportJoinRequest(newName.trim(), passport.playerUUID);
 }

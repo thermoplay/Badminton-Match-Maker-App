@@ -524,21 +524,17 @@ const PlayerMode = {
         // global is still null when memberUpsert runs (because joinOnlineSession
         // hadn't been called yet for new players), the upsert returns null and
         // the player incorrectly lands on "Court not found".
-        // We set the global directly here so it's available immediately, then
-        // joinOnlineSession() is called again later via _subscribeAndPoll() which
-        // is a no-op on the session-get call if already connected.
-        if (typeof joinOnlineSession === 'function') {
-            // Fire-and-forget: we don't await here because joinOnlineSession
-            // also tries to show toasts / update host UI which we don't want
-            // yet. We just need currentRoomCode set synchronously below.
-            joinOnlineSession(joinCode).catch(() => {});
-        }
-        // Belt-and-suspenders: also set the global directly in case sync.js
-        // hasn't been parsed yet (very slow connections).
-        if (typeof currentRoomCode !== 'undefined' && !currentRoomCode) {
-            // eslint-disable-next-line no-global-assign
-            currentRoomCode = joinCode;
-        }
+        //
+        // We do NOT call joinOnlineSession() here because that function is built
+        // for the host path: it calls applyRemoteState() → renderSquad() → writes
+        // to host-only DOM elements (#matchContainer, #squadList etc.) which do
+        // not exist in player mode and throw errors that abort the boot sequence.
+        //
+        // Instead we set the three globals that sync.js functions depend on
+        // directly and synchronously — zero network cost, zero DOM side effects.
+        if (typeof currentRoomCode !== 'undefined') currentRoomCode = joinCode;
+        if (typeof isOnlineSession !== 'undefined') isOnlineSession  = true;
+        // isOperator stays false — players are never operators
 
         // ── PHASE 1: Check localStorage passport ──────────────────────────────
         // BUG 3 FIX: Do this synchronously right here — zero network wait.
@@ -1036,10 +1032,16 @@ const PlayerMode = {
     },
 
     _subscribeAndPoll(joinCode, passport) {
-        // joinOnlineSession is now called once at the top of boot() to ensure
-        // currentRoomCode is set before memberUpsert runs. Calling it again
-        // here would trigger a second session-get fetch and potentially reset
-        // isOperator/isOnlineSession state. We only start the signal poll.
+        // Subscribe to the Supabase Realtime WebSocket for this room so we receive:
+        //   - postgres_changes on session_members (approval notification)
+        //   - broadcast events (game_state, match_result, match_resolved)
+        //
+        // We call subscribeRealtime() directly instead of joinOnlineSession() because
+        // joinOnlineSession() also calls applyRemoteState() → renderSquad() which
+        // writes to host-only DOM elements that don't exist in player mode and throw.
+        if (typeof subscribeRealtime === 'function' && joinCode) {
+            subscribeRealtime(joinCode);
+        }
         this._startSignalPoll(joinCode, passport);
     },
 
