@@ -2,13 +2,26 @@
 // /api/play-request  — POST / GET / DELETE
 // =============================================================================
 // POST  : Player submits a join request.
-//         Writes to play_requests (for host polling + notification badge)
-//         AND upserts to session_members with status:'pending'.
-//         If session_members already has status:'active' for this uuid,
-//         returns { ok: true, alreadyActive: true } — player skips pending screen.
+//         1. If session_members shows status:'active' → player already approved,
+//            return { alreadyActive: true } so client skips the pending screen.
+//         2. Check play_requests for an existing pending row (real dup-guard).
+//            If one exists already, skip the insert to prevent spam.
+//         3. Insert into play_requests — THIS is what the host polls/sees.
+//         4. Upsert into session_members with status:'pending'.
 //
 // GET   : Host polls pending requests for a room.
 // DELETE: Host dismisses a request (approve or deny both call DELETE).
+//
+// ── ROOT CAUSE FIX ────────────────────────────────────────────────────────────
+// The previous version checked session_members for a pending row and returned
+// early WITHOUT writing to play_requests. But member-upsert.js always creates
+// a session_members row BEFORE play-request.js is called, so play_requests was
+// NEVER written → host saw zero requests every time.
+//
+// The duplicate guard now correctly checks play_requests (the notification
+// table) rather than session_members (the identity table). These are separate
+// concerns: a player can be in session_members and still need to send a
+// play_request to get the host's attention.
 // =============================================================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -42,25 +55,21 @@ export default async function handler(req, res) {
         const trimmed = String(name).trim().slice(0, 50);
         const uuid    = player_uuid ? String(player_uuid).trim() : null;
 
-        // ── Step 1: If we have a UUID, check session_members for existing active row ──
-        // This is the "Approval Memory" check — returning player after refresh.
+        // ── Step 1: Check if player is already approved in session_members ────
+        // Only this check should short-circuit. A pending row does NOT block us.
         if (uuid) {
             const existing = await sbFetch(
-                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&limit=1`
+                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status,player_name&limit=1`
             );
             if (existing.ok && existing.data?.length > 0) {
                 const member = existing.data[0];
+
                 if (member.status === 'active') {
-                    // Player was already approved — skip pending, go straight to sideline
-                    return res.status(200).json({
-                        ok:            true,
-                        alreadyActive: true,
-                        member,
-                    });
+                    return res.status(200).json({ ok: true, alreadyActive: true });
                 }
-                // Status is 'pending' — update name if changed, then fall through.
-                // Do NOT return early. We must still write to play_requests below
-                // so the host sees the notification badge.
+
+                // Status is 'pending' — update name if it changed, then FALL THROUGH.
+                // Do NOT return early here — we still need to write play_requests.
                 if (member.player_name !== trimmed) {
                     await sbFetch(
                         `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
@@ -71,12 +80,39 @@ export default async function handler(req, res) {
                         }
                     );
                 }
-                // Fall through to Step 3 to insert into play_requests.
+                // Fall through to Step 2 and Step 3
             }
         }
 
-        // ── Step 2: Insert into session_members (pending) ────────────────────
-        // ON CONFLICT DO NOTHING via the unique index — idempotent on re-submit.
+        // ── Step 2: Duplicate guard — check play_requests, NOT session_members ─
+        // Prevent spam: if a play_requests row already exists for this player,
+        // the host already has the notification. Don't add a second one.
+        if (uuid) {
+            const dupCheck = await sbFetch(
+                `/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=id&limit=1`
+            );
+            if (dupCheck.ok && dupCheck.data?.length > 0) {
+                return res.status(200).json({ ok: true, alreadyActive: false });
+            }
+        }
+
+        // ── Step 3: Insert into play_requests (host notification queue) ──────
+        // This is what pollPlayRequests() reads. Always write here.
+        const r = await sbFetch('/play_requests', {
+            method: 'POST',
+            body: {
+                room_code:    code,
+                name:         trimmed,
+                player_uuid:  uuid,
+                requested_at: new Date().toISOString(),
+            },
+        });
+
+        if (!r.ok) {
+            return res.status(500).json({ ok: false, error: 'Failed to write play request' });
+        }
+
+        // ── Step 4: Upsert into session_members (pending) ────────────────────
         if (uuid) {
             await sbFetch('/session_members', {
                 method:  'POST',
@@ -92,26 +128,16 @@ export default async function handler(req, res) {
             });
         }
 
-        // ── Step 3: Insert into play_requests (host notification queue) ──────
-        const r = await sbFetch('/play_requests', {
-            method: 'POST',
-            body: {
-                room_code,
-                name:        trimmed,
-                player_uuid: uuid,
-                requested_at: new Date().toISOString(),
-            },
-        });
-
-        return res.status(r.ok ? 200 : 500).json({ ok: r.ok, alreadyActive: false });
+        return res.status(200).json({ ok: true, alreadyActive: false });
     }
 
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {
         const { room_code } = req.query;
         if (!room_code) return res.status(400).json({ error: 'Missing room_code' });
+        const code = String(room_code).trim().toUpperCase();
         const r = await sbFetch(
-            `/play_requests?room_code=eq.${encodeURIComponent(room_code)}&order=requested_at.asc`
+            `/play_requests?room_code=eq.${encodeURIComponent(code)}&order=requested_at.asc`
         );
         return res.status(200).json({ requests: r.data || [] });
     }
