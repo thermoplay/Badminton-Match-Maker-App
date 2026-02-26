@@ -324,57 +324,142 @@ const VictoryCard = {
 const InviteQR = {
     _overlay: null,
 
-    /**
-     * Show the invite QR overlay.
-     * Uses the same URL format as the host's QR: ?join=XXXX-XXXX&role=player
-     */
-    show(roomCode) {
-        if (!roomCode) { alert('No active session to share.'); return; }
+    // ─────────────────────────────────────────────────────────────────────────
+    // show(roomCode)
+    //
+    // roomCode resolution order:
+    //   1. Argument passed in (e.g. onclick="InviteQR.show(PlayerMode._joinCode)")
+    //   2. PlayerMode._joinCode  — set synchronously in boot(), always correct
+    //      for players joining via QR link
+    //   3. window.currentRoomCode — set by joinOnlineSession() in sync.js,
+    //      correct for host or after Supabase handshake completes
+    //
+    // URL format: ?join=XXXX-XXXX&role=player
+    //   Matches the format the host's QR generates and the app reads on load.
+    // ─────────────────────────────────────────────────────────────────────────
 
-        // Remove any existing overlay
+    show(roomCode) {
+        // Resolve the room code using the priority chain above
+        const code = roomCode
+            || (typeof PlayerMode !== 'undefined' && PlayerMode._joinCode)
+            || window.currentRoomCode
+            || null;
+
+        if (!code) {
+            // No room code available — guide the user
+            if (typeof showSessionToast === 'function') {
+                showSessionToast('No active session to share.');
+            } else {
+                alert('No active session to share.');
+            }
+            return;
+        }
+
+        // Remove any existing overlay before creating a new one
         if (this._overlay) this._overlay.remove();
 
-        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${roomCode}&role=player`;
+        // Build the join URL — same format the host QR uses
+        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${code}&role=player`;
 
+        // Build overlay DOM
         this._overlay = document.createElement('div');
         this._overlay.className = 'sl-invite-overlay';
         this._overlay.innerHTML = `
             <div class="sl-invite-card">
                 <div class="sl-invite-header">
                     <div class="sl-invite-title">INVITE TO COURT</div>
-                    <button class="sl-invite-close" onclick="InviteQR.hide()">✕</button>
+                    <button class="sl-invite-close" id="inviteCloseBtn">✕</button>
                 </div>
                 <div class="sl-invite-sub">Scan to join this session</div>
                 <canvas id="inviteQrCanvas" class="sl-invite-canvas"></canvas>
-                <div class="sl-invite-code">${roomCode}</div>
+                <div class="sl-invite-code">${code}</div>
                 <div class="sl-invite-hint">Players who scan will see the player view</div>
+                <button class="sl-invite-copy-btn" id="inviteCopyBtn">
+                    <span class="sl-invite-copy-icon">🔗</span>
+                    Copy Link
+                </button>
             </div>
         `;
         document.body.appendChild(this._overlay);
-        requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
 
-        // Tap outside to dismiss
+        // Wire close button via addEventListener (not inline onclick)
+        // so it works even if InviteQR is referenced before the script fully loads
+        this._overlay.querySelector('#inviteCloseBtn')
+            .addEventListener('click', () => this.hide());
+
+        // Wire Copy Link button
+        this._overlay.querySelector('#inviteCopyBtn')
+            .addEventListener('click', () => this._copyLink(joinUrl));
+
+        // Tap outside the card to dismiss
         this._overlay.addEventListener('click', e => {
             if (e.target === this._overlay) this.hide();
         });
 
-        // Generate QR
+        // Animate in on next frame
+        requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
+
+        // Generate QR code — same options as the host's QR in showOverlay('sync')
         if (window.QRCode) {
-            QRCode.toCanvas(document.getElementById('inviteQrCanvas'), joinUrl, {
-                width:  220,
-                margin: 2,
-                color: { dark: '#0a0a0f', light: '#ffffff' },
-            }, err => { if (err) console.error('InviteQR: QR gen failed', err); });
+            QRCode.toCanvas(
+                this._overlay.querySelector('#inviteQrCanvas'),
+                joinUrl,
+                { width: 220, margin: 2, color: { dark: '#0a0a0f', light: '#ffffff' } },
+                err => { if (err) console.error('[InviteQR] QR gen failed:', err); }
+            );
         } else {
-            // Fallback: show the URL as text
-            const canvas = document.getElementById('inviteQrCanvas');
+            // QRCode library not loaded — show the URL as tappable text instead
+            const canvas = this._overlay.querySelector('#inviteQrCanvas');
             if (canvas) {
                 canvas.style.display = 'none';
                 const txt = document.createElement('div');
-                txt.className = 'sl-invite-url';
+                txt.className   = 'sl-invite-url';
                 txt.textContent = joinUrl;
                 canvas.parentNode.insertBefore(txt, canvas.nextSibling);
             }
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // _copyLink — copies the join URL to clipboard with visual confirmation
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _copyLink(url) {
+        const btn = this._overlay?.querySelector('#inviteCopyBtn');
+        const succeed = () => {
+            if (btn) {
+                btn.innerHTML = '✅ Link copied!';
+                btn.disabled  = true;
+                setTimeout(() => {
+                    btn.innerHTML = '<span class="sl-invite-copy-icon">🔗</span> Copy Link';
+                    btn.disabled  = false;
+                }, 2500);
+            }
+        };
+        const fail = () => {
+            if (btn) {
+                btn.innerHTML = '⚠️ Copy failed — tap URL above';
+                setTimeout(() => {
+                    btn.innerHTML = '<span class="sl-invite-copy-icon">🔗</span> Copy Link';
+                }, 2500);
+            }
+        };
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(succeed).catch(fail);
+        } else {
+            // Fallback for browsers without clipboard API (e.g. old Android WebView)
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = url;
+                ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                document.execCommand('copy');
+                ta.remove();
+                succeed();
+            } catch { fail(); }
         }
     },
 
@@ -552,9 +637,14 @@ const PlayerMode = {
     // Called at the top of boot() so the input is visible instantly.
     // ─────────────────────────────────────────────────────────────────────────
 
-    _showNameEntry() {
+    _showNameEntry(onSubmit) {
+        // Always re-render the form from scratch so the DOM nodes are brand-new.
+        // This prevents the "dead button" bug where a previous innerHTML write
+        // (e.g. from the DOMContentLoaded fast-render in index.html) created DOM
+        // nodes that look identical but have no JS event listeners attached.
         const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
+        if (!container) return null;
+
         container.innerHTML = `
             <div class="sl-name-entry" id="slNameEntryForm">
                 <div class="sl-name-entry-title">ENTER YOUR NAME</div>
@@ -576,7 +666,44 @@ const PlayerMode = {
                     JOIN COURT →
                 </button>
             </div>`;
-        setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 120);
+
+        // Wire up the button in the SAME tick as the innerHTML write.
+        // This is atomic — nothing can run between the render and the listener
+        // attachment because there is no await, setTimeout, or Promise here.
+        const input = document.getElementById('slNameEntryInput');
+        const btn   = document.getElementById('slNameEntrySubmit');
+
+        if (onSubmit && input && btn) {
+            const submit = () => {
+                const val = (input.value || '').trim();
+                if (!val) {
+                    // Empty — shake the input and keep focus
+                    input.classList.add('sl-input-error');
+                    setTimeout(() => input.classList.remove('sl-input-error'), 600);
+                    input.focus();
+                    return;
+                }
+                // Passport guard: ensure global passport has a UUID before proceeding.
+                // Passport.init() is synchronous — it reads localStorage or creates a
+                // fresh object. Either way, uuid is guaranteed after this call.
+                if (typeof Passport !== 'undefined') {
+                    const p = Passport.init();
+                    // Keep the global `passport` variable in sync (defined in app.js).
+                    if (typeof window !== 'undefined') window._passport = p;
+                }
+                // Visual feedback — disable button and show spinner text
+                btn.disabled  = true;
+                btn.innerHTML = '<span class="sl-btn-spinner"></span> REQUESTING…';
+                onSubmit(val);
+            };
+
+            btn.addEventListener('click', submit);
+            input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+        }
+
+        // Focus after a short tick so the mobile keyboard has time to open
+        setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 80);
+        return { input, btn };
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1012,50 +1139,21 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // NAME ENTRY — inline DOM form, never blocks render
-    //
-    // BUG 3 FIX: The old code used browser prompt() — a synchronous modal that
-    // BLOCKS all rendering. On mobile Safari this looks like a blank screen.
-    // This replacement renders a name form directly into slCurrentMatches.
-    // The Promise resolves when the player taps "Join Court".
-    // ─────────────────────────────────────────────────────────────────────────
-
-    // ─────────────────────────────────────────────────────────────────────────
     // NAME ENTRY — resolves when player submits their name.
-    // BUG 3 FIX: Uses the pre-rendered inline DOM form from _showNameEntry()
-    // (already on screen from PHASE 1 of boot). Never uses browser prompt().
+    //
+    // This always calls _showNameEntry(callback), which renders the form AND
+    // wires the button listener in one synchronous operation. We never try to
+    // re-use a form that was pre-rendered by DOMContentLoaded — those nodes
+    // have no listeners attached and clicking them does nothing (the "dead
+    // button" bug). By always rendering fresh, we guarantee the listener is
+    // bound to the exact DOM node that is currently on screen.
     // ─────────────────────────────────────────────────────────────────────────
 
     _promptName() {
         return new Promise(resolve => {
-            // Re-use the form that _showNameEntry() already rendered, or create it
-            let input = document.getElementById('slNameEntryInput');
-            let btn   = document.getElementById('slNameEntrySubmit');
-
-            if (!input || !btn) {
-                // Form isn't on screen yet — render it now
-                const container = document.getElementById('slCurrentMatches');
-                if (!container) {
-                    // Absolute last resort: DOM not ready
-                    const n = window.prompt('Enter your name to join:');
-                    return resolve(n ? n.trim() : null);
-                }
-                this._showNameEntry();
-                input = document.getElementById('slNameEntryInput');
-                btn   = document.getElementById('slNameEntrySubmit');
-            }
-
-            const submit = () => {
-                const val = (input?.value || '').trim();
-                if (!val) { input?.focus(); return; }
-                if (btn) { btn.disabled = true; btn.textContent = 'JOINING…'; }
-                resolve(val);
-            };
-
-            // Attach listeners (guard against double-attach on re-render)
-            btn?.addEventListener('click', submit);
-            input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
-            setTimeout(() => input?.focus(), 80);
+            // _showNameEntry renders the form AND wires the button in one tick.
+            // The callback fires when the player submits a non-empty name.
+            this._showNameEntry((name) => resolve(name));
         });
     },
 
@@ -1084,213 +1182,3 @@ const PlayerMode = {
         await this._joinSession(Passport.get(), code);
     },
 };
-// =============================================================================
-// COURTSIDE PRO — bootApp()
-// Async boot sequence — guaranteed safe execution order.
-//
-// WHY THIS FILE:
-//   passport.js is the LAST file in the dependency chain
-//   (polish → passport → app → logic → sync). Putting bootApp() here
-//   means every object it references (Passport, PlayerMode, SidelineView,
-//   tryAutoRejoin, loadFromDisk) is already defined by the time this runs.
-//
-// EXECUTION ORDER:
-//   Step A — Init passport from localStorage (or create fresh)
-//   Step B — Init Supabase / sync layer (tryAutoRejoin or PlayerMode)
-//   Step C — Parse URL for roomCode + role
-//   Step D — renderUI() wires up the final visual state
-//
-// VERCEL / PRODUCTION SAFETY:
-//   • All localStorage access is gated behind the window 'load' event.
-//   • Each step is wrapped in try/catch so one failure cannot blank the screen.
-//   • A global `window._passport` reference is set in Step A so every module
-//     that needs the passport object reads the same instance.
-// =============================================================================
-
-// ---------------------------------------------------------------------------
-// Global passport reference — set once in Step A, read everywhere.
-// Declaring it here (file scope, not function scope) means any module that
-// does `window._passport` or checks `typeof _passport !== 'undefined'`
-// will always see the same object after boot completes.
-// ---------------------------------------------------------------------------
-window._passport = null;
-
-// ---------------------------------------------------------------------------
-// _csBootError — surfaces errors visibly on mobile (no DevTools needed)
-// ---------------------------------------------------------------------------
-function _csBootError(label, err) {
-    console.error(`[CourtSide] ${label}:`, err);
-    // Show the on-screen error banner if it exists (defined in index.html)
-    if (typeof _csShowError === 'function') {
-        _csShowError(`${label}: ${err?.message || String(err)}`);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// bootApp — the single async entry point for ALL initialization
-// ---------------------------------------------------------------------------
-async function bootApp() {
-
-    // ── Guard: localStorage is only available after the window loads ─────────
-    // On Vercel, scripts are sometimes executed in a partial document context.
-    // This check ensures we never touch localStorage before window is ready.
-    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
-        console.warn('[CourtSide] bootApp() called before window ready — aborting');
-        return;
-    }
-
-    // =========================================================================
-    // STEP A — Init passport
-    // Synchronous localStorage read. Sets window._passport so all subsequent
-    // steps and all other modules read the same object — no local shadow copies.
-    // =========================================================================
-    try {
-        window._passport = Passport.init();   // creates UUID if new, reads existing if not
-        console.log('[CourtSide] Step A: passport ready →', window._passport.playerUUID);
-    } catch (err) {
-        _csBootError('Step A (passport init)', err);
-        // Create a minimal in-memory passport so later steps don't null-crash.
-        // This is purely a safety net — it will NOT be persisted until Step D.
-        window._passport = {
-            playerUUID:          'fallback-' + Math.random().toString(36).slice(2),
-            playerName:          '',
-            privateLifetimeWins: 0,
-            privateTotalGames:   0,
-            createdAt:           Date.now(),
-        };
-    }
-
-    // =========================================================================
-    // STEP B — Init Supabase / sync layer
-    // tryAutoRejoin() (defined in sync.js) checks localStorage for a saved
-    // room code and reconnects the WebSocket if one is found. It is safe to
-    // call before Step C because it only touches sync state, not the UI.
-    // For player-mode this step is a no-op (PlayerMode.boot handles its own
-    // connection in Step D).
-    // =========================================================================
-    const params   = new URLSearchParams(window.location.search);
-    const role     = params.get('role');
-    const roomCode = (params.get('join') || '').trim().toUpperCase() || null;
-
-    // Strip ?join= from the URL bar so a hard-refresh doesn't re-trigger join
-    if (roomCode) {
-        const cleanUrl = window.location.origin + window.location.pathname +
-            (role ? `?role=${role}` : '');
-        window.history.replaceState({}, document.title, cleanUrl);
-    }
-
-    if (role !== 'player') {
-        // Host / spectator — init the Supabase sync layer now.
-        // Also loads local squad state via loadFromDisk (defined in app.js).
-        try {
-            if (typeof loadFromDisk === 'function') loadFromDisk();
-            console.log('[CourtSide] Step B: local disk loaded');
-        } catch (err) {
-            _csBootError('Step B (loadFromDisk)', err);
-        }
-
-        try {
-            if (typeof tryAutoRejoin === 'function') await tryAutoRejoin();
-            console.log('[CourtSide] Step B: Supabase rejoin complete');
-        } catch (err) {
-            _csBootError('Step B (tryAutoRejoin)', err);
-            // Non-fatal — app works offline, just won't be in a live session
-        }
-    }
-    // Player-mode Supabase init happens inside PlayerMode.boot() (Step D)
-    // because it needs the join code and passport to be known first.
-
-    // =========================================================================
-    // STEP C — URL parsing (already done above — stored in `role` + `roomCode`)
-    // This step is separated here as a named checkpoint for clarity and for
-    // any future logic that needs to run between B and D.
-    // =========================================================================
-    console.log('[CourtSide] Step C: URL parsed → role=%s roomCode=%s', role, roomCode);
-
-    // =========================================================================
-    // STEP D — renderUI()
-    // All async work is done. Wire up the final visual state.
-    // Called only after A, B, and C are all settled.
-    // =========================================================================
-    try {
-        await renderUI(role, roomCode);
-        console.log('[CourtSide] Step D: renderUI complete');
-    } catch (err) {
-        _csBootError('Step D (renderUI)', err);
-        // Remove booting pulse so the player doesn't see an infinite spinner
-        document.getElementById('sidelinePanel')?.classList.remove('sl-booting');
-    }
-}
-
-// ---------------------------------------------------------------------------
-// renderUI — final render gate
-// Separated from bootApp() so it can be called independently in tests or
-// after a manual rejoin without re-running Steps A–C.
-// ---------------------------------------------------------------------------
-async function renderUI(role, roomCode) {
-    if (role === 'player') {
-        // ── PLAYER MODE ──────────────────────────────────────────────────────
-
-        // Hide host shell elements (belt + suspenders over the CSS rule)
-        const hostRoot = document.getElementById('hostRoot');
-        const hostNav  = document.getElementById('hostNav');
-        if (hostRoot) hostRoot.style.display = 'none';
-        if (hostNav)  hostNav.style.display  = 'none';
-
-        // Show and populate the sideline panel using the globally-set passport
-        if (typeof SidelineView !== 'undefined') {
-            SidelineView.show();
-        }
-
-        // Hand off to PlayerMode — uses window._passport, not a local copy.
-        // PlayerMode.boot() reads Passport.get() internally which is equivalent
-        // to window._passport after Step A; both refer to the same localStorage
-        // snapshot. No risk of stale data.
-        if (typeof PlayerMode !== 'undefined') {
-            await PlayerMode.boot(window._passport, roomCode);
-        }
-
-    } else {
-        // ── HOST / SPECTATOR MODE ─────────────────────────────────────────────
-
-        // Squad + matches already loaded in Step B (loadFromDisk).
-        // Render the squad list and check button state.
-        if (typeof renderSquad === 'function')         renderSquad();
-        if (typeof checkNextButtonState === 'function') checkNextButtonState();
-        if (typeof updateUndoButton === 'function')     updateUndoButton();
-
-        // Update the session badge and IWTP sheet visibility.
-        if (typeof updateSessionUI === 'function')          updateSessionUI();
-        if (typeof updateIWTPVisibility === 'function')     updateIWTPVisibility();
-    }
-}
-
-// =============================================================================
-// ENTRY POINT — single event listener, fires once after ALL scripts load
-//
-// WHY window 'load' and NOT DOMContentLoaded:
-//   DOMContentLoaded fires when the HTML is parsed but BEFORE external <script>
-//   tags finish downloading. On Vercel, parallel script fetching means
-//   passport.js / sync.js / app.js may not all be evaluated yet.
-//   window 'load' fires only after every script, stylesheet, and resource is
-//   fully parsed and executed — guaranteeing Passport, PlayerMode, tryAutoRejoin,
-//   loadFromDisk, etc. are all defined before bootApp() touches them.
-//
-// The DOMContentLoaded block in index.html that renders the instant UI frame
-// (player name, status card) is kept intentionally — it is purely cosmetic
-// raw DOM manipulation with NO JS object references, so it cannot crash.
-// =============================================================================
-window.addEventListener('load', function onWindowLoad() {
-    // Remove listener immediately — boot runs exactly once.
-    window.removeEventListener('load', onWindowLoad);
-
-    bootApp().catch(function (fatalErr) {
-        // Last-resort catch — bootApp's internal try/catches should prevent
-        // this from ever firing, but if they don't, at least log it clearly.
-        console.error('[CourtSide] FATAL: bootApp() threw outside all guards:', fatalErr);
-        if (typeof _csShowError === 'function') {
-            _csShowError('Fatal boot error: ' + (fatalErr?.message || fatalErr));
-        }
-        document.getElementById('sidelinePanel')?.classList.remove('sl-booting');
-    });
-});
