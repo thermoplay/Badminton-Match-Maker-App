@@ -519,6 +519,27 @@ const PlayerMode = {
             return;
         }
 
+        // ── EARLY: Set currentRoomCode BEFORE any name prompt or memberUpsert ──
+        // memberUpsert() in sync.js reads the global `currentRoomCode`. If this
+        // global is still null when memberUpsert runs (because joinOnlineSession
+        // hadn't been called yet for new players), the upsert returns null and
+        // the player incorrectly lands on "Court not found".
+        // We set the global directly here so it's available immediately, then
+        // joinOnlineSession() is called again later via _subscribeAndPoll() which
+        // is a no-op on the session-get call if already connected.
+        if (typeof joinOnlineSession === 'function') {
+            // Fire-and-forget: we don't await here because joinOnlineSession
+            // also tries to show toasts / update host UI which we don't want
+            // yet. We just need currentRoomCode set synchronously below.
+            joinOnlineSession(joinCode).catch(() => {});
+        }
+        // Belt-and-suspenders: also set the global directly in case sync.js
+        // hasn't been parsed yet (very slow connections).
+        if (typeof currentRoomCode !== 'undefined' && !currentRoomCode) {
+            // eslint-disable-next-line no-global-assign
+            currentRoomCode = joinCode;
+        }
+
         // ── PHASE 1: Check localStorage passport ──────────────────────────────
         // BUG 3 FIX: Do this synchronously right here — zero network wait.
         // Show a personalised welcome message immediately if name exists.
@@ -529,9 +550,12 @@ const PlayerMode = {
             this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
         } else {
             // No name yet — show the name entry form immediately
-            // (replaces the blank "No active round yet" placeholder)
+            // _promptName() calls _showNameEntry(callback) internally, which
+            // renders the form AND wires the button listener atomically.
+            // We do NOT call _showNameEntry() here first — that would render
+            // the form with no listener (dead button) before _promptName()
+            // overwrites it with the correctly wired version.
             this.setStatus('pending', 'Almost there…', 'Enter your name to join');
-            this._showNameEntry();
             // Name entry is async — the rest of boot() waits here
             const name = await this._promptName();
             if (!name) {
@@ -547,7 +571,7 @@ const PlayerMode = {
         // Survives page refresh within the same tab session.
         if (this._isApprovedInSession(joinCode)) {
             if (panel) panel.classList.remove('sl-booting');
-            this.setStatus('approved', `Welcome back, ${passport.playerName}`, 'You're in the rotation');
+            this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
             this._subscribeAndPoll(joinCode, passport);
             return;
         }
@@ -590,7 +614,7 @@ const PlayerMode = {
             this._markApprovedInSession(joinCode);
             this._hydrateFromUpsert(upsertResult);
             const p = Passport.get();
-            this.setStatus('approved', `Welcome back, ${p.playerName}!`, 'You're in the squad ✅');
+            this.setStatus('approved', `Welcome back, ${p.playerName}!`, "You're in the squad ✅");
             SidelineView.refresh();
             setTimeout(() => this._updateStatus(p), 800);
             return;
@@ -602,7 +626,7 @@ const PlayerMode = {
             const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
             if (valid) {
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, 'You're in the squad');
+                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, "You're in the squad");
                 return;
             } else {
                 this._clearToken(joinCode);
@@ -962,7 +986,7 @@ const PlayerMode = {
         // 5. Haptic + toast
         if (window.Haptic) Haptic.success();
         if (typeof showSessionToast === 'function') {
-            showSessionToast('🏀 You're approved! Welcome to the court.');
+            showSessionToast("🏀 You're approved! Welcome to the court.");
         }
     },
 
@@ -993,7 +1017,7 @@ const PlayerMode = {
             if (data.alreadyActive) {
                 // Race condition: approved between upsert check and play-request submission
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, 'You're in the squad ✅');
+                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "You're in the squad ✅");
                 SidelineView.refresh();
                 setTimeout(() => this._updateStatus(passport), 800);
             }
@@ -1012,9 +1036,10 @@ const PlayerMode = {
     },
 
     _subscribeAndPoll(joinCode, passport) {
-        if (typeof joinOnlineSession === 'function') {
-            joinOnlineSession(joinCode).catch(() => {});
-        }
+        // joinOnlineSession is now called once at the top of boot() to ensure
+        // currentRoomCode is set before memberUpsert runs. Calling it again
+        // here would trigger a second session-get fetch and potentially reset
+        // isOperator/isOnlineSession state. We only start the signal poll.
         this._startSignalPoll(joinCode, passport);
     },
 
@@ -1091,14 +1116,17 @@ const PlayerMode = {
             const res  = await fetch(`/api/session-get?code=${encodeURIComponent(roomCode)}`);
             if (!res.ok) return false;
             const data = await res.json();
-            const approved = data?.session?.approved_players || {};
+            // session-get returns fields directly on the response object,
+            // NOT nested under a `session` key. Reading data?.session was always
+            // undefined, making every token verification fail silently.
+            const approved = data?.approved_players || {};
             const entry    = approved[passport.playerUUID] || approved[passport.playerName];
             if (!entry || entry.token !== savedToken.token) return false;
-            if (data.session) {
-                window.squad          = data.session.squad           || [];
-                window.currentMatches = data.session.current_matches || [];
-                window._sessionUUIDMap  = data.session.uuid_map         || {};
-                window._approvedPlayers = data.session.approved_players || {};
+            if (data) {
+                window.squad          = data.squad           || [];
+                window.currentMatches = data.current_matches || [];
+                window._sessionUUIDMap  = data.uuid_map         || {};
+                window._approvedPlayers = data.approved_players || {};
             }
             return true;
         } catch { return false; }

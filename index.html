@@ -596,6 +596,15 @@
                     // Frame is already on screen from DOMContentLoaded above.
 
                     // 1. Init passport (creates UUID if new, returns existing if not)
+                    // Guard: if passport.js failed to load (404, parse error, wrong
+                    // path), Passport will be undefined and we surface a clear error
+                    // instead of the cryptic "Can't find variable: Passport" crash.
+                    if (typeof Passport === 'undefined') {
+                        throw new Error(
+                            'passport.js failed to load — verify the file exists at js/passport.js ' +
+                            'and the server is serving it correctly.'
+                        );
+                    }
                     const passport = Passport.init();
 
                     // 2. Ensure host shell is hidden (CSS already hides it, this
