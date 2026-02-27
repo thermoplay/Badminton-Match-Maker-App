@@ -305,8 +305,7 @@ function renderTeamBuilder() {
     // Sideline = active players NOT in any game at all
     const allInGames = new Set(currentMatches.flatMap(match => match.teams.flat()));
     const sideline = squad.filter(p =>
-        p.active &&
-        !allInGames.has(p.name) ||
+        (p.active && !allInGames.has(p.name)) ||
         // also allow swapping players already in THIS game (they're shown in teams, not sideline)
         (p.active && inGame.has(p.name) && !builderTeams[0].includes(p.name) && !builderTeams[1].includes(p.name))
     ).filter(p => !inGame.has(p.name)); // sideline = truly not in this game

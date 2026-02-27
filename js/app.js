@@ -539,16 +539,8 @@ function undoLastRound() {
     document.getElementById('matchContainer').innerHTML = '';
     renderSavedMatches();
 
-    // Re-select the previous winners visually so host knows what was picked
-    snapshot.matches.forEach((m, i) => {
-        if (m.winnerTeamIndex !== null) {
-            const boxes = document.querySelectorAll(`#match-${i} .team-box`);
-            if (boxes[m.winnerTeamIndex]) {
-                boxes[m.winnerTeamIndex].classList.add('selected');
-            }
-            currentMatches[i].winnerTeamIndex = m.winnerTeamIndex;
-        }
-    });
+    // Remove all winner selections visually — host must re-pick after undo
+    // (currentMatches already has winnerTeamIndex: null from the map above)
 
     updateUndoButton();
     checkNextButtonState();
@@ -871,7 +863,7 @@ async function renderLeaderboardTab() {
 
         const winRate = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
         const rows = data.players
-            .sort((a, b) => b.wins - a.wins || winRate(b) - winRate(a))
+            .sort((a, b) => b.wins - a.wins || winRate(b) - winRate(a) || a.name.localeCompare(b.name))
             .map((p, i) => `
                 <div class="lb-row ${i === 0 ? 'lb-top' : ''}">
                     <span class="lb-rank">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}</span>
@@ -1154,7 +1146,7 @@ function closePlayRequests() {
 async function approvePlayRequest(name, id, playerUUID = null) {
     // Add to squad
     if (!squad.find(p => p.name === name)) {
-        squad.push({ name, uuid: playerUUID || null, rating: 1000, wins: 0, games: 0, streak: 0, active: true });
+        squad.push({ name, uuid: playerUUID || null, rating: 1200, wins: 0, games: 0, streak: 0, active: true, sessionPlayCount: 0 });
     }
 
     // UUID map for win signal dispatch
@@ -1393,15 +1385,16 @@ async function dispatchWinSignals(mIdx) {
     }
 
     // Durable DB fallback — catches devices that momentarily lost WS
-    const signals = [
-        ...winnerUUIDs.map(uuid => ({ player_uuid: uuid, event: 'WIN'  })),
-        ...loserUUIDs .map(uuid => ({ player_uuid: uuid, event: 'LOSS' })),
-    ];
-    if (signals.length > 0) {
+    if (winnerUUIDs.length > 0 || loserUUIDs.length > 0) {
         fetch('/api/passport-signal', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ room_code: currentRoomCode, signals, game_label: label }),
+            body:    JSON.stringify({
+                room_code:    currentRoomCode,
+                winner_uuids: winnerUUIDs,
+                loser_uuids:  loserUUIDs,
+                game_label:   label,
+            }),
         }).catch(e => console.error('Signal dispatch failed:', e));
     }
 }

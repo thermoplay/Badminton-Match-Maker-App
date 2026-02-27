@@ -40,11 +40,13 @@ export default async function handler(req, res) {
 
     // IMPORTANT: never return operator_key to the client
     return res.status(200).json({
-        room_code:       session.room_code,
-        squad:           session.squad,
-        current_matches: session.current_matches,
-        round_history:   session.round_history,
-        last_active:     session.last_active,
+        room_code:          session.room_code,
+        squad:              session.squad,
+        current_matches:    session.current_matches,
+        round_history:      session.round_history,
+        last_active:        session.last_active,
+        uuid_map:           session.uuid_map         || {},
+        approved_players:   session.approved_players || {},
         // Return a hash of the operator_key so the client can verify identity
         // without ever seeing the actual key
         operator_key_hash: await hashKey(session.operator_key),

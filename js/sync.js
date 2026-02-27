@@ -482,9 +482,9 @@ function subscribeRealtime(roomCode) {
     ws.onmessage = (msg) => {
         try {
             const data = JSON.parse(msg.data);
-            // Heartbeat
+            // Heartbeat — echo back the ref received, as required by Phoenix protocol
             if (data.event === 'heartbeat') {
-                ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: '3' }));
+                ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: data.ref }));
                 return;
             }
             // postgres_changes — route by table

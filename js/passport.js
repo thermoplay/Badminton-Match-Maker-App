@@ -805,16 +805,12 @@ const PlayerMode = {
             this._renderStats(updated);
             SidelineView.refresh();
             VictoryCard.show(passport.playerName);
-        } else if (event === 'LOSS') {
-            const myName = passport.playerName?.toLowerCase();
-            const wasPlaying = (window.currentMatches || []).some(m =>
-                [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n => n.toLowerCase()).includes(myName)
-            );
-            if (wasPlaying || isMe) {
-                const updated = Passport.recordLoss();
-                this._renderStats(updated);
-                SidelineView.refresh();
-            }
+        } else if (event === 'LOSS' && isMe) {
+            // Only record loss if we're strictly identified by UUID
+            const updated = Passport.recordLoss();
+            MatchHistory.push('LOSS', '—', payload.gameLabel || '');
+            this._renderStats(updated);
+            SidelineView.refresh();
         }
     },
 

@@ -54,6 +54,9 @@ export default async function handler(req, res) {
             body: {
                 squad,
                 current_matches,
+                round_history:    req.body.round_history    || [],
+                uuid_map:         req.body.uuid_map         || {},
+                approved_players: req.body.approved_players || {},
                 last_active: new Date().toISOString(),
             },
         }
