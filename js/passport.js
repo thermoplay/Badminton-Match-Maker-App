@@ -389,6 +389,16 @@ const PlayerMode = {
         }
 
         // ── PHASE 1: Check localStorage passport ──────────────────────────────
+
+        // FIX: If this player was removed from this room, show removed state
+        // immediately — don't auto-rejoin or show welcome back.
+        if (this._isRemovedFromRoom(joinCode)) {
+            if (panel) panel.classList.remove('sl-booting');
+            this._subscribeAndPoll(joinCode, passport); // stay subscribed so re-approval works
+            this._onRemovedFromSession();
+            return;
+        }
+
         const hasName = !!(passport.playerName && passport.playerName.trim());
         if (hasName) {
             this._showWelcomeBack(passport.playerName, joinCode);
@@ -872,6 +882,10 @@ const PlayerMode = {
         // 2. Clear saved token for this room
         if (this._joinCode) this._clearToken(this._joinCode);
 
+        // FIX: Persist removal flag to localStorage so boot() doesn't
+        // auto-rejoin or show "welcome back" on refresh.
+        this._markRemovedFromRoom(this._joinCode);
+
         // 3. Update status card immediately
         this.setStatus('pending', 'Removed from session', 'The host removed you from the court');
 
@@ -908,6 +922,7 @@ const PlayerMode = {
                         }),
                     });
                     if (res.ok) {
+                        this._clearRemovedFromRoom(this._joinCode); // allow re-approval
                         this._showQueuedState(passport.playerName);
                         this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
                     } else {
@@ -1016,6 +1031,31 @@ const PlayerMode = {
     // ─────────────────────────────────────────────────────────────────────────
     // TOKEN & SESSION STORAGE
     // ─────────────────────────────────────────────────────────────────────────
+
+    // Removal flag — persists in localStorage so boot() never auto-rejoins
+    // after a host removes the player. Cleared when player sends a rejoin request.
+    _isRemovedFromRoom(roomCode) {
+        try { return !!JSON.parse(localStorage.getItem('cs_removed_rooms') || '{}')[roomCode]; }
+        catch { return false; }
+    },
+
+    _markRemovedFromRoom(roomCode) {
+        if (!roomCode) return;
+        try {
+            const m = JSON.parse(localStorage.getItem('cs_removed_rooms') || '{}');
+            m[roomCode] = true;
+            localStorage.setItem('cs_removed_rooms', JSON.stringify(m));
+        } catch { }
+    },
+
+    _clearRemovedFromRoom(roomCode) {
+        if (!roomCode) return;
+        try {
+            const m = JSON.parse(localStorage.getItem('cs_removed_rooms') || '{}');
+            delete m[roomCode];
+            localStorage.setItem('cs_removed_rooms', JSON.stringify(m));
+        } catch { }
+    },
 
     _isApprovedInSession(roomCode) {
         try { return !!JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}')[roomCode]; }
