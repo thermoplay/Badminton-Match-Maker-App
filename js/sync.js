@@ -1,1203 +1,656 @@
 // =============================================================================
-// PASSPORT.JS — Private Player Identity System  v5
-// =============================================================================
-// PRIVACY CONTRACT:
-//   - playerUUID and playerName travel over the wire (handshake only)
-//   - privateLifetimeWins, privateTotalGames, matchHistory NEVER leave device
-//   - localStorage is always written BEFORE any UI re-render
+// COURTSIDE PRO — sync.js  v6
+// Responsibilities: Supabase session management, Realtime subscriptions,
+//                  host/spectator sync, member approve/rename/upsert,
+//                  broadcast dispatch, signal polling, session toast.
 //
-// FIVE BUGS / FEATURES:
-//   #3  Name sync:       editName → localStorage → broadcast NAME_UPDATE
-//   #4  Win tracking:    MATCH_RESOLVED → UUID check → recordWin/recordLoss
-//   #NEW Performance Lab: last 5 match results stored in localStorage
-//   #NEW Invite QR:      show session QR so players can invite friends
-//   #TechVerify UUID:    UUID stored on squad member, survives name changes
+// Depends on: app.js, passport.js (loaded before this file)
 // =============================================================================
 
-const PASSPORT_KEY  = 'cs_player_passport';
-const MATCH_HIST_KEY = 'cs_match_history';   // [{result, opponent, date, gameLabel}]
-const MAX_HIST       = 5;
+// ---------------------------------------------------------------------------
+// SESSION STATE
+// ---------------------------------------------------------------------------
 
-// =============================================================================
-// PASSPORT — localStorage-only identity
-// =============================================================================
+let isOnlineSession = false;
+let isOperator      = false;
+let currentRoomCode = null;
+let operatorKey     = null;
 
-const Passport = {
+let _realtimeChannel = null;
+let _sessionPollTimer = null;
 
-    get() {
-        try {
-            const raw = localStorage.getItem(PASSPORT_KEY);
-            return raw ? JSON.parse(raw) : null;
-        } catch { return null; }
-    },
+// ---------------------------------------------------------------------------
+// TOAST NOTIFICATION
+// ---------------------------------------------------------------------------
 
-    save(data) {
-        try { localStorage.setItem(PASSPORT_KEY, JSON.stringify(data)); } catch { }
-    },
+function showSessionToast(msg, duration = 3200) {
+    let toast = document.getElementById('sessionToast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'sessionToast';
+        toast.className = 'session-toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => toast.classList.remove('show'), duration);
+}
 
-    init(name = null) {
-        let p = this.get();
-        if (!p) {
-            p = {
-                playerUUID:          this._uuid(),
-                playerName:          name || '',
-                privateLifetimeWins: 0,
-                privateTotalGames:   0,
-                createdAt:           Date.now(),
-            };
-            this.save(p);
-        }
-        return p;
-    },
+// ---------------------------------------------------------------------------
+// ROOM CODE GENERATOR
+// ---------------------------------------------------------------------------
 
-    publicProfile() {
-        const p = this.get();
-        if (!p) return null;
-        return { playerUUID: p.playerUUID, playerName: p.playerName };
-    },
+function _generateRoomCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    return `${seg()}-${seg()}`;
+}
 
-    /** Write localStorage FIRST, caller updates UI after */
-    rename(newName) {
-        const p = this.get();
-        if (!p) return null;
-        p.playerName = newName.trim();
-        this.save(p);
-        return p;
-    },
+function _generateOperatorKey() {
+    const arr = new Uint8Array(16);
+    (window.crypto || crypto).getRandomValues(arr);
+    return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+}
 
-    /** WIN: increment wins AND games. localStorage first. */
-    recordWin() {
-        const p = this.get();
-        if (!p) return null;
-        p.privateLifetimeWins++;
-        p.privateTotalGames++;
-        this.save(p);
-        return p;
-    },
+// ---------------------------------------------------------------------------
+// CREATE ONLINE SESSION (Host)
+// ---------------------------------------------------------------------------
 
-    /** LOSS: increment games only. localStorage first. */
-    recordLoss() {
-        const p = this.get();
-        if (!p) return null;
-        p.privateTotalGames++;
-        this.save(p);
-        return p;
-    },
+async function createOnlineSession() {
+    const syncMsg = document.getElementById('syncStatusMsg');
+    if (syncMsg) { syncMsg.style.display = 'block'; syncMsg.className = 'sync-status sync-status-info'; syncMsg.textContent = 'Creating session…'; }
 
-    winRate() {
-        const p = this.get();
-        if (!p || p.privateTotalGames === 0) return '—';
-        return Math.round((p.privateLifetimeWins / p.privateTotalGames) * 100) + '%';
-    },
+    const roomCode = _generateRoomCode();
+    const opKey    = _generateOperatorKey();
 
-    _uuid() {
-        if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-            const r = Math.random() * 16 | 0;
-            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-        });
-    },
-};
-
-// =============================================================================
-// MATCH HISTORY — localStorage, max 5 entries
-// =============================================================================
-
-const MatchHistory = {
-
-    get() {
-        try {
-            return JSON.parse(localStorage.getItem(MATCH_HIST_KEY) || '[]');
-        } catch { return []; }
-    },
-
-    /**
-     * Add a result entry.
-     * @param {'WIN'|'LOSS'} result
-     * @param {string}       opponentNames  — e.g. "Alice & Bob"
-     * @param {string}       gameLabel      — e.g. "Game 1"
-     */
-    push(result, opponentNames, gameLabel) {
-        const hist = this.get();
-        hist.unshift({
-            result,
-            opponents: opponentNames || 'Unknown',
-            gameLabel: gameLabel || '',
-            date:      Date.now(),
-        });
-        // Keep only last MAX_HIST entries
-        if (hist.length > MAX_HIST) hist.splice(MAX_HIST);
-        try { localStorage.setItem(MATCH_HIST_KEY, JSON.stringify(hist)); } catch { }
-        return hist;
-    },
-
-    clear() {
-        try { localStorage.removeItem(MATCH_HIST_KEY); } catch { }
-    },
-
-    /** Format a timestamp as "Today 14:32" or "Mon 09:15" */
-    _formatDate(ts) {
-        const d   = new Date(ts);
-        const now = new Date();
-        const isToday = d.toDateString() === now.toDateString();
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mm = String(d.getMinutes()).padStart(2, '0');
-        const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-        return isToday ? `Today ${hh}:${mm}` : `${days[d.getDay()]} ${hh}:${mm}`;
-    },
-
-    renderList() {
-        const hist = this.get();
-        if (hist.length === 0) {
-            return `<div class="sl-lab-empty">No matches recorded yet.<br>Play a game to start your history.</div>`;
-        }
-        return hist.map(h => `
-            <div class="sl-hist-item sl-hist-${h.result === 'WIN' ? 'win' : 'loss'}">
-                <div class="sl-hist-badge">${h.result === 'WIN' ? 'W' : 'L'}</div>
-                <div class="sl-hist-details">
-                    <div class="sl-hist-label">${h.gameLabel || 'Match'}</div>
-                    <div class="sl-hist-opp">vs ${h.opponents}</div>
-                </div>
-                <div class="sl-hist-time">${this._formatDate(h.date)}</div>
-            </div>
-        `).join('');
-    },
-};
-
-// =============================================================================
-// SIDELINE VIEW
-// =============================================================================
-
-const SidelineView = {
-    _visible: false,
-
-    show() {
-        this._visible = true;
-        const panel = document.getElementById('sidelinePanel');
-        if (panel) { panel.style.display = 'flex'; this.refresh(); }
-    },
-
-    hide() {
-        this._visible = false;
-        const panel = document.getElementById('sidelinePanel');
-        if (panel) panel.style.display = 'none';
-    },
-
-    refresh() {
-        if (!this._visible) return;
-        const passport = Passport.get();
-        if (!passport) return;
-
-        // Identity
-        const nameEl  = document.getElementById('slPassportName');
-        if (nameEl) nameEl.textContent = passport.playerName;
-
-        // Stats
-        const winsEl  = document.getElementById('slPrivateWins');
-        const gamesEl = document.getElementById('slPrivateGames');
-        const wrEl    = document.getElementById('slPrivateWR');
-        if (winsEl)  winsEl.textContent  = passport.privateLifetimeWins;
-        if (gamesEl) gamesEl.textContent = passport.privateTotalGames;
-        if (wrEl)    wrEl.textContent    = Passport.winRate();
-
-        this._renderMatches();
-        this._renderNextUp();
-        this._renderLastWinner();
-        this._renderPerformanceLab();
-    },
-
-    _renderMatches() {
-        const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
-
-        // Guard: don't overwrite queued-state or name-entry UI during join flow
-        if (container.querySelector('.sl-queued-state') ||
-            container.querySelector('.sl-name-entry')) return;
-
-        const matches = window.currentMatches || [];
-        if (matches.length === 0) {
-            container.innerHTML = `<div class="sl-empty">No active round yet</div>`;
-            return;
-        }
-        const passport = Passport.get();
-        const myName   = passport?.playerName?.toLowerCase() || '';
-        container.innerHTML = matches.map((m, i) => {
-            const tA      = m.teams[0] || [];
-            const tB      = m.teams[1] || [];
-            const playing = myName && [...tA, ...tB].map(n => n.toLowerCase()).includes(myName);
-            return `
-                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''}">
-                    <div class="sl-match-label">GAME ${i + 1}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
-                    <div class="sl-match-teams">
-                        <span class="sl-team">${tA.join(' &amp; ')}</span>
-                        <span class="sl-vs">VS</span>
-                        <span class="sl-team">${tB.join(' &amp; ')}</span>
-                    </div>
-                </div>`;
-        }).join('');
-    },
-
-    _renderNextUp() {
-        const el    = document.getElementById('slNextUp');
-        const rowEl = document.getElementById('slNextUpRow');
-        if (!el || !rowEl) return;
-        const text = window._lastNextUp || (document.getElementById('nextUpNames')?.textContent?.trim() || '');
-        if (text) { el.textContent = text; rowEl.style.display = 'flex'; }
-        else { rowEl.style.display = 'none'; }
-    },
-
-    /** Last match winner — shown after MATCH_RESOLVED */
-    _renderLastWinner() {
-        const el = document.getElementById('slLastWinner');
-        const rowEl = document.getElementById('slLastWinnerRow');
-        if (!el || !rowEl) return;
-        if (window._lastMatchWinner) {
-            el.textContent       = window._lastMatchWinner;
-            rowEl.style.display  = 'flex';
-        } else {
-            rowEl.style.display = 'none';
-        }
-    },
-
-    /** Performance Lab — match history list */
-    _renderPerformanceLab() {
-        const container = document.getElementById('slLabHistory');
-        if (!container) return;
-        container.innerHTML = MatchHistory.renderList();
-    },
-};
-
-// =============================================================================
-// VICTORY CARD
-// =============================================================================
-
-// VictoryCard removed — was too intrusive. Win is recorded silently in stats + Performance Lab.
-const VictoryCard = { show() {}, hide() {}, share() {} };
-
-
-// =============================================================================
-// INVITE QR — shows session join QR on player's phone
-// =============================================================================
-
-const InviteQR = {
-    _overlay: null,
-
-    /**
-     * Show the invite QR overlay.
-     * Uses the same URL format as the host's QR: ?join=XXXX-XXXX&role=player
-     */
-    show(roomCode) {
-        if (!roomCode) { alert('No active session to share.'); return; }
-
-        // Remove any existing overlay
-        if (this._overlay) this._overlay.remove();
-
-        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${roomCode}&role=player`;
-
-        this._overlay = document.createElement('div');
-        this._overlay.className = 'sl-invite-overlay';
-        this._overlay.innerHTML = `
-            <div class="sl-invite-card">
-                <div class="sl-invite-header">
-                    <div class="sl-invite-title">INVITE TO COURT</div>
-                    <button class="sl-invite-close" onclick="InviteQR.hide()">✕</button>
-                </div>
-                <div class="sl-invite-sub">Scan to join this session</div>
-                <canvas id="inviteQrCanvas" class="sl-invite-canvas"></canvas>
-                <div class="sl-invite-code">${roomCode}</div>
-                <div class="sl-invite-hint">Players who scan will see the player view</div>
-            </div>
-        `;
-        document.body.appendChild(this._overlay);
-        requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
-
-        // Tap outside to dismiss
-        this._overlay.addEventListener('click', e => {
-            if (e.target === this._overlay) this.hide();
+    try {
+        const res = await fetch('/api/session-create', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:       roomCode,
+                operator_key:    opKey,
+                squad:           squad           || [],
+                current_matches: currentMatches  || [],
+            }),
         });
 
-        // Generate QR
-        if (window.QRCode) {
-            QRCode.toCanvas(document.getElementById('inviteQrCanvas'), joinUrl, {
-                width:  220,
-                margin: 2,
-                color: { dark: '#0a0a0f', light: '#ffffff' },
-            }, err => { if (err) console.error('InviteQR: QR gen failed', err); });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        isOnlineSession = true;
+        isOperator      = true;
+        currentRoomCode = roomCode;
+        operatorKey     = opKey;
+
+        // Persist operator credentials so a page refresh can reclaim host role
+        try {
+            localStorage.setItem('cs_operator_room', roomCode);
+            localStorage.setItem('cs_operator_key',  opKey);
+        } catch { /* ignore */ }
+
+        _attachSessionBadge(roomCode, 'operator');
+        subscribeRealtime(roomCode);
+        _startPolling();
+        closeOverlay();
+        showSessionToast(`🟢 Session live — room ${roomCode}`);
+        Haptic.success();
+
+    } catch (err) {
+        console.error('[CourtSide] createOnlineSession failed:', err);
+        if (syncMsg) { syncMsg.className = 'sync-status sync-status-error'; syncMsg.textContent = 'Could not create session. Check your connection.'; }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JOIN ONLINE SESSION (Spectator / Player)
+// ---------------------------------------------------------------------------
+
+async function joinOnlineSession(code) {
+    if (!code) return;
+    const roomCode = String(code).trim().toUpperCase();
+
+    try {
+        const res  = await fetch(`/api/session-get?code=${encodeURIComponent(roomCode)}`);
+        if (!res.ok) { showSessionToast('Session not found.'); return; }
+        const data = await res.json();
+
+        // Check if we are the operator (rejoining after refresh)
+        const savedRoom = localStorage.getItem('cs_operator_room');
+        const savedKey  = localStorage.getItem('cs_operator_key');
+
+        if (savedRoom === roomCode && savedKey) {
+            // Verify operator key hash
+            const enc  = new TextEncoder();
+            const buf  = await crypto.subtle.digest('SHA-256', enc.encode(savedKey));
+            const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+            if (hash === data.operator_key_hash) {
+                isOperator      = true;
+                operatorKey     = savedKey;
+            }
+        }
+
+        isOnlineSession = true;
+        currentRoomCode = roomCode;
+
+        // Hydrate local state from session
+        if (data.squad)           squad          = data.squad;
+        if (data.current_matches) currentMatches = data.current_matches;
+        if (data.round_history)   roundHistory   = data.round_history;
+
+        window._sessionUUIDMap  = data.uuid_map         || {};
+        window._approvedPlayers = data.approved_players || {};
+
+        renderSquad();
+        document.getElementById('matchContainer').innerHTML = '';
+        renderSavedMatches();
+        checkNextButtonState();
+
+        _attachSessionBadge(roomCode, isOperator ? 'operator' : 'spectator');
+        subscribeRealtime(roomCode);
+
+        if (!isOperator) {
+            document.body.classList.add('spectator-mode');
+            showSessionToast(`👁 Watching session ${roomCode}`);
+            updateIWTPVisibility();
         } else {
-            // Fallback: show the URL as text
-            const canvas = document.getElementById('inviteQrCanvas');
-            if (canvas) {
-                canvas.style.display = 'none';
-                const txt = document.createElement('div');
-                txt.className = 'sl-invite-url';
-                txt.textContent = joinUrl;
-                canvas.parentNode.insertBefore(txt, canvas.nextSibling);
+            _startPolling();
+            showSessionToast(`🟢 Rejoined session ${roomCode}`);
+        }
+
+    } catch (err) {
+        console.error('[CourtSide] joinOnlineSession failed:', err);
+        showSessionToast('Could not join session.');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LEAVE SESSION (Spectator)
+// ---------------------------------------------------------------------------
+
+function leaveSession() {
+    _teardownSession();
+    document.body.classList.remove('spectator-mode');
+    showSessionToast('Left session.');
+    location.reload();
+}
+
+// ---------------------------------------------------------------------------
+// END & DELETE SESSION (Operator)
+// ---------------------------------------------------------------------------
+
+async function endAndDeleteSession() {
+    if (!currentRoomCode || !operatorKey) return;
+    try {
+        await fetch('/api/session-delete', {
+            method:  'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ room_code: currentRoomCode, operator_key: operatorKey }),
+        });
+    } catch { /* silent — clean up client side regardless */ }
+    _teardownSession();
+    localStorage.removeItem('cs_operator_room');
+    localStorage.removeItem('cs_operator_key');
+    showSessionToast('Session ended.');
+}
+
+function _teardownSession() {
+    isOnlineSession = false;
+    isOperator      = false;
+    const prev = currentRoomCode;
+    currentRoomCode = null;
+    operatorKey     = null;
+
+    if (_realtimeChannel) {
+        try { _realtimeChannel.unsubscribe(); } catch { }
+        _realtimeChannel = null;
+    }
+    clearInterval(_sessionPollTimer);
+
+    const badge = document.getElementById('sessionBadge');
+    if (badge) badge.remove();
+
+    updateIWTPVisibility();
+}
+
+// ---------------------------------------------------------------------------
+// PUSH STATE TO SUPABASE (Operator → DB)
+// Called after every squad/match change when online.
+// ---------------------------------------------------------------------------
+
+async function pushStateToSupabase() {
+    if (!isOnlineSession || !isOperator || !currentRoomCode || !operatorKey) return;
+    try {
+        await fetch('/api/session-update', {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:        currentRoomCode,
+                operator_key:     operatorKey,
+                squad,
+                current_matches:  currentMatches,
+                round_history:    roundHistory,
+                uuid_map:         window._sessionUUIDMap  || {},
+                approved_players: window._approvedPlayers || {},
+            }),
+        });
+    } catch (err) {
+        console.error('[CourtSide] pushStateToSupabase failed:', err);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ARCHIVE ROUND (Operator → match_history table)
+// ---------------------------------------------------------------------------
+
+async function archiveRoundToSupabase(snapshot) {
+    if (!isOnlineSession || !currentRoomCode) return;
+    try {
+        await fetch('/api/match-history', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code: currentRoomCode,
+                timestamp: snapshot.timestamp,
+                matches:   snapshot.matches,
+                squad,
+            }),
+        });
+    } catch { /* silent */ }
+}
+
+// ---------------------------------------------------------------------------
+// MEMBER API WRAPPERS
+// ---------------------------------------------------------------------------
+
+async function memberUpsert(playerUUID, playerName, roomCode) {
+    try {
+        const res  = await fetch('/api/member-upsert', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ room_code: roomCode, player_uuid: playerUUID, player_name: playerName }),
+        });
+        if (!res.ok) return null;
+        return await res.json();
+    } catch { return null; }
+}
+
+async function memberApprove(playerUUID) {
+    if (!currentRoomCode || !operatorKey) return;
+    try {
+        await fetch('/api/member-approve', {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:    currentRoomCode,
+                player_uuid:  playerUUID,
+                operator_key: operatorKey,
+            }),
+        });
+    } catch { /* silent */ }
+}
+
+async function memberRename(playerUUID, newName) {
+    if (!currentRoomCode) return;
+    try {
+        await fetch('/api/member-rename', {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code:   currentRoomCode,
+                player_uuid: playerUUID,
+                new_name:    newName,
+            }),
+        });
+    } catch { /* silent */ }
+}
+
+// ---------------------------------------------------------------------------
+// BROADCAST HELPERS (Operator → Supabase Realtime)
+// ---------------------------------------------------------------------------
+
+function _broadcast(event, payload = {}) {
+    if (!_realtimeChannel) return;
+    try {
+        _realtimeChannel.send({
+            type:    'broadcast',
+            event,
+            payload: { ...payload, _ts: Date.now() },
+        });
+    } catch (err) {
+        console.warn('[CourtSide] _broadcast failed:', err);
+    }
+}
+
+function broadcastApproval(playerUUID, playerName, token) {
+    _broadcast('player_approved', {
+        playerUUID,
+        playerName,
+        token,
+        squad,
+        current_matches: currentMatches,
+    });
+    // Also push full state so approved player hydrates correctly
+    pushStateToSupabase();
+}
+
+function broadcastNameUpdate(playerUUID, oldName, newName) {
+    _broadcast('name_update', { playerUUID, oldName, newName });
+    pushStateToSupabase();
+}
+
+// ---------------------------------------------------------------------------
+// SUPABASE REALTIME SUBSCRIPTION
+// ---------------------------------------------------------------------------
+
+// Supabase client is initialised lazily the first time we need it.
+// We read the anon key from the session-get endpoint (which returns a hash
+// but NOT the key itself) — so for realtime we use the public anon key
+// which is safe to expose in the browser.
+// Set window.SUPABASE_ANON_KEY from a <script> tag in index.html or an
+// env-injected snippet before this file loads.
+
+function _getSupabaseClient() {
+    if (window._supabaseClient) return window._supabaseClient;
+
+    const url     = window.SUPABASE_URL;
+    const anonKey = window.SUPABASE_ANON_KEY;
+
+    if (!url || !anonKey) {
+        console.warn('[CourtSide] Supabase URL/key not set — realtime disabled. Set window.SUPABASE_URL and window.SUPABASE_ANON_KEY.');
+        return null;
+    }
+
+    if (!window.supabase?.createClient) {
+        console.warn('[CourtSide] Supabase JS library not loaded — realtime disabled.');
+        return null;
+    }
+
+    window._supabaseClient = window.supabase.createClient(url, anonKey);
+    return window._supabaseClient;
+}
+
+function subscribeRealtime(roomCode) {
+    // Unsubscribe from any previous channel
+    if (_realtimeChannel) {
+        try { _realtimeChannel.unsubscribe(); } catch { }
+        _realtimeChannel = null;
+    }
+
+    const sb = _getSupabaseClient();
+    if (!sb) {
+        console.warn('[CourtSide] subscribeRealtime: no Supabase client — falling back to polling only.');
+        _startSessionPoll(roomCode);
+        return;
+    }
+
+    _realtimeChannel = sb
+        .channel(`courtside:${roomCode}`)
+
+        // ── Broadcast events (host ↔ players, low-latency) ─────────────────
+        .on('broadcast', { event: 'player_approved' }, ({ payload }) => {
+            if (typeof PlayerMode !== 'undefined') PlayerMode._onApprovalReceived(payload);
+        })
+        .on('broadcast', { event: 'game_state_update' }, ({ payload }) => {
+            if (typeof PlayerMode !== 'undefined') PlayerMode._onGameStateUpdate(payload);
+        })
+        .on('broadcast', { event: 'match_resolved' }, ({ payload }) => {
+            if (typeof PlayerMode !== 'undefined') PlayerMode._onMatchResolved(payload);
+            window._lastMatchWinner = payload.winnerNames ? `🏆 ${payload.winnerNames}` : null;
+            if (typeof SidelineView !== 'undefined') SidelineView.refresh();
+        })
+        .on('broadcast', { event: 'name_update' }, ({ payload }) => {
+            _handleNameUpdate(payload);
+        })
+        .on('broadcast', { event: 'player_removed' }, ({ payload }) => {
+            _handlePlayerRemoved(payload);
+        })
+
+        // ── Postgres changes — session row (spectators / players hydrate) ──
+        .on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'sessions', filter: `room_code=eq.${roomCode}` },
+            ({ new: session }) => {
+                if (!isOperator) _handleSessionUpdate(session);
             }
-        }
-    },
+        )
 
-    hide() {
-        if (!this._overlay) return;
-        this._overlay.classList.remove('sl-invite-open');
-        setTimeout(() => { this._overlay?.remove(); this._overlay = null; }, 300);
-    },
-};
-
-// =============================================================================
-// PLAYER MODE — boot controller for ?role=player  v5
-// =============================================================================
-
-const LS_TOKENS  = 'cs_session_tokens';
-const SS_APPROVED = 'cs_approved';
-
-const PlayerMode = {
-
-    _joinCode:  null,
-    _pollTimer: null,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // BOOT
-    // ─────────────────────────────────────────────────────────────────────────
-
-    async boot(passport, joinCode) {
-        // Recover joinCode from localStorage if URL param was stripped on refresh
-        if (!joinCode) {
-            try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
-        }
-
-        this._joinCode = joinCode;
-
-        // Persist joinCode to localStorage so a refresh can recover it
-        if (joinCode) {
-            try { localStorage.setItem('cs_player_room_code', joinCode); } catch {}
-        }
-
-        // ── PHASE 0: Instant frame render ─────────────────────────────────────
-        const panel = document.getElementById('sidelinePanel');
-        if (panel) panel.classList.add('sl-booting');
-
-        this._renderIdentity(passport);
-        this._renderStats(passport);
-
-        const codeEl = document.getElementById('slSessionCode');
-        if (codeEl && joinCode) codeEl.textContent = joinCode;
-
-        if (!joinCode) {
-            if (panel) panel.classList.remove('sl-booting');
-            this._promptForCode();
-            return;
-        }
-
-        // ── PHASE 1: Check localStorage passport ──────────────────────────────
-
-        // FIX: If this player was removed from this room, show removed state
-        // immediately — don't auto-rejoin or show welcome back.
-        if (this._isRemovedFromRoom(joinCode)) {
-            if (panel) panel.classList.remove('sl-booting');
-            this._subscribeAndPoll(joinCode, passport); // stay subscribed so re-approval works
-            this._onRemovedFromSession();
-            return;
-        }
-
-        const hasName = !!(passport.playerName && passport.playerName.trim());
-        if (hasName) {
-            this._showWelcomeBack(passport.playerName, joinCode);
-            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
-        } else {
-            this.setStatus('pending', 'Almost there…', 'Enter your name to join');
-            this._showNameEntry();
-            const name = await this._promptName();
-            if (!name) {
-                if (panel) panel.classList.remove('sl-booting');
-                return;
+        // ── Postgres changes — session_members (player approval) ──────────
+        .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'session_members', filter: `room_code=eq.${roomCode}` },
+            ({ eventType, new: record, old: oldRecord }) => {
+                _handleMemberChange(eventType, record, oldRecord);
             }
-            Passport.rename(name);
-            this._renderIdentity(Passport.get());
-            this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
-        }
+        )
 
-        // ── Tier 1: sessionStorage fast-path ──────────────────────────────────
-        if (this._isApprovedInSession(joinCode)) {
-            if (panel) panel.classList.remove('sl-booting');
-            this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
-            this._subscribeAndPoll(joinCode, passport);
-            return;
-        }
+        .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                console.log(`[CourtSide] Realtime connected: ${roomCode}`);
+                _hideReconnectIndicator();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                console.warn('[CourtSide] Realtime disconnected:', status);
+                _showReconnectIndicator();
+            }
+        });
+}
 
-        // ── PHASE 2: DB handshake ─────────────────────────────────────────────
-        this._subscribeAndPoll(joinCode, passport);
-        this._showSearchingSpinner();
+// ---------------------------------------------------------------------------
+// REALTIME EVENT HANDLERS
+// ---------------------------------------------------------------------------
 
-        let upsertResult = null;
+function _handleSessionUpdate(session) {
+    // Hydrate state for non-operator viewers
+    if (session.squad)           { squad          = session.squad;           renderSquad(); }
+    if (session.current_matches) { currentMatches = session.current_matches; document.getElementById('matchContainer').innerHTML = ''; renderSavedMatches(); }
+    if (session.round_history)     roundHistory   = session.round_history;
+    if (session.uuid_map)          window._sessionUUIDMap  = session.uuid_map;
+    if (session.approved_players)  window._approvedPlayers = session.approved_players;
+
+    checkNextButtonState();
+    updateSideline();
+
+    if (typeof PlayerMode !== 'undefined') PlayerMode._onSessionUpdate(session);
+    if (typeof SidelineView !== 'undefined') SidelineView.refresh();
+}
+
+function _handleMemberChange(eventType, record, oldRecord) {
+    const passport = typeof Passport !== 'undefined' ? Passport.get() : null;
+    if (!passport) return;
+
+    // Host: a member's status changed — refresh the play requests badge
+    if (isOperator) {
+        if (typeof pollPlayRequests === 'function') pollPlayRequests();
+        return;
+    }
+
+    // Player: their own row changed
+    if (record?.player_uuid !== passport.playerUUID) return;
+
+    if (eventType === 'UPDATE' && record.status === 'active') {
+        // Host approved this player via member-approve
+        if (typeof PlayerMode !== 'undefined') PlayerMode._onMemberActivated(record);
+    }
+
+    if (eventType === 'DELETE') {
+        // Row deleted — treat as removal
+        if (typeof PlayerMode !== 'undefined') PlayerMode._onRemovedFromSession();
+    }
+}
+
+function _handleNameUpdate(payload) {
+    const { playerUUID, oldName, newName } = payload;
+    if (!playerUUID || !newName) return;
+
+    // Update squad member name
+    const member = squad.find(p => p.uuid === playerUUID || p.name === oldName);
+    if (member) {
+        const prev = member.name;
+        member.name = newName;
+        currentMatches.forEach(m => {
+            m.teams = m.teams.map(team => team.map(n => n === prev ? newName : n));
+        });
+        renderSquad();
+        document.getElementById('matchContainer').innerHTML = '';
+        renderSavedMatches();
+        if (isOperator) pushStateToSupabase();
+    }
+}
+
+function _handlePlayerRemoved(payload) {
+    const passport = typeof Passport !== 'undefined' ? Passport.get() : null;
+    if (!passport) return;
+
+    // Check if the removal is addressed to this player
+    const { playerName, playerUUID } = payload;
+    const isMe = (playerUUID && playerUUID === passport.playerUUID) ||
+                 (playerName && playerName.toLowerCase() === passport.playerName?.toLowerCase());
+
+    if (isMe && typeof PlayerMode !== 'undefined') {
+        PlayerMode._onRemovedFromSession();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SESSION POLLING (fallback when realtime is unavailable)
+// ---------------------------------------------------------------------------
+
+function _startSessionPoll(roomCode) {
+    clearInterval(_sessionPollTimer);
+    _sessionPollTimer = setInterval(async () => {
+        if (!currentRoomCode || isOperator) return;
         try {
-            upsertResult = await this._memberUpsert(Passport.get(), joinCode);
-        } catch (err) {
-            console.error('[PlayerMode.boot] member-upsert threw:', err);
-        }
-
-        if (panel) panel.classList.remove('sl-booting');
-        this._clearSearchingSpinner();
-
-        if (!upsertResult) {
-            this.setStatus('pending',
-                'Court not found',
-                'The session may have ended. Check the room code.');
-            console.error('[CourtSide] Session lookup failed for room:', joinCode);
-            this._promptForCode();
-            return;
-        }
-
-        // ── RETURNING APPROVED PLAYER ─────────────────────────────────────────
-        if (upsertResult.status === 'active') {
-            this._markApprovedInSession(joinCode);
-            this._hydrateFromUpsert(upsertResult);
-            const p = Passport.get();
-            this.setStatus('approved', `Welcome back, ${p.playerName}!`, "You're in the squad ✅");
-            SidelineView.refresh();
-            setTimeout(() => this._updateStatus(p), 800);
-            return;
-        }
-
-        // ── Tier 3: localStorage token fallback ───────────────────────────────
-        const savedToken = this._loadToken(joinCode);
-        if (savedToken) {
-            const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
-            if (valid) {
-                this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, "You're in the squad");
-                return;
-            } else {
-                this._clearToken(joinCode);
-            }
-        }
-
-        // ── PHASE 3: New join ─────────────────────────────────────────────────
-        await this._submitJoinRequest(Passport.get(), joinCode);
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // QUEUED STATE
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _showQueuedState(playerName) {
-        const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
-        container.innerHTML = `
-            <div class="sl-queued-state" id="slQueuedBlock">
-                <div class="sl-queued-icon">🏀</div>
-                <div class="sl-queued-title">REQUEST SENT</div>
-                <div class="sl-queued-sub">
-                    Waiting for the host to approve you.<br>
-                    You'll be added to the rotation automatically.
-                </div>
-                <button class="sl-queued-resend" id="slResendBtn">Resend Request</button>
-                <div class="sl-queued-note">
-                    Already approved?
-                    <span class="sl-queued-check" id="slCheckBtn">Check now →</span>
-                </div>
-            </div>`;
-
-        document.getElementById('slResendBtn')?.addEventListener('click', () => PlayerMode._resendRequest());
-        document.getElementById('slCheckBtn')?.addEventListener('click',  () => PlayerMode._checkApprovalNow());
-    },
-
-    _clearQueuedState() {
-        const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
-        if (container.querySelector('.sl-queued-state')) {
-            container.innerHTML = '<div class="sl-empty">No active round yet</div>';
-        }
-    },
-
-    async _resendRequest() {
-        const passport = Passport.get();
-        if (!passport || !this._joinCode) return;
-        const btn = document.getElementById('slResendBtn');
-        if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-        try {
-            const res = await fetch('/api/play-request', {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({
-                    room_code:   this._joinCode,
-                    name:        passport.playerName,
-                    player_uuid: passport.playerUUID,
-                }),
-            });
-            if (res.ok) {
-                if (btn) {
-                    btn.textContent = '✓ Sent!';
-                    setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = 'Resend Request'; } }, 5000);
-                }
-            } else { throw new Error('non-ok'); }
-        } catch {
-            if (btn) { btn.disabled = false; btn.textContent = 'Resend Request'; }
-        }
-    },
-
-    async _checkApprovalNow() {
-        const passport = Passport.get();
-        if (!passport || !this._joinCode) return;
-        const checkEl = document.getElementById('slCheckBtn');
-        if (checkEl) { checkEl.textContent = 'Checking…'; checkEl.style.pointerEvents = 'none'; }
-        try {
-            const result = await this._memberUpsert(passport, this._joinCode);
-            if (result && result.status === 'active') {
-                this._markApprovedInSession(this._joinCode);
-                this._hydrateFromUpsert(result);
-                const p = Passport.get();
-                this.setStatus('approved', `You're in, ${p.playerName}!`, "You've been approved ✅");
-                this._clearQueuedState();
-                SidelineView.show();
-                if (window.Haptic) Haptic.success();
-                setTimeout(() => this._updateStatus(p), 800);
-            } else {
-                if (checkEl) {
-                    checkEl.textContent = 'Still pending…';
-                    setTimeout(() => {
-                        if (checkEl) { checkEl.textContent = 'Check now →'; checkEl.style.pointerEvents = 'auto'; }
-                    }, 3000);
-                }
-            }
-        } catch {
-            if (checkEl) { checkEl.textContent = 'Check now →'; checkEl.style.pointerEvents = 'auto'; }
-        }
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // WELCOME-BACK CARD
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _showWelcomeBack(playerName, roomCode) {
-        const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
-        container.innerHTML = `
-            <div class="sl-welcome-back">
-                <div class="sl-welcome-back-icon">🏀</div>
-                <div class="sl-welcome-back-text">
-                    <div class="sl-welcome-back-name">Welcome back, ${
-                        playerName.toUpperCase()
-                    }</div>
-                    <div class="sl-welcome-back-sub">Joining court ${roomCode}…</div>
-                </div>
-            </div>`;
-    },
-
-    _showNameEntry() {
-        const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
-        container.innerHTML = `
-            <div class="sl-name-entry" id="slNameEntryForm">
-                <div class="sl-name-entry-title">ENTER YOUR NAME</div>
-                <div class="sl-name-entry-sub">
-                    The host will approve your request to join the court.
-                </div>
-                <input
-                    type="text"
-                    id="slNameEntryInput"
-                    class="sl-name-input"
-                    placeholder="Your name..."
-                    autocomplete="off"
-                    autocorrect="off"
-                    autocapitalize="words"
-                    maxlength="30"
-                    inputmode="text"
-                >
-                <button class="sl-name-submit" id="slNameEntrySubmit">
-                    JOIN COURT →
-                </button>
-            </div>`;
-        setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 120);
-    },
-
-    _showSearchingSpinner() {
-        const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
-        if (container.querySelector('.sl-name-entry')) return;
-        container.innerHTML = `
-            <div class="sl-searching">
-                <div class="sl-searching-spinner"></div>
-                <div class="sl-searching-text">SEARCHING FOR COURT…</div>
-            </div>`;
-    },
-
-    _clearSearchingSpinner() {
-        const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
-        if (container.querySelector('.sl-searching')) {
-            container.innerHTML = '<div class="sl-empty">No active round yet</div>';
-        }
-    },
-
-    async _memberUpsert(passport, joinCode) {
-        if (typeof memberUpsert !== 'function') return null;
-        return await memberUpsert(passport.playerUUID, passport.playerName, joinCode);
-    },
-
-    _hydrateFromUpsert(upsertResult) {
-        if (upsertResult?.member?.player_name) {
-            const serverName = upsertResult.member.player_name;
-            const passport   = Passport.get();
-            if (passport && passport.playerName !== serverName) {
-                Passport.rename(serverName);
-                this._renderIdentity(Passport.get());
-            }
-        }
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // APPROVAL
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _onApprovalReceived(payload) {
-        const passport = Passport.get();
-        if (!passport) return;
-        if (payload.playerUUID !== passport.playerUUID) return;
-
-        this._markApprovedInSession(this._joinCode);
-        if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
-
-        if (payload.squad)           window.squad          = payload.squad;
-        if (payload.current_matches) window.currentMatches = payload.current_matches;
-
-        this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
-        this._subscribeAndPoll(this._joinCode, passport);
-        setTimeout(() => this._updateStatus(passport), 1500);
-    },
-
-    _onGameStateUpdate(payload) {
-        const passport = Passport.get();
-        if (!passport) return;
-        if (payload.next_up) window._lastNextUp = payload.next_up;
-        SidelineView.refresh();
-        this._updateStatus(passport);
-    },
-
-    _onSessionUpdate(session) {
-        const passport = Passport.get();
-        if (!passport) return;
-        const approved = session.approved_players || {};
-        const myEntry  = approved[passport.playerUUID] || approved[passport.playerName];
-        if (myEntry && !this._isApprovedInSession(this._joinCode)) {
-            this._markApprovedInSession(this._joinCode);
-            if (myEntry.token) this._saveToken(this._joinCode, myEntry.token, passport.playerName, passport.playerUUID);
-            this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
-            setTimeout(() => this._updateLiveFeed(session, passport), 1500);
-            return;
-        }
-        this._updateLiveFeed(session, passport);
-    },
-
-    _updateLiveFeed(session, passport) {
-        SidelineView.refresh();
-        this._updateStatus(passport);
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // WIN DEDUP
-    // FIX: Key now includes a round timestamp so "Game 1" in round 2 doesn't
-    // get silently blocked by the same key from round 1.
-    // The roundKey is set by the host in the match_resolved broadcast payload.
-    // ─────────────────────────────────────────────────────────────────────────
-    _processedResults: new Set(),
-
-    _markResultProcessed(gameLabel, roundKey) {
-        const passport = Passport.get();
-        if (!passport) return false;
-        // Include roundKey (timestamp from host) so the same game label in a
-        // new round generates a different dedup key.
-        const key = `${passport.playerUUID}-${roundKey || ''}-${gameLabel || '_'}`;
-        if (this._processedResults.has(key)) return true;
-        this._processedResults.add(key);
-        return false;
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // MATCH RESULT — DB poll fallback (WS missed events safety net)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _onMatchResult(payload) {
-        const passport = Passport.get();
-        if (!passport) return;
-
-        const { playerUUID, event, gameLabel, roundKey } = payload;
-        if (playerUUID !== passport.playerUUID) return;
-
-        // Dedup: skip if match_resolved already handled this game+round
-        if (this._markResultProcessed(gameLabel, roundKey)) return;
-
-        if (event === 'WIN') {
-            const updated = Passport.recordWin();
-            MatchHistory.push('WIN', '—', gameLabel || '');
-            this._renderStats(updated);
-            SidelineView.show();
-            SidelineView.refresh();
-        } else if (event === 'LOSS') {
-            const updated = Passport.recordLoss();
-            MatchHistory.push('LOSS', '—', gameLabel || '');
-            this._renderStats(updated);
-            SidelineView.show();
-            SidelineView.refresh();
-        }
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // MATCH RESOLVED — broadcast 'match_resolved' (primary win/loss path)
-    //
-    // FIX 1: roundKey is now included in the payload from the host so the
-    //        dedup set doesn't block the same game label in a new round.
-    //
-    // FIX 2: A player is only recorded as a winner OR loser — not both.
-    //        winnerUUIDs and loserUUIDs are now mutually exclusive by
-    //        construction on the host side (dispatchWinSignals). The guard
-    //        here is a safety net in case of payload corruption.
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _onMatchResolved(payload) {
-        const passport = Passport.get();
-        if (!passport) return;
-
-        const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel, roundKey } = payload;
-        const myUUID = passport.playerUUID;
-
-        const isWinner   = winnerUUIDs.includes(myUUID);
-        // Safety: never mark as loser if also in winner list (shouldn't happen,
-        // but guards against a host-side bug where a UUID appears in both arrays)
-        const isLoser    = !isWinner && loserUUIDs.includes(myUUID);
-        const wasInMatch = isWinner || isLoser;
-
-        if (wasInMatch && this._markResultProcessed(gameLabel, roundKey)) return;
-
-        // 1. Write localStorage FIRST
-        if (isWinner) {
-            Passport.recordWin();
-            MatchHistory.push('WIN', '—', gameLabel);
-        } else if (isLoser) {
-            Passport.recordLoss();
-            MatchHistory.push('LOSS', winnerNames, gameLabel);
-        }
-
-        // 2. Show "Last Match Winner" on feed for ALL players
-        window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
-
-        // 3. Update UI — always refresh so non-participants see the winner display
-        this._renderStats(Passport.get());
-        SidelineView.show();
-        SidelineView.refresh();
-
-        // 4. Haptic feedback
-        if (wasInMatch && window.Haptic) {
-            isWinner ? Haptic.success() : Haptic.bump();
-        }
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // STATUS CARD
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _updateStatus(passport) {
-        const name    = passport.playerName?.toLowerCase();
-        const squad   = window.squad          || [];
-        const matches = window.currentMatches || [];
-
-        const playing = matches.some(m =>
-            [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n => n.toLowerCase()).includes(name)
-        );
-        const inSquad = squad.some(p => p.name?.toLowerCase() === name);
-
-        const playingNames = new Set(
-            matches.flatMap(m => [...(m.teams[0]||[]), ...(m.teams[1]||[])])
-                   .map(n => n.toLowerCase())
-        );
-        const bench = squad.filter(p => p.active && !playingNames.has(p.name?.toLowerCase()));
-        const qPos  = bench.findIndex(p => p.name?.toLowerCase() === name);
-
-        const nextUpRaw = window._lastNextUp || '';
-        const isNextUp  = name && nextUpRaw.toLowerCase().includes(name);
-
-        if (playing) {
-            this.setStatus('playing', 'You\'re on court!', 'Give it everything 🏀');
-        } else if (isNextUp) {
-            this.setStatus('on-deck', 'You\'re on deck!', 'Get ready — you\'re up next 🟡');
-        } else if (inSquad && qPos >= 0) {
-            const pos = qPos + 1;
-            const sfx = pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th';
-            this.setStatus('resting', `#${pos}${sfx} in line`, `${bench.length} player${bench.length !== 1 ? 's' : ''} on bench`);
-        } else if (inSquad) {
-            this.setStatus('resting', 'In the squad', 'Waiting for next rotation');
-        }
-    },
-
-    _onMemberActivated(memberRecord) {
-        const passport = Passport.get();
-        if (!passport) return;
-        if (memberRecord.player_uuid !== passport.playerUUID) return;
-
-        this._markApprovedInSession(this._joinCode);
-
-        if (memberRecord.player_name && memberRecord.player_name !== passport.playerName) {
-            Passport.rename(memberRecord.player_name);
-            this._renderIdentity(Passport.get());
-        }
-
-        this._clearQueuedState();
-
-        const p = Passport.get();
-        this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
-
-        SidelineView.show();
-        setTimeout(() => this._updateStatus(p), 1200);
-
-        if (window.Haptic) Haptic.success();
-        if (typeof showSessionToast === 'function') {
-            showSessionToast("🏀 You're approved! Welcome to the court.");
-        }
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // REMOVED FROM SESSION
-    // Called by _handleBroadcast (player_removed broadcast) and by
-    // _handleMemberChange (postgres DELETE or status reset on session_members).
-    //
-    // What it does:
-    //   1. Clears the sessionStorage approval flag so the player is no longer
-    //      treated as approved on the next page load.
-    //   2. Clears any saved token for this room so the token fallback path
-    //      doesn't silently re-approve them.
-    //   3. Resets the status card to a clear "removed" message immediately.
-    //   4. Replaces slCurrentMatches with a removed state block — not the
-    //      stale "You're in the rotation" view.
-    //   5. Haptic bump so the player feels the change even if they're not
-    //      looking at the screen.
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _onRemovedFromSession() {
-        // 1. Clear approval state so refresh doesn't re-approve
-        try {
-            const m = JSON.parse(sessionStorage.getItem('cs_approved') || '{}');
-            delete m[this._joinCode];
-            sessionStorage.setItem('cs_approved', JSON.stringify(m));
-        } catch { }
-
-        // 2. Clear saved token for this room
-        if (this._joinCode) this._clearToken(this._joinCode);
-
-        // FIX: Persist removal flag to localStorage so boot() doesn't
-        // auto-rejoin or show "welcome back" on refresh.
-        this._markRemovedFromRoom(this._joinCode);
-
-        // 3. Update status card immediately
-        this.setStatus('pending', 'Removed from session', 'The host removed you from the court');
-
-        // 4. Replace the matches / rotation view with a clear removed state
-        const container = document.getElementById('slCurrentMatches');
-        if (container) {
-            container.innerHTML = `
-                <div class="sl-queued-state" style="border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.05);">
-                    <div class="sl-queued-icon">🚫</div>
-                    <div class="sl-queued-title" style="color: #ef4444;">REMOVED</div>
-                    <div class="sl-queued-sub">
-                        The host has removed you from this session.<br>
-                        You can request to rejoin below.
-                    </div>
-                    <button class="sl-queued-resend" id="slRejoinBtn"
-                        style="border-color: rgba(239,68,68,0.4); color: #ef4444;">
-                        Request to Rejoin
-                    </button>
-                </div>`;
-
-            document.getElementById('slRejoinBtn')?.addEventListener('click', async () => {
-                const passport = Passport.get();
-                if (!passport || !this._joinCode) return;
-                const btn = document.getElementById('slRejoinBtn');
-                if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-                try {
-                    const res = await fetch('/api/play-request', {
-                        method:  'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body:    JSON.stringify({
-                            room_code:   this._joinCode,
-                            name:        passport.playerName,
-                            player_uuid: passport.playerUUID,
-                        }),
-                    });
-                    if (res.ok) {
-                        this._clearRemovedFromRoom(this._joinCode); // allow re-approval
-                        this._showQueuedState(passport.playerName);
-                        this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
-                    } else {
-                        if (btn) { btn.disabled = false; btn.textContent = 'Request to Rejoin'; }
-                    }
-                } catch {
-                    if (btn) { btn.disabled = false; btn.textContent = 'Request to Rejoin'; }
-                }
-            });
-        }
-
-        // 5. Haptic feedback
-        if (window.Haptic) Haptic.error();
-
-        // 6. Toast confirmation
-        if (typeof showSessionToast === 'function') {
-            showSessionToast('🚫 You were removed from the session');
-        }
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // JOIN SESSION
-    // ─────────────────────────────────────────────────────────────────────────
-
-    async _submitJoinRequest(passport, joinCode) {
-        this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
-        try {
-            const res = await fetch('/api/play-request', {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({
-                    room_code:   joinCode,
-                    name:        passport.playerName,
-                    player_uuid: passport.playerUUID,
-                }),
-            });
-
-            if (!res.ok) {
-                this.setStatus('pending', 'Could not join', 'Check the room code and try again');
-                return;
-            }
-
+            const res  = await fetch(`/api/session-get?code=${encodeURIComponent(currentRoomCode)}`);
+            if (!res.ok) return;
             const data = await res.json();
-
-            if (data.alreadyActive) {
-                this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "You're in the squad ✅");
-                SidelineView.refresh();
-                setTimeout(() => this._updateStatus(passport), 800);
-                return;
-            }
-
-            this._showQueuedState(passport.playerName);
-
-        } catch(e) {
-            this.setStatus('pending', 'Connection failed', 'Check your internet');
-            console.error('[PlayerMode] join request failed:', e);
-        }
-    },
-
-    async _joinSession(passport, joinCode) {
-        return this._submitJoinRequest(passport, joinCode);
-    },
-
-    _subscribeAndPoll(joinCode, passport) {
-        if (joinCode) window.currentRoomCode = joinCode;
-        if (typeof joinOnlineSession === 'function') {
-            joinOnlineSession(joinCode).catch(() => {});
-        }
-        this._startSignalPoll(joinCode, passport);
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // SIGNAL POLL — DB fallback if WS broadcast missed
-    // FIX: roundKey is now passed through from the signal payload so the
-    //      dedup set correctly distinguishes rounds with identical game labels.
-    // ─────────────────────────────────────────────────────────────────────────
-
-    _startSignalPoll(joinCode, passport) {
-        clearInterval(this._pollTimer);
-        this._pollTimer = setInterval(() => this._pollSignal(joinCode, passport), 8000);
-    },
-
-    async _pollSignal(joinCode, passport) {
-        try {
-            const r = await fetch(
-                `/api/passport-signal?player_uuid=${encodeURIComponent(passport.playerUUID)}&room_code=${encodeURIComponent(joinCode)}`
-            );
-            const d = await r.json();
-            if (d.signal) {
-                this._onMatchResult({
-                    playerUUID: d.signal.player_uuid,
-                    event:      d.signal.event,
-                    gameLabel:  d.signal.game_label,
-                    roundKey:   d.signal.round_key || '',   // ← passed through from host
-                });
-                await fetch('/api/passport-signal', {
-                    method:  'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ player_uuid: passport.playerUUID, room_code: joinCode }),
-                }).catch(() => {});
-            }
+            _handleSessionUpdate({
+                squad:            data.squad,
+                current_matches:  data.current_matches,
+                round_history:    data.round_history,
+                uuid_map:         data.uuid_map,
+                approved_players: data.approved_players,
+            });
         } catch { /* silent */ }
-    },
+    }, 6000);
+}
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // TOKEN & SESSION STORAGE
-    // ─────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// SESSION BADGE
+// ---------------------------------------------------------------------------
 
-    // Removal flag — persists in localStorage so boot() never auto-rejoins
-    // after a host removes the player. Cleared when player sends a rejoin request.
-    _isRemovedFromRoom(roomCode) {
-        try { return !!JSON.parse(localStorage.getItem('cs_removed_rooms') || '{}')[roomCode]; }
-        catch { return false; }
-    },
+function _attachSessionBadge(roomCode, role) {
+    let badge = document.getElementById('sessionBadge');
+    if (!badge) {
+        badge = document.createElement('div');
+        badge.id = 'sessionBadge';
+        badge.className = 'session-badge';
+        document.body.appendChild(badge);
+    }
+    badge.innerHTML = `
+        <span class="session-dot ${role === 'operator' ? 'dot-operator' : 'dot-spectator'}"></span>
+        <span class="session-code">${roomCode}</span>
+        <span class="session-role">${role === 'operator' ? 'HOST' : 'LIVE'}</span>
+    `;
+}
 
-    _markRemovedFromRoom(roomCode) {
-        if (!roomCode) return;
-        try {
-            const m = JSON.parse(localStorage.getItem('cs_removed_rooms') || '{}');
-            m[roomCode] = true;
-            localStorage.setItem('cs_removed_rooms', JSON.stringify(m));
-        } catch { }
-    },
+// ---------------------------------------------------------------------------
+// RECONNECT INDICATOR
+// ---------------------------------------------------------------------------
 
-    _clearRemovedFromRoom(roomCode) {
-        if (!roomCode) return;
-        try {
-            const m = JSON.parse(localStorage.getItem('cs_removed_rooms') || '{}');
-            delete m[roomCode];
-            localStorage.setItem('cs_removed_rooms', JSON.stringify(m));
-        } catch { }
-    },
+function _showReconnectIndicator() {
+    let el = document.getElementById('reconnectIndicator');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'reconnectIndicator';
+        el.className = 'reconnect-indicator';
+        el.textContent = 'RECONNECTING…';
+        document.body.appendChild(el);
+    }
+    el.classList.add('visible');
+}
 
-    _isApprovedInSession(roomCode) {
-        try { return !!JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}')[roomCode]; }
-        catch { return false; }
-    },
+function _hideReconnectIndicator() {
+    const el = document.getElementById('reconnectIndicator');
+    if (el) el.classList.remove('visible');
+}
 
-    _markApprovedInSession(roomCode) {
-        try {
-            const m = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
-            m[roomCode] = true;
-            sessionStorage.setItem(SS_APPROVED, JSON.stringify(m));
-        } catch { }
-    },
+// ---------------------------------------------------------------------------
+// AUTO-REJOIN ON PAGE LOAD
+// Called by bootApp() and initApp() fallback.
+// Checks localStorage for a saved operator room and rejoins if found.
+// ---------------------------------------------------------------------------
 
-    _loadToken(roomCode) {
-        try { return JSON.parse(localStorage.getItem(LS_TOKENS) || '{}')[roomCode] || null; }
-        catch { return null; }
-    },
+async function tryAutoRejoin() {
+    const savedRoom = localStorage.getItem('cs_operator_room');
+    const savedKey  = localStorage.getItem('cs_operator_key');
 
-    _saveToken(roomCode, token, name, uuid) {
-        try {
-            const m = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
-            m[roomCode] = { token, name, uuid, savedAt: Date.now() };
-            localStorage.setItem(LS_TOKENS, JSON.stringify(m));
-        } catch { }
-    },
+    if (!savedRoom || !savedKey) return;
 
-    _clearToken(roomCode) {
-        try {
-            const m = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
-            delete m[roomCode];
-            localStorage.setItem(LS_TOKENS, JSON.stringify(m));
-        } catch { }
-    },
+    try {
+        const res  = await fetch(`/api/session-get?code=${encodeURIComponent(savedRoom)}`);
+        if (!res.ok) {
+            // Session no longer exists — clear stale credentials
+            localStorage.removeItem('cs_operator_room');
+            localStorage.removeItem('cs_operator_key');
+            return;
+        }
+        const data = await res.json();
 
-    async _verifyToken(roomCode, savedToken, passport) {
-        try {
-            const res  = await fetch(`/api/session-get?code=${encodeURIComponent(roomCode)}`);
-            if (!res.ok) return false;
-            const data = await res.json();
-            const approved = data?.session?.approved_players || {};
-            const entry    = approved[passport.playerUUID] || approved[passport.playerName];
-            if (!entry || entry.token !== savedToken.token) return false;
-            if (data.session) {
-                window.squad          = data.session.squad           || [];
-                window.currentMatches = data.session.current_matches || [];
-                window._sessionUUIDMap  = data.session.uuid_map         || {};
-                window._approvedPlayers = data.session.approved_players || {};
-            }
-            return true;
-        } catch { return false; }
-    },
+        // Verify key hash
+        const enc  = new TextEncoder();
+        const buf  = await crypto.subtle.digest('SHA-256', enc.encode(savedKey));
+        const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // UI HELPERS
-    // ─────────────────────────────────────────────────────────────────────────
+        if (hash !== data.operator_key_hash) {
+            localStorage.removeItem('cs_operator_room');
+            localStorage.removeItem('cs_operator_key');
+            return;
+        }
 
-    setStatus(state, text, sub) {
-        const card   = document.getElementById('slStatusCard');
-        const icon   = document.getElementById('slStatusIcon');
-        const textEl = document.getElementById('slStatusText');
-        const subEl  = document.getElementById('slStatusSub');
-        const icons  = { pending:'⏳', 'on-deck':'🟡', playing:'🟢', resting:'🔵', approved:'✅' };
-        if (card)   card.dataset.state = state;
-        if (icon)   icon.textContent   = icons[state] || '⏳';
-        if (textEl) textEl.textContent = text;
-        if (subEl)  subEl.textContent  = sub || '';
-    },
+        // Credentials valid — restore operator state
+        isOnlineSession = true;
+        isOperator      = true;
+        currentRoomCode = savedRoom;
+        operatorKey     = savedKey;
 
-    _renderIdentity(passport) {
-        const nameEl   = document.getElementById('slPassportName');
-        const avatarEl = document.getElementById('slPassportAvatar');
-        if (nameEl)   nameEl.textContent   = passport.playerName || 'Tap to set name';
-        if (avatarEl) avatarEl.textContent = (passport.playerName || '?').charAt(0).toUpperCase();
-    },
+        if (data.squad)           squad          = data.squad;
+        if (data.current_matches) currentMatches = data.current_matches;
+        if (data.round_history)   roundHistory   = data.round_history;
 
-    _renderStats(passport) {
-        const p = passport || Passport.get();
-        if (!p) return;
-        const w = document.getElementById('slPrivateWins');
-        const g = document.getElementById('slPrivateGames');
-        const r = document.getElementById('slPrivateWR');
-        if (w) w.textContent = p.privateLifetimeWins || 0;
-        if (g) g.textContent = p.privateTotalGames   || 0;
-        if (r) r.textContent = Passport.winRate()    || '—';
-    },
+        window._sessionUUIDMap  = data.uuid_map         || {};
+        window._approvedPlayers = data.approved_players || {};
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // NAME ENTRY
-    // ─────────────────────────────────────────────────────────────────────────
+        renderSquad();
+        document.getElementById('matchContainer').innerHTML = '';
+        renderSavedMatches();
+        updateUndoButton();
+        checkNextButtonState();
 
-    _promptName() {
-        return new Promise(resolve => {
-            let input = document.getElementById('slNameEntryInput');
-            let btn   = document.getElementById('slNameEntrySubmit');
+        _attachSessionBadge(savedRoom, 'operator');
+        subscribeRealtime(savedRoom);
+        _startPolling();
 
-            if (!input || !btn) {
-                const container = document.getElementById('slCurrentMatches');
-                if (!container) {
-                    const n = window.prompt('Enter your name to join:');
-                    return resolve(n ? n.trim() : null);
-                }
-                this._showNameEntry();
-                input = document.getElementById('slNameEntryInput');
-                btn   = document.getElementById('slNameEntrySubmit');
-            }
+        showSessionToast(`🟢 Rejoined session ${savedRoom}`);
 
-            const submit = () => {
-                const val = (input?.value || '').trim();
-                if (!val) { input?.focus(); return; }
-                if (btn) { btn.disabled = true; btn.textContent = 'JOINING…'; }
-                resolve(val);
-            };
+    } catch (err) {
+        console.error('[CourtSide] tryAutoRejoin failed:', err);
+    }
+}
 
-            btn?.addEventListener('click', submit);
-            input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
-            setTimeout(() => input?.focus(), 80);
-        });
-    },
+// ---------------------------------------------------------------------------
+// BOOT APP — called from index.html window.onload (host/spectator path)
+// ---------------------------------------------------------------------------
 
-    _promptForCode() {
-        this.setStatus('pending', 'No room code', 'Ask the host for the QR code');
-        const el = document.getElementById('slCurrentMatches');
-        if (el) el.innerHTML = `
-            <div class="sl-code-entry">
-                <div class="sl-code-label">Enter Room Code</div>
-                <input id="slCodeInput" class="sl-code-input" placeholder="XXXX-XXXX"
-                    autocomplete="off" autocapitalize="characters" maxlength="9"
-                    onkeydown="if(event.key==='Enter') PlayerMode._manualJoin()">
-                <button class="sl-code-btn" onclick="PlayerMode._manualJoin()">Join →</button>
-            </div>`;
-    },
+async function bootApp() {
+    // Check URL params for join code
+    const params   = new URLSearchParams(window.location.search);
+    const joinCode = params.get('join') || params.get('room');
 
-    async _manualJoin() {
-        const input = document.getElementById('slCodeInput');
-        const code  = (input?.value || '').trim().toUpperCase();
-        if (!code) return;
-        this._joinCode = code;
-        const codeEl = document.getElementById('slSessionCode');
-        if (codeEl) codeEl.textContent = code;
-        const el = document.getElementById('slCurrentMatches');
-        if (el) el.innerHTML = '<div class="sl-empty">Connecting…</div>';
-        await this._joinSession(Passport.get(), code);
-    },
-};
+    if (joinCode) {
+        await joinOnlineSession(joinCode);
+        return;
+    }
+
+    // Try to reclaim operator session from a previous page load
+    await tryAutoRejoin();
+}
