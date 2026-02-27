@@ -1,19 +1,21 @@
 // =============================================================================
-// PASSPORT.JS — Private Player Identity System  v6
+// PASSPORT.JS — Private Player Identity System  v5
 // =============================================================================
-// FIXES IN THIS VERSION:
-//   #1  — dispatchWinSignals is called ONLY from processAndNext (logic.js).
-//         _onMatchResolved no longer calls recordWin/recordLoss by itself;
-//         it delegates to _applyMatchOutcome which uses a per-ROUND dedup key
-//         (not per-gameLabel) so it correctly clears between rounds.
-//   #7  — _processedResults is now cleared at the start of every new round
-//         via clearRoundDedup(), called from processAndNext in logic.js.
-//   #8  — editPlayerName in app.js still used prompt(); that call has been
-//         replaced with the inline DOM rename flow used everywhere else.
+// PRIVACY CONTRACT:
+//   - playerUUID and playerName travel over the wire (handshake only)
+//   - privateLifetimeWins, privateTotalGames, matchHistory NEVER leave device
+//   - localStorage is always written BEFORE any UI re-render
+//
+// FIVE BUGS / FEATURES:
+//   #3  Name sync:       editName → localStorage → broadcast NAME_UPDATE
+//   #4  Win tracking:    MATCH_RESOLVED → UUID check → recordWin/recordLoss
+//   #NEW Performance Lab: last 5 match results stored in localStorage
+//   #NEW Invite QR:      show session QR so players can invite friends
+//   #TechVerify UUID:    UUID stored on squad member, survives name changes
 // =============================================================================
 
-const PASSPORT_KEY   = 'cs_player_passport';
-const MATCH_HIST_KEY = 'cs_match_history';
+const PASSPORT_KEY  = 'cs_player_passport';
+const MATCH_HIST_KEY = 'cs_match_history';   // [{result, opponent, date, gameLabel}]
 const MAX_HIST       = 5;
 
 // =============================================================================
@@ -54,6 +56,7 @@ const Passport = {
         return { playerUUID: p.playerUUID, playerName: p.playerName };
     },
 
+    /** Write localStorage FIRST, caller updates UI after */
     rename(newName) {
         const p = this.get();
         if (!p) return null;
@@ -62,6 +65,7 @@ const Passport = {
         return p;
     },
 
+    /** WIN: increment wins AND games. localStorage first. */
     recordWin() {
         const p = this.get();
         if (!p) return null;
@@ -71,6 +75,7 @@ const Passport = {
         return p;
     },
 
+    /** LOSS: increment games only. localStorage first. */
     recordLoss() {
         const p = this.get();
         if (!p) return null;
@@ -106,6 +111,12 @@ const MatchHistory = {
         } catch { return []; }
     },
 
+    /**
+     * Add a result entry.
+     * @param {'WIN'|'LOSS'} result
+     * @param {string}       opponentNames  — e.g. "Alice & Bob"
+     * @param {string}       gameLabel      — e.g. "Game 1"
+     */
     push(result, opponentNames, gameLabel) {
         const hist = this.get();
         hist.unshift({
@@ -114,6 +125,7 @@ const MatchHistory = {
             gameLabel: gameLabel || '',
             date:      Date.now(),
         });
+        // Keep only last MAX_HIST entries
         if (hist.length > MAX_HIST) hist.splice(MAX_HIST);
         try { localStorage.setItem(MATCH_HIST_KEY, JSON.stringify(hist)); } catch { }
         return hist;
@@ -123,6 +135,7 @@ const MatchHistory = {
         try { localStorage.removeItem(MATCH_HIST_KEY); } catch { }
     },
 
+    /** Format a timestamp as "Today 14:32" or "Mon 09:15" */
     _formatDate(ts) {
         const d   = new Date(ts);
         const now = new Date();
@@ -175,9 +188,11 @@ const SidelineView = {
         const passport = Passport.get();
         if (!passport) return;
 
+        // Identity
         const nameEl  = document.getElementById('slPassportName');
         if (nameEl) nameEl.textContent = passport.playerName;
 
+        // Stats
         const winsEl  = document.getElementById('slPrivateWins');
         const gamesEl = document.getElementById('slPrivateGames');
         const wrEl    = document.getElementById('slPrivateWR');
@@ -195,6 +210,7 @@ const SidelineView = {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
 
+        // Guard: don't overwrite queued-state or name-entry UI during join flow
         if (container.querySelector('.sl-queued-state') ||
             container.querySelector('.sl-name-entry')) return;
 
@@ -230,18 +246,20 @@ const SidelineView = {
         else { rowEl.style.display = 'none'; }
     },
 
+    /** Last match winner — shown after MATCH_RESOLVED */
     _renderLastWinner() {
-        const el    = document.getElementById('slLastWinner');
+        const el = document.getElementById('slLastWinner');
         const rowEl = document.getElementById('slLastWinnerRow');
         if (!el || !rowEl) return;
         if (window._lastMatchWinner) {
-            el.textContent      = window._lastMatchWinner;
-            rowEl.style.display = 'flex';
+            el.textContent       = window._lastMatchWinner;
+            rowEl.style.display  = 'flex';
         } else {
             rowEl.style.display = 'none';
         }
     },
 
+    /** Performance Lab — match history list */
     _renderPerformanceLab() {
         const container = document.getElementById('slLabHistory');
         if (!container) return;
@@ -250,128 +268,28 @@ const SidelineView = {
 };
 
 // =============================================================================
-// VICTORY CARD — removed as intrusive; wins recorded silently in stats
+// VICTORY CARD
 // =============================================================================
-<<<<<<< HEAD
-<<<<<<< HEAD
+
+// VictoryCard removed — was too intrusive. Win is recorded silently in stats + Performance Lab.
 const VictoryCard = { show() {}, hide() {}, share() {} };
 
-=======
-=======
 
-const VictoryCard = {
-    show(playerName) {
-        const overlay = document.getElementById('victoryCardOverlay');
-        const nameEl  = document.getElementById('victoryCardName');
-        if (!overlay || !nameEl) return;
-        nameEl.textContent = playerName.toUpperCase();
-        overlay.style.display = 'flex';
-        requestAnimationFrame(() => overlay.classList.add('victory-visible'));
-        if (window.Haptic)   Haptic.success();
-        if (window.Confetti) Confetti.burst(window.innerWidth / 2, window.innerHeight / 2, 120);
-    },
-
-    hide() {
-        const overlay = document.getElementById('victoryCardOverlay');
-        if (!overlay) return;
-        overlay.classList.remove('victory-visible');
-        setTimeout(() => { overlay.style.display = 'none'; }, 400);
-    },
-
-    async share() {
-        const card = document.getElementById('victoryCard');
-        if (!card) return;
-        if (!window.html2canvas) {
-            await new Promise((res, rej) => {
-                const s = document.createElement('script');
-                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-                s.onload = res; s.onerror = rej;
-                document.head.appendChild(s);
-            });
-        }
-        try {
-            const canvas = await html2canvas(card, {
-                backgroundColor: '#0a0a0f', scale: 2, width: 390, height: 693,
-                useCORS: true, logging: false,
-            });
-            canvas.toBlob(async (blob) => {
-                const file     = new File([blob], 'courtside-victory.png', { type: 'image/png' });
-                const passport = Passport.get();
-                const name     = passport?.playerName || 'Player';
-                if (navigator.share && navigator.canShare({ files: [file] })) {
-                    await navigator.share({ title: 'The Court Side Pro', text: `${name} just won! 🏆`, files: [file] });
-                } else {
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(blob); a.download = 'courtside-victory.png'; a.click();
-                }
-                if (window.Haptic) Haptic.success();
-            }, 'image/png');
-        } catch (e) { console.error('Victory share failed:', e); }
-    },
-};
->>>>>>> parent of 8573c6b (1.02)
-
-const VictoryCard = {
-    show(playerName) {
-        const overlay = document.getElementById('victoryCardOverlay');
-        const nameEl  = document.getElementById('victoryCardName');
-        if (!overlay || !nameEl) return;
-        nameEl.textContent = playerName.toUpperCase();
-        overlay.style.display = 'flex';
-        requestAnimationFrame(() => overlay.classList.add('victory-visible'));
-        if (window.Haptic)   Haptic.success();
-        if (window.Confetti) Confetti.burst(window.innerWidth / 2, window.innerHeight / 2, 120);
-    },
-
-    hide() {
-        const overlay = document.getElementById('victoryCardOverlay');
-        if (!overlay) return;
-        overlay.classList.remove('victory-visible');
-        setTimeout(() => { overlay.style.display = 'none'; }, 400);
-    },
-
-    async share() {
-        const card = document.getElementById('victoryCard');
-        if (!card) return;
-        if (!window.html2canvas) {
-            await new Promise((res, rej) => {
-                const s = document.createElement('script');
-                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-                s.onload = res; s.onerror = rej;
-                document.head.appendChild(s);
-            });
-        }
-        try {
-            const canvas = await html2canvas(card, {
-                backgroundColor: '#0a0a0f', scale: 2, width: 390, height: 693,
-                useCORS: true, logging: false,
-            });
-            canvas.toBlob(async (blob) => {
-                const file     = new File([blob], 'courtside-victory.png', { type: 'image/png' });
-                const passport = Passport.get();
-                const name     = passport?.playerName || 'Player';
-                if (navigator.share && navigator.canShare({ files: [file] })) {
-                    await navigator.share({ title: 'The Court Side Pro', text: `${name} just won! 🏆`, files: [file] });
-                } else {
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(blob); a.download = 'courtside-victory.png'; a.click();
-                }
-                if (window.Haptic) Haptic.success();
-            }, 'image/png');
-        } catch (e) { console.error('Victory share failed:', e); }
-    },
-};
-
->>>>>>> parent of 8573c6b (1.02)
 // =============================================================================
-// INVITE QR
+// INVITE QR — shows session join QR on player's phone
 // =============================================================================
 
 const InviteQR = {
     _overlay: null,
 
+    /**
+     * Show the invite QR overlay.
+     * Uses the same URL format as the host's QR: ?join=XXXX-XXXX&role=player
+     */
     show(roomCode) {
         if (!roomCode) { alert('No active session to share.'); return; }
+
+        // Remove any existing overlay
         if (this._overlay) this._overlay.remove();
 
         const joinUrl = `${window.location.origin}${window.location.pathname}?join=${roomCode}&role=player`;
@@ -393,30 +311,20 @@ const InviteQR = {
         document.body.appendChild(this._overlay);
         requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
 
+        // Tap outside to dismiss
         this._overlay.addEventListener('click', e => {
             if (e.target === this._overlay) this.hide();
         });
 
+        // Generate QR
         if (window.QRCode) {
             QRCode.toCanvas(document.getElementById('inviteQrCanvas'), joinUrl, {
                 width:  220,
                 margin: 2,
                 color: { dark: '#0a0a0f', light: '#ffffff' },
-            }, err => {
-                if (err) {
-                    console.error('InviteQR: QR gen failed', err);
-                    // Show URL as readable fallback instead of silent failure
-                    const canvas = document.getElementById('inviteQrCanvas');
-                    if (canvas) {
-                        canvas.style.display = 'none';
-                        const txt = document.createElement('div');
-                        txt.className = 'sl-invite-url';
-                        txt.textContent = joinUrl;
-                        canvas.parentNode.insertBefore(txt, canvas.nextSibling);
-                    }
-                }
-            });
+            }, err => { if (err) console.error('InviteQR: QR gen failed', err); });
         } else {
+            // Fallback: show the URL as text
             const canvas = document.getElementById('inviteQrCanvas');
             if (canvas) {
                 canvas.style.display = 'none';
@@ -436,10 +344,10 @@ const InviteQR = {
 };
 
 // =============================================================================
-// PLAYER MODE — boot controller  v6
+// PLAYER MODE — boot controller for ?role=player  v5
 // =============================================================================
 
-const LS_TOKENS   = 'cs_session_tokens';
+const LS_TOKENS  = 'cs_session_tokens';
 const SS_APPROVED = 'cs_approved';
 
 const PlayerMode = {
@@ -448,44 +356,40 @@ const PlayerMode = {
     _pollTimer: null,
 
     // ─────────────────────────────────────────────────────────────────────────
-    // FIX #7: per-round dedup set.
-    // Cleared by clearRoundDedup() which is called from processAndNext()
-    // in logic.js at the start of every new round.
-    // Key format: `${playerUUID}-${gameLabel}` where gameLabel is "Game N".
-    // ─────────────────────────────────────────────────────────────────────────
-    _processedResults: new Set(),
-
-    clearRoundDedup() {
-        this._processedResults.clear();
-    },
-
-    _markResultProcessed(gameLabel) {
-        const passport = Passport.get();
-        if (!passport) return false;
-        const key = `${passport.playerUUID}-${gameLabel || '_'}`;
-        if (this._processedResults.has(key)) return true;
-        this._processedResults.add(key);
-        return false;
-    },
-
-    // ─────────────────────────────────────────────────────────────────────────
     // BOOT
     // ─────────────────────────────────────────────────────────────────────────
 
     async boot(passport, joinCode) {
+        // ══════════════════════════════════════════════════════════════════════
+        // BOOT — Four-phase init. Each phase completes independently so the
+        // screen is never blank, even if the DB is slow or unreachable.
+        //
+        // PHASE 0 — Instant render     (synchronous, <1ms)
+        // PHASE 1 — Passport check     (synchronous localStorage read)
+        // PHASE 2 — Session handshake  (async DB call)
+        // PHASE 3 — Join or approve    (async, sets final status)
+        // ══════════════════════════════════════════════════════════════════════
+
+        // Recover joinCode from localStorage if URL param was stripped on refresh
         if (!joinCode) {
             try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
         }
 
         this._joinCode = joinCode;
 
+        // Persist joinCode to localStorage so a refresh can recover it
         if (joinCode) {
             try { localStorage.setItem('cs_player_room_code', joinCode); } catch {}
         }
 
+        // ── PHASE 0: Instant frame render ─────────────────────────────────────
+        // BUG 1 FIX: Render the UI shell RIGHT NOW before any async work.
+        // Add .sl-booting so the status card pulses while we wait for the DB.
+        // Remove it once we have a real answer.
         const panel = document.getElementById('sidelinePanel');
         if (panel) panel.classList.add('sl-booting');
 
+        // Render whatever identity we have — even '—' is better than blank
         this._renderIdentity(passport);
         this._renderStats(passport);
 
@@ -498,13 +402,20 @@ const PlayerMode = {
             return;
         }
 
+        // ── PHASE 1: Check localStorage passport ──────────────────────────────
+        // BUG 3 FIX: Do this synchronously right here — zero network wait.
+        // Show a personalised welcome message immediately if name exists.
         const hasName = !!(passport.playerName && passport.playerName.trim());
         if (hasName) {
+            // "Welcome back" message shown instantly from localStorage
             this._showWelcomeBack(passport.playerName, joinCode);
             this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
         } else {
+            // No name yet — show the name entry form immediately
+            // (replaces the blank "No active round yet" placeholder)
             this.setStatus('pending', 'Almost there…', 'Enter your name to join');
             this._showNameEntry();
+            // Name entry is async — the rest of boot() waits here
             const name = await this._promptName();
             if (!name) {
                 if (panel) panel.classList.remove('sl-booting');
@@ -515,18 +426,22 @@ const PlayerMode = {
             this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
         }
 
+        // ── Tier 1: sessionStorage fast-path ──────────────────────────────────
+        // Survives page refresh within the same tab session.
         if (this._isApprovedInSession(joinCode)) {
             if (panel) panel.classList.remove('sl-booting');
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
-            // FIX #6: subscribe BEFORE calling _updateStatus so the sideline
-            // is populated before any game_state broadcast can arrive.
-            this._startSignalPoll(joinCode, Passport.get());
-            if (typeof joinOnlineSession === 'function') {
-                joinOnlineSession(joinCode).catch(() => {});
-            }
+            this._subscribeAndPoll(joinCode, passport);
             return;
         }
 
+        // ── PHASE 2: DB handshake — show spinner while waiting ────────────────
+        // BUG 2 FIX: The DB call is now wrapped — if it returns null (session
+        // not found / network error) we show a "Searching for Court" state
+        // instead of crashing or staying blank.
+        this._subscribeAndPoll(joinCode, passport);
+
+        // Show "Searching for Court…" while the DB responds
         this._showSearchingSpinner();
 
         let upsertResult = null;
@@ -534,35 +449,37 @@ const PlayerMode = {
             upsertResult = await this._memberUpsert(Passport.get(), joinCode);
         } catch (err) {
             console.error('[PlayerMode.boot] member-upsert threw:', err);
+            // Treat as null — fall through to pending state
         }
 
+        // Stop pulsing — we have a result (or a failure)
         if (panel) panel.classList.remove('sl-booting');
         this._clearSearchingSpinner();
 
+        // ── BUG 2 FIX: Guard against null / missing session ───────────────────
         if (!upsertResult) {
-            this.setStatus('pending', 'Court not found',
+            this.setStatus('pending',
+                'Court not found',
                 'The session may have ended. Check the room code.');
-            console.error('[CourtSide] Session lookup failed for room:', joinCode);
+            console.error('[CourtSide] Session lookup failed for room:', joinCode,
+                '— upsertResult was null. Check /api/member-upsert and network.');
+            // Show manual code entry so player isn't stuck
             this._promptForCode();
             return;
         }
 
+        // ── RETURNING APPROVED PLAYER ─────────────────────────────────────────
         if (upsertResult.status === 'active') {
             this._markApprovedInSession(joinCode);
             this._hydrateFromUpsert(upsertResult);
             const p = Passport.get();
             this.setStatus('approved', `Welcome back, ${p.playerName}!`, "You're in the squad ✅");
             SidelineView.refresh();
-            // FIX #6: subscribe AFTER we know the player is active, so the
-            // queued-state block is never rendered for already-approved players.
-            this._startSignalPoll(joinCode, p);
-            if (typeof joinOnlineSession === 'function') {
-                joinOnlineSession(joinCode).catch(() => {});
-            }
             setTimeout(() => this._updateStatus(p), 800);
             return;
         }
 
+        // ── Tier 3: localStorage token fallback ───────────────────────────────
         const savedToken = this._loadToken(joinCode);
         if (savedToken) {
             const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
@@ -575,18 +492,16 @@ const PlayerMode = {
             }
         }
 
-        // FIX #6: submit join request FIRST, THEN subscribe.
-        // This guarantees the queued-state block is rendered before any
-        // incoming game_state broadcast can call _renderMatches and overwrite it.
+        // ── PHASE 3: New join — submit request, wait for host approval ────────
         await this._submitJoinRequest(Passport.get(), joinCode);
-        this._startSignalPoll(joinCode, Passport.get());
-        if (typeof joinOnlineSession === 'function') {
-            joinOnlineSession(joinCode).catch(() => {});
-        }
     },
 
     // ─────────────────────────────────────────────────────────────────────────
     // QUEUED STATE
+    // Renders in slCurrentMatches after the join request is sent.
+    // .sl-queued-state is a sentinel: SidelineView._renderMatches() skips
+    // rendering if this class is present, preventing game_state broadcasts
+    // from clobbering the waiting screen before the player is approved.
     // ─────────────────────────────────────────────────────────────────────────
 
     _showQueuedState(playerName) {
@@ -674,6 +589,10 @@ const PlayerMode = {
         }
     },
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // WELCOME-BACK CARD — instant render from localStorage
+    // ─────────────────────────────────────────────────────────────────────────
+
     _showWelcomeBack(playerName, roomCode) {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
@@ -681,11 +600,18 @@ const PlayerMode = {
             <div class="sl-welcome-back">
                 <div class="sl-welcome-back-icon">🏀</div>
                 <div class="sl-welcome-back-text">
-                    <div class="sl-welcome-back-name">Welcome back, ${playerName.toUpperCase()}</div>
+                    <div class="sl-welcome-back-name">Welcome back, ${
+                        playerName.toUpperCase()
+                    }</div>
                     <div class="sl-welcome-back-sub">Joining court ${roomCode}…</div>
                 </div>
             </div>`;
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // NAME ENTRY TRIGGER — shows the form without waiting for _promptName()
+    // Called at the top of boot() so the input is visible instantly.
+    // ─────────────────────────────────────────────────────────────────────────
 
     _showNameEntry() {
         const container = document.getElementById('slCurrentMatches');
@@ -714,10 +640,15 @@ const PlayerMode = {
         setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 120);
     },
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // SEARCHING SPINNER — shown while DB responds (BUG 2)
+    // ─────────────────────────────────────────────────────────────────────────
+
     _showSearchingSpinner() {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
-        if (container.querySelector('.sl-name-entry')) return;
+        // Only replace if it still has the welcome-back card or is empty
+        if (container.querySelector('.sl-name-entry')) return; // name entry takes priority
         container.innerHTML = `
             <div class="sl-searching">
                 <div class="sl-searching-spinner"></div>
@@ -732,6 +663,10 @@ const PlayerMode = {
             container.innerHTML = '<div class="sl-empty">No active round yet</div>';
         }
     },
+    // ─────────────────────────────────────────────────────────────────────────
+    // MEMBER UPSERT — calls /api/member-upsert (via sync.js helper)
+    // Returns { status: 'pending'|'active', member } or null on failure.
+    // ─────────────────────────────────────────────────────────────────────────
 
     async _memberUpsert(passport, joinCode) {
         if (typeof memberUpsert !== 'function') return null;
@@ -739,6 +674,8 @@ const PlayerMode = {
     },
 
     _hydrateFromUpsert(upsertResult) {
+        // Optionally update local name if server has a different one
+        // (e.g. host edited it, or player joined from a different device)
         if (upsertResult?.member?.player_name) {
             const serverName = upsertResult.member.player_name;
             const passport   = Passport.get();
@@ -749,20 +686,32 @@ const PlayerMode = {
         }
     },
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // APPROVAL — broadcast 'session_joined'
+    // ─────────────────────────────────────────────────────────────────────────
+
     _onApprovalReceived(payload) {
         const passport = Passport.get();
         if (!passport) return;
-        if (payload.playerUUID !== passport.playerUUID) return;
+        if (payload.playerUUID !== passport.playerUUID) return;  // strict UUID match
 
+        // 1. Storage writes BEFORE any render
         this._markApprovedInSession(this._joinCode);
         if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
 
+        // 2. Hydrate globals
         if (payload.squad)           window.squad          = payload.squad;
         if (payload.current_matches) window.currentMatches = payload.current_matches;
 
+        // 3. UI
         this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
+        this._subscribeAndPoll(this._joinCode, passport);
         setTimeout(() => this._updateStatus(passport), 1500);
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LIVE FEED — broadcast 'game_state'
+    // ─────────────────────────────────────────────────────────────────────────
 
     _onGameStateUpdate(payload) {
         const passport = Passport.get();
@@ -771,6 +720,10 @@ const PlayerMode = {
         SidelineView.refresh();
         this._updateStatus(passport);
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POSTGRES FALLBACK — 'postgres_changes'
+    // ─────────────────────────────────────────────────────────────────────────
 
     _onSessionUpdate(session) {
         const passport = Passport.get();
@@ -793,79 +746,45 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-<<<<<<< HEAD
-<<<<<<< HEAD
-    // FIX #1: _applyMatchOutcome — single authoritative path for recording
-    // win/loss to localStorage. Called by BOTH _onMatchResolved (broadcast)
-    // and _onMatchResult (DB poll). The dedup key prevents double-counting
-    // even when both fire for the same game.
-    //
-    // FIX #7: The dedup set is cleared between rounds by clearRoundDedup()
-    // in logic.js, so "Game 1" in Round 2 correctly records a new result.
-=======
-    // MATCH RESULT — broadcast 'match_result' (per-UUID private stat update)
-    //
-=======
-    // MATCH RESULT — broadcast 'match_result' (per-UUID private stat update)
-    //
->>>>>>> parent of 8573c6b (1.02)
-    // Issue #4 — BUG FIX:
-    //   The `playerUUID` in the broadcast comes from squad[n].uuid (stored at
-    //   approval), which is the SAME uuid as passport.playerUUID (generated
-    //   locally and sent in the play-request). Strict equality check.
-<<<<<<< HEAD
->>>>>>> parent of 8573c6b (1.02)
-=======
->>>>>>> parent of 8573c6b (1.02)
+    // WIN DEDUP — prevents double-recording when both WS broadcast (match_resolved)
+    // and DB poll fallback (match_result) deliver the same game result.
+    // Key: `${playerUUID}-${gameLabel}`. Cleared when a new session is joined.
     // ─────────────────────────────────────────────────────────────────────────
+    _processedResults: new Set(),
 
-    _applyMatchOutcome(isWinner, opponentNames, gameLabel) {
-        // Dedup: return early if we've already processed this game this round
-        if (this._markResultProcessed(gameLabel)) return;
-
-        if (isWinner) {
-            Passport.recordWin();
-            MatchHistory.push('WIN', opponentNames || '—', gameLabel);
-        } else {
-            Passport.recordLoss();
-            MatchHistory.push('LOSS', opponentNames || '—', gameLabel);
-        }
-
-        this._renderStats(Passport.get());
-        SidelineView.show();
-        SidelineView.refresh();
+    _markResultProcessed(gameLabel) {
+        const passport = Passport.get();
+        if (!passport) return false;
+        const key = `${passport.playerUUID}-${gameLabel || '_'}`;
+        if (this._processedResults.has(key)) return true; // already handled
+        this._processedResults.add(key);
+        return false;
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MATCH RESULT — DB poll fallback only (WS missed events safety net)
+    //
+    // match_result individual broadcasts were removed from dispatchWinSignals
+    // to prevent double-recording. This handler now only fires from _pollSignal
+    // when the WS broadcast was missed (e.g. player was briefly offline).
+    // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResult(payload) {
         const passport = Passport.get();
         if (!passport) return;
 
         const { playerUUID, event, gameLabel } = payload;
-<<<<<<< HEAD
-<<<<<<< HEAD
         if (playerUUID !== passport.playerUUID) return;
 
-        // Delegate to shared outcome handler (handles dedup internally)
-        this._applyMatchOutcome(event === 'WIN', '—', gameLabel || '');
-
-        if (window.Haptic) {
-            event === 'WIN' ? Haptic.success() : Haptic.bump();
-        }
-    },
-
-=======
-=======
->>>>>>> parent of 8573c6b (1.02)
-        const isMe = playerUUID === passport.playerUUID;
-        if (!isMe) return; // strict UUID — ignore signals not addressed to this player
+        // Dedup: skip if match_resolved already handled this game
+        if (this._markResultProcessed(gameLabel)) return;
 
         if (event === 'WIN') {
             const updated = Passport.recordWin();
             MatchHistory.push('WIN', '—', gameLabel || '');
             this._renderStats(updated);
-            SidelineView.show();   // ensure _visible=true
+            SidelineView.show();
             SidelineView.refresh();
-            VictoryCard.show(passport.playerName);
         } else if (event === 'LOSS') {
             const updated = Passport.recordLoss();
             MatchHistory.push('LOSS', '—', gameLabel || '');
@@ -876,17 +795,12 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MATCH RESOLVED — broadcast 'match_resolved' (round-level event)
+    // MATCH RESOLVED — broadcast 'match_resolved' (primary win/loss path)
     //
-    // Issue #4 — "Next Round" button trigger:
-    //   This is fired by processAndNext() in logic.js (the Next Round button).
-    //   All players receive it. Handles:
-    //     - Win/loss stat recording (delegates to _onMatchResult)
-    //     - Last Match Winner display on sideline feed
-    //     - Match history entry for Performance Lab
+    // Fired by dispatchWinSignals() when host taps "Next Round".
+    // Carries winnerUUIDs + loserUUIDs — each player checks their own UUID.
     // ─────────────────────────────────────────────────────────────────────────
 
->>>>>>> parent of 8573c6b (1.02)
     _onMatchResolved(payload) {
         const passport = Passport.get();
         if (!passport) return;
@@ -894,29 +808,18 @@ const PlayerMode = {
         const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel } = payload;
         const myUUID = passport.playerUUID;
 
-        // Determine this player's outcome
-        const isWinner = winnerUUIDs.includes(myUUID);
-        const isLoser  = loserUUIDs.includes(myUUID);
+        const isWinner   = winnerUUIDs.includes(myUUID);
+        const isLoser    = loserUUIDs.includes(myUUID);
         const wasInMatch = isWinner || isLoser;
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-        // Show "Last Match Winner" for ALL players regardless of participation
-        window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
+        // Mark processed FIRST — before any recordWin/recordLoss —
+        // so if _pollSignal fires in the same tick it sees the flag and skips.
+        if (wasInMatch && this._markResultProcessed(gameLabel)) return; // already handled
 
-        if (wasInMatch) {
-            // Opponent names: if winner, opponents are losers and vice versa
-            const opponentUUIDs = isWinner ? loserUUIDs : winnerUUIDs;
-            // We don't have names here, but winnerNames gives the winner display string
-            const opponentLabel = isWinner ? '—' : winnerNames || '—';
-=======
-=======
->>>>>>> parent of 8573c6b (1.02)
         // 1. Write localStorage FIRST, before any UI
         if (isWinner) {
             Passport.recordWin();
             MatchHistory.push('WIN', '—', gameLabel);
-            VictoryCard.show(passport.playerName);
         } else if (isLoser) {
             Passport.recordLoss();
             MatchHistory.push('LOSS', winnerNames, gameLabel);
@@ -925,24 +828,20 @@ const PlayerMode = {
         // 2. Show "Last Match Winner" on feed for ALL players
         window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
 
-        // 3. Update UI — call show() first to ensure _visible=true so
-        //    _renderPerformanceLab() inside refresh() actually executes.
+        // 3. Update UI
         this._renderStats(Passport.get());
         SidelineView.show();
         SidelineView.refresh();
->>>>>>> parent of 8573c6b (1.02)
 
-            this._applyMatchOutcome(isWinner, opponentLabel, gameLabel);
-
-            if (window.Haptic) {
-                isWinner ? Haptic.success() : Haptic.bump();
-            }
-        } else {
-            // Not in this match — just refresh the feed display
-            SidelineView.show();
-            SidelineView.refresh();
+        // 4. Haptic feedback
+        if (wasInMatch && window.Haptic) {
+            isWinner ? Haptic.success() : Haptic.bump();
         }
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STATUS CARD
+    // ─────────────────────────────────────────────────────────────────────────
 
     _updateStatus(passport) {
         const name    = passport.playerName?.toLowerCase();
@@ -977,31 +876,48 @@ const PlayerMode = {
         }
     },
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // DB APPROVAL — broadcast 'session_members' postgres_changes UPDATE
+    // Fired by _handleMemberChange in sync.js when status flips to 'active'.
+    // This is the "Approval Memory" realtime delivery path.
+    // ─────────────────────────────────────────────────────────────────────────
+
     _onMemberActivated(memberRecord) {
         const passport = Passport.get();
         if (!passport) return;
+        // Strict UUID check — only react to our own row
         if (memberRecord.player_uuid !== passport.playerUUID) return;
 
+        // 1. Write sessionStorage first (enables fast refresh skip next time)
         this._markApprovedInSession(this._joinCode);
 
+        // 2. Update name if host edited it during approval
         if (memberRecord.player_name && memberRecord.player_name !== passport.playerName) {
             Passport.rename(memberRecord.player_name);
             this._renderIdentity(Passport.get());
         }
 
+        // 3. Clear the queued-state block so live feed can render
         this._clearQueuedState();
 
+        // 4. Show approved status
         const p = Passport.get();
         this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
 
+        // 4. Show sideline view and compute queue position
         SidelineView.show();
         setTimeout(() => this._updateStatus(p), 1200);
 
+        // 5. Haptic + toast
         if (window.Haptic) Haptic.success();
         if (typeof showSessionToast === 'function') {
             showSessionToast("🏀 You're approved! Welcome to the court.");
         }
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // JOIN SESSION — submit the play request to host
+    // ─────────────────────────────────────────────────────────────────────────
 
     async _submitJoinRequest(passport, joinCode) {
         this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
@@ -1024,6 +940,7 @@ const PlayerMode = {
             const data = await res.json();
 
             if (data.alreadyActive) {
+                // Race condition: approved between upsert check and play-request submission
                 this._markApprovedInSession(joinCode);
                 this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "You're in the squad ✅");
                 SidelineView.refresh();
@@ -1031,6 +948,9 @@ const PlayerMode = {
                 return;
             }
 
+            // ── SUCCESS: request sent, player is queued ────────────────────────────────
+            // Replace slCurrentMatches (frozen form or welcome-back card)
+            // with a clear “waiting for approval” UI state.
             this._showQueuedState(passport.playerName);
 
         } catch(e) {
@@ -1039,13 +959,26 @@ const PlayerMode = {
         }
     },
 
+    // Legacy _joinSession — kept for compatibility with any external callers
     async _joinSession(passport, joinCode) {
         return this._submitJoinRequest(passport, joinCode);
     },
 
-    // FIX #6: _subscribeAndPoll removed as a combined function.
-    // subscribe and poll are now called separately after _submitJoinRequest
-    // completes, ensuring the queued-state block is always rendered first.
+    _subscribeAndPoll(joinCode, passport) {
+        // Stamp the room code on window immediately so any synchronous reader
+        // (e.g. memberUpsert called right after this returns) has it available,
+        // even before the async joinOnlineSession fetch resolves.
+        if (joinCode) window.currentRoomCode = joinCode;
+        if (typeof joinOnlineSession === 'function') {
+            joinOnlineSession(joinCode).catch(() => {});
+        }
+        this._startSignalPoll(joinCode, passport);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SIGNAL POLL — DB fallback if WS broadcast missed
+    // ─────────────────────────────────────────────────────────────────────────
+
     _startSignalPoll(joinCode, passport) {
         clearInterval(this._pollTimer);
         this._pollTimer = setInterval(() => this._pollSignal(joinCode, passport), 8000);
@@ -1071,6 +1004,10 @@ const PlayerMode = {
             }
         } catch { /* silent */ }
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TOKEN & SESSION STORAGE
+    // ─────────────────────────────────────────────────────────────────────────
 
     _isApprovedInSession(roomCode) {
         try { return !!JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}')[roomCode]; }
@@ -1115,14 +1052,18 @@ const PlayerMode = {
             const entry    = approved[passport.playerUUID] || approved[passport.playerName];
             if (!entry || entry.token !== savedToken.token) return false;
             if (data.session) {
-                window.squad            = data.session.squad           || [];
-                window.currentMatches   = data.session.current_matches || [];
+                window.squad          = data.session.squad           || [];
+                window.currentMatches = data.session.current_matches || [];
                 window._sessionUUIDMap  = data.session.uuid_map         || {};
                 window._approvedPlayers = data.session.approved_players || {};
             }
             return true;
         } catch { return false; }
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // UI HELPERS
+    // ─────────────────────────────────────────────────────────────────────────
 
     setStatus(state, text, sub) {
         const card   = document.getElementById('slStatusCard');
@@ -1154,14 +1095,32 @@ const PlayerMode = {
         if (r) r.textContent = Passport.winRate()    || '—';
     },
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // NAME ENTRY — inline DOM form, never blocks render
+    //
+    // BUG 3 FIX: The old code used browser prompt() — a synchronous modal that
+    // BLOCKS all rendering. On mobile Safari this looks like a blank screen.
+    // This replacement renders a name form directly into slCurrentMatches.
+    // The Promise resolves when the player taps "Join Court".
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // NAME ENTRY — resolves when player submits their name.
+    // BUG 3 FIX: Uses the pre-rendered inline DOM form from _showNameEntry()
+    // (already on screen from PHASE 1 of boot). Never uses browser prompt().
+    // ─────────────────────────────────────────────────────────────────────────
+
     _promptName() {
         return new Promise(resolve => {
+            // Re-use the form that _showNameEntry() already rendered, or create it
             let input = document.getElementById('slNameEntryInput');
             let btn   = document.getElementById('slNameEntrySubmit');
 
             if (!input || !btn) {
+                // Form isn't on screen yet — render it now
                 const container = document.getElementById('slCurrentMatches');
                 if (!container) {
+                    // Absolute last resort: DOM not ready
                     const n = window.prompt('Enter your name to join:');
                     return resolve(n ? n.trim() : null);
                 }
@@ -1177,6 +1136,7 @@ const PlayerMode = {
                 resolve(val);
             };
 
+            // Attach listeners (guard against double-attach on re-render)
             btn?.addEventListener('click', submit);
             input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
             setTimeout(() => input?.focus(), 80);
@@ -1205,6 +1165,6 @@ const PlayerMode = {
         if (codeEl) codeEl.textContent = code;
         const el = document.getElementById('slCurrentMatches');
         if (el) el.innerHTML = '<div class="sl-empty">Connecting…</div>';
-        await this._submitJoinRequest(Passport.get(), code);
+        await this._joinSession(Passport.get(), code);
     },
 };
