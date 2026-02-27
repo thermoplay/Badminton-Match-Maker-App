@@ -1375,8 +1375,9 @@ async function dispatchWinSignals(mIdx) {
     const winnerUUIDs = winnerNames.map(resolveUUID).filter(Boolean);
     const loserUUIDs  = loserNames .map(resolveUUID).filter(Boolean);
 
-    // Record who won for the player sideline "Last Match Winner" display
-    // Broadcast MATCH_RESOLVED with winner names so all players see it
+    // Broadcast MATCH_RESOLVED — carries winnerUUIDs + loserUUIDs so every player
+    // can record their own outcome. This is the single source of truth for stats.
+    // (match_result individual broadcasts were removed — they caused double-recording.)
     const winnerDisplayNames = winnerNames.join(' & ');
     if (typeof _broadcast === 'function' && isOnlineSession) {
         _broadcast('match_resolved', {
@@ -1385,11 +1386,6 @@ async function dispatchWinSignals(mIdx) {
             loserUUIDs,
             gameLabel:    label,
         });
-    }
-
-    // Also broadcast individual match_result events (for private stat updates)
-    if (typeof broadcastMatchResult === 'function') {
-        broadcastMatchResult(winnerUUIDs, loserUUIDs, label);
     }
 
     // Durable DB fallback — uses winner_uuids/loser_uuids matching the API contract

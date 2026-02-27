@@ -271,56 +271,9 @@ const SidelineView = {
 // VICTORY CARD
 // =============================================================================
 
-const VictoryCard = {
-    show(playerName) {
-        const overlay = document.getElementById('victoryCardOverlay');
-        const nameEl  = document.getElementById('victoryCardName');
-        if (!overlay || !nameEl) return;
-        nameEl.textContent = playerName.toUpperCase();
-        overlay.style.display = 'flex';
-        requestAnimationFrame(() => overlay.classList.add('victory-visible'));
-        if (window.Haptic)   Haptic.success();
-        if (window.Confetti) Confetti.burst(window.innerWidth / 2, window.innerHeight / 2, 120);
-    },
+// VictoryCard removed — was too intrusive. Win is recorded silently in stats + Performance Lab.
+const VictoryCard = { show() {}, hide() {}, share() {} };
 
-    hide() {
-        const overlay = document.getElementById('victoryCardOverlay');
-        if (!overlay) return;
-        overlay.classList.remove('victory-visible');
-        setTimeout(() => { overlay.style.display = 'none'; }, 400);
-    },
-
-    async share() {
-        const card = document.getElementById('victoryCard');
-        if (!card) return;
-        if (!window.html2canvas) {
-            await new Promise((res, rej) => {
-                const s = document.createElement('script');
-                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-                s.onload = res; s.onerror = rej;
-                document.head.appendChild(s);
-            });
-        }
-        try {
-            const canvas = await html2canvas(card, {
-                backgroundColor: '#0a0a0f', scale: 2, width: 390, height: 693,
-                useCORS: true, logging: false,
-            });
-            canvas.toBlob(async (blob) => {
-                const file     = new File([blob], 'courtside-victory.png', { type: 'image/png' });
-                const passport = Passport.get();
-                const name     = passport?.playerName || 'Player';
-                if (navigator.share && navigator.canShare({ files: [file] })) {
-                    await navigator.share({ title: 'The Court Side Pro', text: `${name} just won! 🏆`, files: [file] });
-                } else {
-                    const a = document.createElement('a');
-                    a.href = URL.createObjectURL(blob); a.download = 'courtside-victory.png'; a.click();
-                }
-                if (window.Haptic) Haptic.success();
-            }, 'image/png');
-        } catch (e) { console.error('Victory share failed:', e); }
-    },
-};
 
 // =============================================================================
 // INVITE QR — shows session join QR on player's phone
@@ -793,12 +746,27 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MATCH RESULT — broadcast 'match_result' (per-UUID private stat update)
+    // WIN DEDUP — prevents double-recording when both WS broadcast (match_resolved)
+    // and DB poll fallback (match_result) deliver the same game result.
+    // Key: `${playerUUID}-${gameLabel}`. Cleared when a new session is joined.
+    // ─────────────────────────────────────────────────────────────────────────
+    _processedResults: new Set(),
+
+    _markResultProcessed(gameLabel) {
+        const passport = Passport.get();
+        if (!passport) return false;
+        const key = `${passport.playerUUID}-${gameLabel || '_'}`;
+        if (this._processedResults.has(key)) return true; // already handled
+        this._processedResults.add(key);
+        return false;
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MATCH RESULT — DB poll fallback only (WS missed events safety net)
     //
-    // Issue #4 — BUG FIX:
-    //   The `playerUUID` in the broadcast comes from squad[n].uuid (stored at
-    //   approval), which is the SAME uuid as passport.playerUUID (generated
-    //   locally and sent in the play-request). Strict equality check.
+    // match_result individual broadcasts were removed from dispatchWinSignals
+    // to prevent double-recording. This handler now only fires from _pollSignal
+    // when the WS broadcast was missed (e.g. player was briefly offline).
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResult(payload) {
@@ -806,16 +774,17 @@ const PlayerMode = {
         if (!passport) return;
 
         const { playerUUID, event, gameLabel } = payload;
-        const isMe = playerUUID === passport.playerUUID;
-        if (!isMe) return; // strict UUID — ignore signals not addressed to this player
+        if (playerUUID !== passport.playerUUID) return;
+
+        // Dedup: skip if match_resolved already handled this game
+        if (this._markResultProcessed(gameLabel)) return;
 
         if (event === 'WIN') {
             const updated = Passport.recordWin();
             MatchHistory.push('WIN', '—', gameLabel || '');
             this._renderStats(updated);
-            SidelineView.show();   // ensure _visible=true
+            SidelineView.show();
             SidelineView.refresh();
-            VictoryCard.show(passport.playerName);
         } else if (event === 'LOSS') {
             const updated = Passport.recordLoss();
             MatchHistory.push('LOSS', '—', gameLabel || '');
@@ -826,14 +795,10 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MATCH RESOLVED — broadcast 'match_resolved' (round-level event)
+    // MATCH RESOLVED — broadcast 'match_resolved' (primary win/loss path)
     //
-    // Issue #4 — "Next Round" button trigger:
-    //   This is fired by processAndNext() in logic.js (the Next Round button).
-    //   All players receive it. Handles:
-    //     - Win/loss stat recording (delegates to _onMatchResult)
-    //     - Last Match Winner display on sideline feed
-    //     - Match history entry for Performance Lab
+    // Fired by dispatchWinSignals() when host taps "Next Round".
+    // Carries winnerUUIDs + loserUUIDs — each player checks their own UUID.
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResolved(payload) {
@@ -843,16 +808,18 @@ const PlayerMode = {
         const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel } = payload;
         const myUUID = passport.playerUUID;
 
-        // Determine this player's outcome
-        const isWinner = winnerUUIDs.includes(myUUID);
-        const isLoser  = loserUUIDs.includes(myUUID);
+        const isWinner   = winnerUUIDs.includes(myUUID);
+        const isLoser    = loserUUIDs.includes(myUUID);
         const wasInMatch = isWinner || isLoser;
+
+        // Mark processed FIRST — before any recordWin/recordLoss —
+        // so if _pollSignal fires in the same tick it sees the flag and skips.
+        if (wasInMatch && this._markResultProcessed(gameLabel)) return; // already handled
 
         // 1. Write localStorage FIRST, before any UI
         if (isWinner) {
             Passport.recordWin();
             MatchHistory.push('WIN', '—', gameLabel);
-            VictoryCard.show(passport.playerName);
         } else if (isLoser) {
             Passport.recordLoss();
             MatchHistory.push('LOSS', winnerNames, gameLabel);
@@ -861,8 +828,7 @@ const PlayerMode = {
         // 2. Show "Last Match Winner" on feed for ALL players
         window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
 
-        // 3. Update UI — call show() first to ensure _visible=true so
-        //    _renderPerformanceLab() inside refresh() actually executes.
+        // 3. Update UI
         this._renderStats(Passport.get());
         SidelineView.show();
         SidelineView.refresh();
