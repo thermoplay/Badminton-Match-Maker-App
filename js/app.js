@@ -31,6 +31,7 @@ let supabase  = null;
 // ---------------------------------------------------------------------------
 let squad = [];
 let currentMatches = [];
+let playerQueue  = [];          // ordered rotation queue — persisted to disk
 let roundHistory = [];          // array of completed round snapshots for history + undo
 let previousRoundSnapshot = null; // snapshot before last round for undo
 let selectedPlayerIndex = null;
@@ -42,7 +43,7 @@ let isLongPress = false;
 // ---------------------------------------------------------------------------
 
 function saveToDisk() {
-    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory }));
+    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory, playerQueue }));
 }
 
 // ---------------------------------------------------------------------------
@@ -78,8 +79,14 @@ function loadFromDisk() {
             currentMatches = (data.currentMatches || []).filter(m => {
                 return m.teams.flat().every(name => squad.find(p => p.name === name));
             });
+
+            // Restore the queue; filter out any names no longer in the squad
+            playerQueue = (data.playerQueue || [])
+                .filter(name => squad.find(p => p.name === name));
+
             renderSquad();
             renderSavedMatches();
+            renderQueueStrip();
         } catch (e) {
             console.error('CourtSide: Failed to parse saved data.', e);
             squad          = [];
@@ -142,7 +149,10 @@ function addPlayer() {
         opponentHistory:   {},
     });
     el.value = '';
+    // Append new player to the back of the queue so they slot in fairly
+    if (!playerQueue.includes(name)) playerQueue.push(name);
     renderSquad();
+    renderQueueStrip();
     checkNextButtonState();
     saveToDisk();
 }
@@ -174,6 +184,7 @@ function deletePlayer() {
 
     squad.splice(selectedPlayerIndex, 1);
     currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
+    playerQueue = playerQueue.filter(n => n !== removedName);
 
     closeMenu();
     renderSquad();
@@ -563,10 +574,14 @@ function undoLastRound() {
     // Restore match cards so host can re-pick winners
     currentMatches = snapshot.matches.map(m => ({ ...m, winnerTeamIndex: null }));
 
+    // Restore queue to pre-round state
+    if (snapshot.queueSnapshot) playerQueue = [...snapshot.queueSnapshot];
+
     // Re-render everything
     renderSquad();
     document.getElementById('matchContainer').innerHTML = '';
     renderSavedMatches();
+    renderQueueStrip();
 
     // Re-select the previous winners visually so host knows what was picked
     snapshot.matches.forEach((m, i) => {

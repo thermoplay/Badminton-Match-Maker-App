@@ -500,6 +500,113 @@ input:focus {
     filter: saturate(0.6);
 }
 
+/* ── Queue Strip ────────────────────────────────────────────────────────── */
+
+.queue-strip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    margin: 8px 0 16px;
+    overflow: hidden;
+    animation: cardDrop 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.queue-strip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+}
+
+.queue-strip-title {
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 900;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+
+.queue-strip-count {
+    font-family: var(--font-display);
+    font-size: 0.55rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.queue-strip-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.queue-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+}
+
+.queue-item:last-child {
+    border-bottom: none;
+}
+
+.queue-pos {
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 900;
+    color: var(--text-muted);
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.queue-item:nth-child(-n+4) .queue-pos {
+    color: var(--accent);
+}
+
+.queue-name {
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text);
+    flex: 1;
+    letter-spacing: 0.5px;
+}
+
+.queue-next-badge {
+    font-family: var(--font-display);
+    font-size: 0.5rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: var(--bg);
+    background: var(--accent);
+    padding: 2px 7px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.queue-item .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 900;
+    color: #fff;
+}
+
 .player-chip:active {
     transform: scale(0.93);
 }

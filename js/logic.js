@@ -47,19 +47,15 @@ function processAndNext() {
 
         // Snapshot state BEFORE applying ELO — needed for undo
         const snapshot = {
-            squadSnapshot: squad.map(p => ({ ...p })),
-            matches:       currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
-            timestamp:     Date.now(),
+            squadSnapshot:   squad.map(p => ({ ...p })),
+            matches:         currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
+            queueSnapshot:   [...playerQueue],
+            timestamp:       Date.now(),
         };
         roundHistory.push(snapshot);
 
-        // Archive to Supabase match_history for weekly leaderboard
         if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
 
-        // MATCH_RESOLVED: re-dispatch signals at Next Round time.
-        // setWinner fires signals on winner selection, but processAndNext
-        // is the canonical "round is over" moment. This is the guaranteed
-        // delivery point — all player passports record their stats here.
         if (typeof dispatchWinSignals === 'function') {
             currentMatches.forEach((m, idx) => {
                 if (m.winnerTeamIndex !== null) dispatchWinSignals(idx);
@@ -67,6 +63,7 @@ function processAndNext() {
         }
 
         applyELOResults();
+        rotateQueue();   // move finished players to back of queue
         updateUndoButton();
     }
     generateMatches();
@@ -102,213 +99,147 @@ function applyELOResults() {
 }
 
 // ---------------------------------------------------------------------------
-// MATCH GENERATION
+// QUEUE ENGINE
+// ---------------------------------------------------------------------------
+//
+// playerQueue — ordered array of player NAMES representing the rotation.
+// The first N*4 names (enough for courtCount courts) play each round.
+// After results are entered, losers go to the back first, then winners,
+// ensuring winners wait slightly longer (a small earned rest).
+//
+// New players added mid-session are appended to the back of the queue.
+// Rested (inactive) players are silently skipped when pulling from the
+// front, but their queue position is preserved so they re-enter fairly.
+//
+// The queue persists to localStorage so it survives page reloads.
+
+// playerQueue is declared in app.js (global state) and persisted to disk.
+
+// ---------------------------------------------------------------------------
+// INITIALISE QUEUE — called once when first generating matches, or when
+// the squad changes in a way that requires a full rebuild.
 // ---------------------------------------------------------------------------
 
-/**
- * FAIRNESS ENGINE — generateMatches()
- *
- * CONSECUTIVE-GAME FATIGUE (new):
- *   A player who has played 3+ rounds in a row is automatically placed on
- *   a mandatory 1-round rest (p.forcedRest = true). They rejoin the eligible
- *   pool next round. This prevents one person dominating every court slot
- *   when the group is just large enough to field multiple games.
- *   forcedRest is cleared as soon as they sit a round out.
- *
- * CROSS-COURT UNIQUENESS GUARANTEE (new):
- *   The `assignedToGame` Set is the single source of truth for who is already
- *   slotted into a game this round. Every court's 4 players are drawn from
- *   the sorted eligible list in strict first-come order, so a player can
- *   never appear in Game 1 AND Game 2 simultaneously.
- *
- * PRIORITY ORDER (unchanged):
- *   1. forcedRest players sit out this round entirely (skipped in selection)
- *   2. Longest wait (highest waitRounds — rounds sitting out)
- *   3. Fewest games played this session (sessionPlayCount)
- *   4. Slight random shuffle to prevent predictability
- *   Teams are then balanced by ELO (snake draft: 1&4 vs 2&3).
- */
+function initQueue() {
+    const activeNames = squad.filter(p => p.active).map(p => p.name);
+
+    // Keep existing queue order for names already in it — only append newcomers
+    const inQueue  = new Set(playerQueue);
+    const newNames = activeNames.filter(n => !inQueue.has(n));
+
+    // Remove names no longer in the active squad
+    playerQueue = playerQueue.filter(n => squad.find(p => p.name === n && p.active));
+
+    // Append newcomers at the back
+    playerQueue.push(...newNames);
+}
+
+// ---------------------------------------------------------------------------
+// ROTATE QUEUE — called after every round with results.
+// Finished players leave the front of the queue and rejoin at the back:
+//   losers first (shorter wait), then winners (earned rest).
+// ---------------------------------------------------------------------------
+
+function rotateQueue() {
+    const playing = currentMatches.flatMap(m => m.teams.flat());
+    if (playing.length === 0) return;
+
+    // Remove all just-played names from wherever they are in the queue
+    playerQueue = playerQueue.filter(n => !playing.includes(n));
+
+    // Collect losers and winners per match
+    const losers  = [];
+    const winners = [];
+    currentMatches.forEach(m => {
+        if (m.winnerTeamIndex === null) {
+            // No winner recorded — treat both teams as equal, append both
+            m.teams.flat().forEach(n => losers.push(n));
+            return;
+        }
+        const winIdx  = m.winnerTeamIndex;
+        const loseIdx = winIdx === 0 ? 1 : 0;
+        m.teams[loseIdx].forEach(n => losers.push(n));
+        m.teams[winIdx].forEach(n => winners.push(n));
+    });
+
+    // Losers re-enter before winners — they wait less
+    playerQueue.push(...losers, ...winners);
+}
+
+// ---------------------------------------------------------------------------
+// GENERATE MATCHES — queue-based rotation
+// ---------------------------------------------------------------------------
+//
+// 1. Initialise / sync the queue with the current active squad.
+// 2. Pull the first courtCount*4 active players from the front of the queue.
+// 3. For each group of 4, choose the team split that minimises repeat
+//    teammates and opponents (full session history, weighted scoring).
+// 4. Render match cards and the queue strip below them.
+
 function generateMatches() {
-    // ── 1. Build the eligible pool ─────────────────────────────────────────
-    // "active" = host hasn't manually rested them.
-    const pool = squad.filter(p => p.active);
-    if (pool.length < 4) {
+    const activePool = squad.filter(p => p.active);
+    if (activePool.length < 4) {
         alert('Requires at least 4 active players.');
         return;
     }
 
+    // Sync queue — adds new players, removes departed ones
+    initQueue();
+
     currentMatches = [];
     document.getElementById('matchContainer').innerHTML = '';
 
-    // ── 2. LATE-JOINER CATCH-UP THROTTLE ──────────────────────────────────
-    // Problem: a player who joins mid-session can play back-to-back games and
-    // leapfrog everyone else's count before others get a fair turn.
-    //
-    // Solution: NOT exclusion — just a sort penalty. A throttled player stays
-    // in the queue and the algorithm works normally. They naturally land at
-    // the back of the priority order, so they only miss out if courts are
-    // full. If there's room for everyone, they still play.
-    //
-    // Throttle condition (both must be true):
-    //   a) Played 3+ consecutive rounds without sitting out, AND
-    //   b) sessionPlayCount is strictly above the group average.
-    //
-    // Founding members playing alongside everyone else are always at or near
-    // the average — condition (b) never triggers for them.
+    // ── Pull players from the front of the queue ───────────────────────────
+    // Walk the queue in order; skip inactive players (resting) but keep their
+    // slot so they re-enter at the same position when they come back.
+    const courtCount  = Math.floor(activePool.length / 4);
+    const playing     = [];
+    const playingSet  = new Set();
 
-    const CONSEC_THRESHOLD = 3;
-
-    // Group average game count
-    const avgPlayCount = pool.reduce((sum, p) => sum + (p.sessionPlayCount || 0), 0) / pool.length;
-
-    // Reset streak for anyone who sat out last round
-    pool.forEach(p => {
-        if ((p.waitRounds || 0) > 0) {
-            p.consecutiveGames = 0;
-            p.forcedRest       = false;
-        }
-    });
-
-    // ── 3. Increment waitRounds for everyone — playing will reset it ───────
-    pool.forEach(p => { p.waitRounds = (p.waitRounds || 0) + 1; });
-
-    // ── 4. Flag throttled players ──────────────────────────────────────────
-    // forcedRest = true means "sort me last" — NOT "exclude me".
-    pool.forEach(p => {
-        if (p.forcedRest) return; // already flagged, keep it until they sit out
-        const onStreak   = (p.consecutiveGames || 0) >= CONSEC_THRESHOLD;
-        const aheadOfAvg = (p.sessionPlayCount  || 0) > avgPlayCount;
-        p.forcedRest = onStreak && aheadOfAvg;
-    });
-
-    // ── 5. Sort pool — throttled players go to the back ───────────────────
-    // Priority: not-throttled first, then by longest wait, then fewest games,
-    // then random. Throttled players sort after all non-throttled players so
-    // the algorithm fills courts with the most-deserving players first and
-    // only reaches throttled players if slots remain.
-    const sorted = [...pool].sort((a, b) => {
-        // Throttled players always rank below non-throttled
-        if (a.forcedRest !== b.forcedRest) return a.forcedRest ? 1 : -1;
-        const waitDiff  = (b.waitRounds || 0) - (a.waitRounds || 0);
-        if (waitDiff !== 0) return waitDiff;
-        const gamesDiff = (a.sessionPlayCount || 0) - (b.sessionPlayCount || 0);
-        if (gamesDiff !== 0) return gamesDiff;
-        return Math.random() - 0.5;
-    });
-
-    // ── 6. Assign players to courts — UNIQUENESS GUARANTEED ────────────────
-    // courtCount is derived from playing.length AFTER dedup so it is always
-    // an exact multiple of 4. Duplicate names (possible from remote data) are
-    // skipped, preventing the undefined.name crash.
-    const assignedToGame = new Set();
-    const playing        = [];
-
-    for (const p of sorted) {
-        if (!p || !p.name) continue;
-        if (assignedToGame.has(p.name)) continue;
+    for (const name of playerQueue) {
+        if (playing.length >= courtCount * 4) break;
+        const p = squad.find(s => s.name === name && s.active);
+        if (!p) continue;                          // inactive / resting — skip
+        if (playingSet.has(name)) continue;        // dupe guard
         playing.push(p);
-        assignedToGame.add(p.name);
+        playingSet.add(name);
     }
 
-    const courtCount = Math.floor(playing.length / 4);
-    playing.splice(courtCount * 4); // trim to exact multiple of 4
-
-    // Everyone not selected sits out this round
-    const sitting = pool.filter(p => p && !assignedToGame.has(p.name));
-
-    // ── 7. Update tracking stats ───────────────────────────────────────────
-    playing.forEach(p => {
-        p.waitRounds       = 0;
-        p.consecutiveGames = (p.consecutiveGames || 0) + 1;
-    });
-
-    // Look-ahead average: what counts will be after this round's games
-    const avgAfter = pool.reduce((sum, p) => {
-        return sum + (p.sessionPlayCount || 0) + (playing.includes(p) ? 1 : 0);
-    }, 0) / pool.length;
-
-    // Re-evaluate throttle flag for players who WILL play this round
-    playing.forEach(p => {
-        const projectedCount = (p.sessionPlayCount || 0) + 1;
-        p.forcedRest = p.consecutiveGames >= CONSEC_THRESHOLD && projectedCount > avgAfter;
-    });
-
-    // Players sitting out: reset streak (they ARE sitting, so streak breaks)
-    sitting.forEach(p => {
-        p.consecutiveGames = 0;
-        p.forcedRest       = false;
-    });
-
-    // ── 8. "Next Up" ticker ─────────────────────────────────────────────────
-    // Only show players who are NOT playing this round — never current-game
-    // players. If the bench is smaller than 4 we just show fewer names;
-    // showing someone already on a court is confusing and wrong.
-    const playingNames = new Set(playing.map(p => p.name));
-    const nextUp = [...sitting]
-        .filter(p => p && p.name && !playingNames.has(p.name))
-        .sort((a, b) =>
-            (b.waitRounds || 0) - (a.waitRounds || 0) ||
-            (a.sessionPlayCount || 0) - (b.sessionPlayCount || 0)
-        )
-        .slice(0, 4);
-    updateNextUpTicker(nextUp);
-
-    // ── 9. Build match cards ────────────────────────────────────────────────
-    // Deep-copy `playing` so splice doesn't mutate the original array.
+    // ── Build match cards ──────────────────────────────────────────────────
     const playingQueue = [...playing];
     const matchData    = [];
 
     for (let i = 0; i < courtCount; i++) {
         const p4 = playingQueue.splice(0, 4);
-        // Safety net: if splice returned fewer than 4 (should never happen
-        // after the courtCount fix above, but guards against any future edge
-        // case), skip this court rather than crash with undefined.name.
         if (p4.length < 4 || p4.some(p => !p)) continue;
+
         p4.forEach(p => p.sessionPlayCount++);
 
-        // ── TEAM PAIRING: balanced + maximally varied ────────────────────
-        // There are exactly 3 ways to split 4 players into 2 pairs.
-        // We score all 3 against full session history (not just last round):
-        //   - Repeat TEAMMATE penalty: weighted by how often they've paired
-        //   - Repeat OPPONENT penalty: weighted by how often they've faced off
-        // The pairing with the lowest combined penalty wins (random tiebreak).
-        // This guarantees different teammates AND different opponents over time.
-
-        // Shuffle first so equal-rating players don't freeze into fixed slots
+        // Shuffle → ELO sort → evaluate all 3 pairings → pick best variety
         p4.sort(() => Math.random() - 0.5);
         p4.sort((a, b) => b.rating - a.rating);
 
-        // All 3 unique splits of [0,1,2,3] into two pairs:
         const pairings = [
             { tA: [p4[0], p4[3]], tB: [p4[1], p4[2]] },
             { tA: [p4[0], p4[2]], tB: [p4[1], p4[3]] },
             { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
         ];
 
-        // Look up how many times a has been teammate/opponent with b this session.
-        // teammateHistory and opponentHistory are Maps stored on each player object:
-        //   p.teammateHistory  = { [name]: count }
-        //   p.opponentHistory  = { [name]: count }
         const tmCount  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
         const oppCount = (a, b) => (a.opponentHistory  || {})[b.name] || 0;
 
-        // Score a pairing — lower is better (more variety).
-        // Teammate repeats weighted 2x vs opponent repeats: same team every game
-        // is more noticeable/annoying than facing the same opponent.
         const scorePairing = ({ tA, tB }) =>
             tmCount(tA[0], tA[1]) * 2 + tmCount(tB[0], tB[1]) * 2 +
             oppCount(tA[0], tB[0]) + oppCount(tA[0], tB[1]) +
             oppCount(tA[1], tB[0]) + oppCount(tA[1], tB[1]);
 
-        // Random shuffle first so equal-score options don't always resolve
-        // to the same array order.
         pairings.sort(() => Math.random() - 0.5);
         pairings.sort((a, b) => scorePairing(a) - scorePairing(b));
 
         const { tA, tB } = pairings[0];
         const odds = calculateOdds(tA, tB);
 
-        // Update session history for both teams
+        // Record session history
         const addHistory = (p, teammate, opponents) => {
             p.teammateHistory = p.teammateHistory || {};
             p.opponentHistory = p.opponentHistory || {};
@@ -331,12 +262,63 @@ function generateMatches() {
     }
 
     renderAllMatchCards(matchData);
+    renderQueueStrip();
     checkNextButtonState();
     renderSquad();
     saveToDisk();
     Haptic.bump();
 }
 
+// ---------------------------------------------------------------------------
+// QUEUE STRIP — visible list of who's waiting and in what order
+// ---------------------------------------------------------------------------
+
+function renderQueueStrip() {
+    let strip = document.getElementById('queueStrip');
+    if (!strip) {
+        strip = document.createElement('div');
+        strip.id = 'queueStrip';
+        strip.className = 'queue-strip';
+        const container = document.getElementById('matchContainer');
+        container.insertAdjacentElement('afterend', strip);
+    }
+
+    // Players currently on a court
+    const onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
+
+    // Queue: active players not on court, in queue order
+    const waiting = playerQueue
+        .map(name => squad.find(p => p.name === name))
+        .filter(p => p && p.active && !onCourt.has(p.name));
+
+    if (waiting.length === 0) {
+        strip.style.display = 'none';
+        updateNextUpTicker([]);
+        return;
+    }
+
+    strip.style.display = 'block';
+
+    strip.innerHTML = `
+        <div class="queue-strip-header">
+            <span class="queue-strip-title">⏳ Queue</span>
+            <span class="queue-strip-count">${waiting.length} waiting</span>
+        </div>
+        <div class="queue-strip-list">
+            ${waiting.map((p, idx) => `
+                <div class="queue-item">
+                    <span class="queue-pos">${idx + 1}</span>
+                    ${Avatar.html(p.name)}
+                    <span class="queue-name">${escapeHTML(p.name)}</span>
+                    ${idx < 4 ? '<span class="queue-next-badge">NEXT</span>' : ''}
+                </div>
+            `).join('')}
+        </div>
+    `;
+
+    // Also update the ticker with the first 4 waiting
+    updateNextUpTicker(waiting.slice(0, 4));
+}
 // ---------------------------------------------------------------------------
 // MATCH CARD RENDERING
 // ---------------------------------------------------------------------------

@@ -176,6 +176,7 @@ function pushStateToSupabase() {
                     squad,
                     current_matches:  currentMatches,
                     round_history:    roundHistory,
+                    player_queue:     playerQueue,
                     uuid_map:         window._sessionUUIDMap  || {},
                     approved_players: window._approvedPlayers || {},
                 },
@@ -558,8 +559,10 @@ function applyRemoteState(session) {
 
     // Globals FIRST — no render reads stale data
     squad          = (session.squad           || []);
-    currentMatches = session.current_matches || [];
-    roundHistory   = session.round_history   || [];
+    currentMatches = session.current_matches  || [];
+    roundHistory   = session.round_history    || [];
+    playerQueue    = (session.player_queue    || [])
+        .filter(name => squad.find(p => p.name === name)); // drop stale names
 
     // Migrate: remote squad rows may come from an older client that didn't
     // save rating / consecutiveGames / forcedRest. migratePlayer() is defined
@@ -579,6 +582,7 @@ function applyRemoteState(session) {
         renderSquad();
         document.getElementById('matchContainer').innerHTML = '';
         renderSavedMatches();
+        if (typeof renderQueueStrip === 'function') renderQueueStrip();
         checkNextButtonState();
         updateUndoButton();
         if (typeof checkIWTPSmartRecognition === 'function') checkIWTPSmartRecognition();
