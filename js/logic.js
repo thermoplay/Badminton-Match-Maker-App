@@ -141,132 +141,107 @@ function generateMatches() {
     document.getElementById('matchContainer').innerHTML = '';
 
     // ── 2. LATE-JOINER CATCH-UP THROTTLE ──────────────────────────────────
-    // Problem: a player who joins mid-session can play 3+ games back-to-back
-    // and leapfrog everyone else's game count before others get a fair turn.
+    // Problem: a player who joins mid-session can play back-to-back games and
+    // leapfrog everyone else's count before others get a fair turn.
     //
-    // Rule: force a 1-round rest ONLY when BOTH conditions are true:
-    //   a) The player has played 3+ consecutive rounds without a break, AND
-    //   b) Their sessionPlayCount is strictly above the group average —
-    //      meaning they are genuinely ahead of the pack, not just part of
-    //      the normal rotation everyone else is also going through.
+    // Solution: NOT exclusion — just a sort penalty. A throttled player stays
+    // in the queue and the algorithm works normally. They naturally land at
+    // the back of the priority order, so they only miss out if courts are
+    // full. If there's room for everyone, they still play.
     //
-    // A founding member who plays every round alongside everyone else will
-    // never be above average, so they are never throttled.
-    // A late joiner who plays 3 in a row while others have only played 1-2
-    // will be above average, triggering exactly one forced rest to let the
-    // field catch up.
+    // Throttle condition (both must be true):
+    //   a) Played 3+ consecutive rounds without sitting out, AND
+    //   b) sessionPlayCount is strictly above the group average.
+    //
+    // Founding members playing alongside everyone else are always at or near
+    // the average — condition (b) never triggers for them.
 
-    const CONSEC_THRESHOLD = 3; // consecutive games before eligibility check
+    const CONSEC_THRESHOLD = 3;
 
-    // Calculate group average sessionPlayCount for the active pool
+    // Group average game count
     const avgPlayCount = pool.reduce((sum, p) => sum + (p.sessionPlayCount || 0), 0) / pool.length;
 
+    // Reset streak for anyone who sat out last round
     pool.forEach(p => {
-        // If they sat out last round, reset their consecutive streak
         if ((p.waitRounds || 0) > 0) {
             p.consecutiveGames = 0;
-            p.forcedRest       = false; // served their rest — eligible again
+            p.forcedRest       = false;
         }
     });
 
     // ── 3. Increment waitRounds for everyone — playing will reset it ───────
     pool.forEach(p => { p.waitRounds = (p.waitRounds || 0) + 1; });
 
-    // ── 4. Split into eligible vs forced-rest ─────────────────────────────
-    // A player gets forcedRest only if they are BOTH on a 3+ game streak AND
-    // ahead of the group average. Players at or below average are never
-    // throttled, regardless of how many consecutive games they've played.
+    // ── 4. Flag throttled players ──────────────────────────────────────────
+    // forcedRest = true means "sort me last" — NOT "exclude me".
     pool.forEach(p => {
-        if (p.forcedRest) return; // already flagged from last round — leave it
-        const onStreak  = (p.consecutiveGames || 0) >= CONSEC_THRESHOLD;
-        const aheadOfAvg = (p.sessionPlayCount || 0) > avgPlayCount;
-        if (onStreak && aheadOfAvg) p.forcedRest = true;
+        if (p.forcedRest) return; // already flagged, keep it until they sit out
+        const onStreak   = (p.consecutiveGames || 0) >= CONSEC_THRESHOLD;
+        const aheadOfAvg = (p.sessionPlayCount  || 0) > avgPlayCount;
+        p.forcedRest = onStreak && aheadOfAvg;
     });
 
-    const eligible   = pool.filter(p => !p.forcedRest);
-    const forcedOut  = pool.filter(p =>  p.forcedRest);
-
-    // Need at least 4 eligible to run even one game; otherwise clear all rests
-    // (graceful fallback so the app never deadlocks on small groups)
-    const runningPool = eligible.length >= 4 ? eligible : pool;
-    if (eligible.length < 4 && eligible.length < pool.length) {
-        // Not enough eligible players — lift forced rests and try again
-        pool.forEach(p => { p.forcedRest = false; p.consecutiveGames = 0; });
-    }
-
-    // ── 5. Sort eligible pool by fairness priority ─────────────────────────
-    const sorted = [...runningPool].sort((a, b) => {
+    // ── 5. Sort pool — throttled players go to the back ───────────────────
+    // Priority: not-throttled first, then by longest wait, then fewest games,
+    // then random. Throttled players sort after all non-throttled players so
+    // the algorithm fills courts with the most-deserving players first and
+    // only reaches throttled players if slots remain.
+    const sorted = [...pool].sort((a, b) => {
+        // Throttled players always rank below non-throttled
+        if (a.forcedRest !== b.forcedRest) return a.forcedRest ? 1 : -1;
         const waitDiff  = (b.waitRounds || 0) - (a.waitRounds || 0);
         if (waitDiff !== 0) return waitDiff;
-        const gamesDiff = a.sessionPlayCount - b.sessionPlayCount;
+        const gamesDiff = (a.sessionPlayCount || 0) - (b.sessionPlayCount || 0);
         if (gamesDiff !== 0) return gamesDiff;
         return Math.random() - 0.5;
     });
 
     // ── 6. Assign players to courts — UNIQUENESS GUARANTEED ────────────────
-    // Build `playing` first using a name-keyed Set so duplicate squad entries
-    // (possible when applyRemoteState sets squad from remote data without a
-    // dupe check) are silently skipped. courtCount is derived from
-    // playing.length AFTER the loop — never from sorted.length — so it is
-    // always an exact multiple of 4 and playingQueue.splice(0,4) never yields
-    // fewer than 4 items, preventing the undefined.name crash on line 270.
-    const assignedToGame = new Set(); // name-keyed: one slot per unique name
+    // courtCount is derived from playing.length AFTER dedup so it is always
+    // an exact multiple of 4. Duplicate names (possible from remote data) are
+    // skipped, preventing the undefined.name crash.
+    const assignedToGame = new Set();
     const playing        = [];
 
     for (const p of sorted) {
-        if (!p || !p.name) continue;                   // skip corrupt entries
-        if (assignedToGame.has(p.name)) continue;      // skip name duplicates
+        if (!p || !p.name) continue;
+        if (assignedToGame.has(p.name)) continue;
         playing.push(p);
         assignedToGame.add(p.name);
     }
 
-    // courtCount derived from actual unique players collected, not sorted.length
     const courtCount = Math.floor(playing.length / 4);
-    // Trim playing to the exact multiple of 4 courts can use
-    playing.splice(courtCount * 4);
+    playing.splice(courtCount * 4); // trim to exact multiple of 4
 
     // Everyone not selected sits out this round
-    const sitting = runningPool.filter(p => p && !assignedToGame.has(p.name));
+    const sitting = pool.filter(p => p && !assignedToGame.has(p.name));
 
-    // ── 7. Update tracking stats for players who WILL play ─────────────────
+    // ── 7. Update tracking stats ───────────────────────────────────────────
     playing.forEach(p => {
         p.waitRounds       = 0;
         p.consecutiveGames = (p.consecutiveGames || 0) + 1;
     });
 
-    // Re-compute average AFTER incrementing sessionPlayCount (happens in step 9)
-    // so the threshold check uses the correct post-round counts.
-    // We do a look-ahead: sessionPlayCount will be +1 for playing players.
+    // Look-ahead average: what counts will be after this round's games
     const avgAfter = pool.reduce((sum, p) => {
-        const count = (p.sessionPlayCount || 0) + (playing.includes(p) ? 1 : 0);
-        return sum + count;
+        return sum + (p.sessionPlayCount || 0) + (playing.includes(p) ? 1 : 0);
     }, 0) / pool.length;
 
-    // Flag players who are about to go ahead of the average AND have hit the
-    // consecutive streak — they'll sit next round.
+    // Re-evaluate throttle flag for players who WILL play this round
     playing.forEach(p => {
         const projectedCount = (p.sessionPlayCount || 0) + 1;
-        const onStreak       = p.consecutiveGames >= CONSEC_THRESHOLD;
-        const aheadOfAvg     = projectedCount > avgAfter;
-        p.forcedRest = onStreak && aheadOfAvg;
+        p.forcedRest = p.consecutiveGames >= CONSEC_THRESHOLD && projectedCount > avgAfter;
     });
 
-    // Players sitting out or on forced rest: reset their consecutive streak
-    // since they are NOT playing this round.
-    forcedOut.forEach(p => {
-        p.consecutiveGames = 0;
-        p.forcedRest       = false; // served their rest — eligible next round
-    });
+    // Players sitting out: reset streak (they ARE sitting, so streak breaks)
     sitting.forEach(p => {
         p.consecutiveGames = 0;
         p.forcedRest       = false;
     });
 
     // ── 8. "Next Up" ticker ─────────────────────────────────────────────────
-    // 4 UNIQUE players from bench, by priority. Index-based dedup prevents
-    // the "David bug" (same player appearing twice in the ticker).
-    const benchPool = [...sitting, ...forcedOut].sort(
-        (a, b) => (b.waitRounds || 0) - (a.waitRounds || 0) || a.sessionPlayCount - b.sessionPlayCount
+    const benchPool = [...sitting].sort(
+        (a, b) => (b.waitRounds || 0) - (a.waitRounds || 0) || (a.sessionPlayCount || 0) - (b.sessionPlayCount || 0)
     );
     const nextUpPicked = new Set();
     const nextUp       = [];

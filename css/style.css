@@ -491,14 +491,13 @@ input:focus {
     background: transparent;
 }
 
-/* Mandatory fatigue rest — played 3+ games in a row, sitting this round out */
+/* Catch-up throttle — sorted to back of queue, still eligible to play */
 .player-chip.forced-rest {
-    opacity: 0.55;
-    border: 1.5px dashed #f59e0b66;
-    background: rgba(245, 158, 11, 0.06);
+    opacity: 0.75;
+    border: 1.5px solid #f59e0b44;
 }
 .player-chip.forced-rest .avatar {
-    filter: saturate(0.4);
+    filter: saturate(0.6);
 }
 
 .player-chip:active {

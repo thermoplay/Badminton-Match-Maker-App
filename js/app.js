@@ -207,7 +207,7 @@ function renderSquad() {
              ontouchend="endPress(${i})"
              oncontextmenu="return false;">
             ${Avatar.html(p.name)}
-            <span class="chip-name">${escapeHTML(p.name)}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 😮‍💨' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${escapeHTML(p.name)}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
         </div>
     `);
     container.innerHTML = chips.join('');
