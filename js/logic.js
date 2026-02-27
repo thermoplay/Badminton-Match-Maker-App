@@ -140,12 +140,26 @@ function generateMatches() {
     currentMatches = [];
     document.getElementById('matchContainer').innerHTML = '';
 
-    // ── 2. CONSECUTIVE-GAME FATIGUE ────────────────────────────────────────
-    // Increment consecutiveGames for everyone still active; reset it for
-    // players who sat out last round (waitRounds > 0 means they didn't play).
-    // A player who reaches FATIGUE_THRESHOLD gets forcedRest = true and is
-    // excluded from this round's selection pool.
-    const FATIGUE_THRESHOLD = 3; // 3 consecutive games → mandatory 1-round rest
+    // ── 2. LATE-JOINER CATCH-UP THROTTLE ──────────────────────────────────
+    // Problem: a player who joins mid-session can play 3+ games back-to-back
+    // and leapfrog everyone else's game count before others get a fair turn.
+    //
+    // Rule: force a 1-round rest ONLY when BOTH conditions are true:
+    //   a) The player has played 3+ consecutive rounds without a break, AND
+    //   b) Their sessionPlayCount is strictly above the group average —
+    //      meaning they are genuinely ahead of the pack, not just part of
+    //      the normal rotation everyone else is also going through.
+    //
+    // A founding member who plays every round alongside everyone else will
+    // never be above average, so they are never throttled.
+    // A late joiner who plays 3 in a row while others have only played 1-2
+    // will be above average, triggering exactly one forced rest to let the
+    // field catch up.
+
+    const CONSEC_THRESHOLD = 3; // consecutive games before eligibility check
+
+    // Calculate group average sessionPlayCount for the active pool
+    const avgPlayCount = pool.reduce((sum, p) => sum + (p.sessionPlayCount || 0), 0) / pool.length;
 
     pool.forEach(p => {
         // If they sat out last round, reset their consecutive streak
@@ -159,8 +173,16 @@ function generateMatches() {
     pool.forEach(p => { p.waitRounds = (p.waitRounds || 0) + 1; });
 
     // ── 4. Split into eligible vs forced-rest ─────────────────────────────
-    // forcedRest players are excluded from game selection this round.
-    // They still appear in the squad chip list with a 😮‍💨 indicator.
+    // A player gets forcedRest only if they are BOTH on a 3+ game streak AND
+    // ahead of the group average. Players at or below average are never
+    // throttled, regardless of how many consecutive games they've played.
+    pool.forEach(p => {
+        if (p.forcedRest) return; // already flagged from last round — leave it
+        const onStreak  = (p.consecutiveGames || 0) >= CONSEC_THRESHOLD;
+        const aheadOfAvg = (p.sessionPlayCount || 0) > avgPlayCount;
+        if (onStreak && aheadOfAvg) p.forcedRest = true;
+    });
+
     const eligible   = pool.filter(p => !p.forcedRest);
     const forcedOut  = pool.filter(p =>  p.forcedRest);
 
@@ -208,22 +230,36 @@ function generateMatches() {
 
     // ── 7. Update tracking stats for players who WILL play ─────────────────
     playing.forEach(p => {
-        p.waitRounds        = 0;                          // reset wait counter
-        p.consecutiveGames  = (p.consecutiveGames || 0) + 1;
-        // Flag for NEXT round's fatigue check
-        p.forcedRest = p.consecutiveGames >= FATIGUE_THRESHOLD;
+        p.waitRounds       = 0;
+        p.consecutiveGames = (p.consecutiveGames || 0) + 1;
     });
 
-    // Players sitting out this round had their consecutiveGames reset in step 2.
-    // forcedOut players keep forcedRest = true but get their streak reset since
-    // they ARE sitting this round.
+    // Re-compute average AFTER incrementing sessionPlayCount (happens in step 9)
+    // so the threshold check uses the correct post-round counts.
+    // We do a look-ahead: sessionPlayCount will be +1 for playing players.
+    const avgAfter = pool.reduce((sum, p) => {
+        const count = (p.sessionPlayCount || 0) + (playing.includes(p) ? 1 : 0);
+        return sum + count;
+    }, 0) / pool.length;
+
+    // Flag players who are about to go ahead of the average AND have hit the
+    // consecutive streak — they'll sit next round.
+    playing.forEach(p => {
+        const projectedCount = (p.sessionPlayCount || 0) + 1;
+        const onStreak       = p.consecutiveGames >= CONSEC_THRESHOLD;
+        const aheadOfAvg     = projectedCount > avgAfter;
+        p.forcedRest = onStreak && aheadOfAvg;
+    });
+
+    // Players sitting out or on forced rest: reset their consecutive streak
+    // since they are NOT playing this round.
     forcedOut.forEach(p => {
         p.consecutiveGames = 0;
-        p.forcedRest       = false; // will be re-evaluated when they play again
+        p.forcedRest       = false; // served their rest — eligible next round
     });
     sitting.forEach(p => {
         p.consecutiveGames = 0;
-        // forcedRest is already false (only playing triggers it)
+        p.forcedRest       = false;
     });
 
     // ── 8. "Next Up" ticker ─────────────────────────────────────────────────
