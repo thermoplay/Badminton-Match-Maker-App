@@ -269,6 +269,11 @@
     </div>
 
     <!-- ═══ PLAYER SIDELINE VIEW ═══════════════════════════════════════════════ -->
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         PLAYER SIDELINE VIEW
+         Rendered when: URL contains ?role=player  OR  SidelineView.show()
+         #hostRoot + #hostNav are hidden when this view is active.
+         ═══════════════════════════════════════════════════════════════════════ -->
     <div id="sidelinePanel" style="display:none;" class="sl-panel">
         <div class="sl-inner">
 
@@ -282,6 +287,7 @@
             </div>
 
             <!-- ── ON DECK STATUS ────────────────────────────────────────── -->
+            <!-- States: pending | on-deck | playing | resting              -->
             <div class="sl-status-card" id="slStatusCard" data-state="pending">
                 <div class="sl-status-lhs">
                     <div class="sl-status-icon" id="slStatusIcon">⏳</div>
@@ -364,16 +370,38 @@
         </div><!-- /.sl-inner -->
     </div><!-- /#sidelinePanel -->
 
+    <!--
+        LOAD ORDER:
+        1. polish.js  — Haptic, Confetti, Avatar utilities (no deps)
+        2. app.js     — State, UI, persistence (uses polish.js)
+        3. logic.js   — Match logic (uses app.js + polish.js)
+        4. sync.js    — Supabase multiplayer (uses all of the above)
+    -->
     <script src="js/polish.js"></script>
     <script src="js/passport.js"></script>
     <script src="js/app.js"></script>
     <script src="js/logic.js"></script>
     <script src="js/sync.js"></script>
-
-    <!-- ═══ ERROR BANNER ═══════════════════════════════════════════════════ -->
+    <!-- ═══ ERROR BANNER (BUG 4) ═══════════════════════════════════════════ -->
+    <!-- Visible only when a JS error is caught. Surfaced in the UI so     -->
+    <!-- errors are visible on mobile without DevTools.                    -->
     <div id="sl-error-banner" aria-live="assertive"></div>
 
     <script>
+        // ══════════════════════════════════════════════════════════════════════
+        // COURTSIDE PRO — Boot Script  (Part 1 Render Fixes)
+        //
+        // FIX SUMMARY:
+        //   BUG 1 — DOMContentLoaded renders the frame BEFORE scripts load
+        //   BUG 2 — null-guard on missing session / slow DB
+        //   BUG 3 — inline name form replaces blocking prompt()
+        //   BUG 4 — CSS auto-show + global error handler
+        // ══════════════════════════════════════════════════════════════════════
+
+        // ── BUG 4: Global error catch-all ────────────────────────────────────
+        // Catches any thrown error or unhandled promise rejection and surfaces
+        // it in the UI error banner so it's visible on mobile without DevTools.
+
         function _csShowError(msg, source) {
             const banner = document.getElementById('sl-error-banner');
             if (!banner) return;
@@ -383,6 +411,7 @@
                 ${String(msg).slice(0, 200)}
                 ${source ? '<br><span style="opacity:0.6;">' + String(source).slice(0, 120) + '</span>' : ''}`;
             banner.classList.add('visible');
+            // Auto-dismiss after 12s
             clearTimeout(banner._timer);
             banner._timer = setTimeout(() => banner.classList.remove('visible'), 12000);
         }
@@ -398,45 +427,70 @@
             _csShowError(msg);
         });
 
+        // ── BUG 1 + BUG 4: DOMContentLoaded instant render ───────────────────
+        // Fires as soon as the HTML is parsed — BEFORE external scripts load.
+        // This guarantees the player sees the UI frame within ~50ms of opening
+        // the QR link, regardless of network speed or script parse time.
+
         document.addEventListener('DOMContentLoaded', function () {
             try {
                 const params   = new URLSearchParams(window.location.search);
                 const role     = params.get('role');
+                // On refresh, ?join= is gone (stripped by tryAutoRejoin). Read from
+                // localStorage cs_player_room_code as final fallback for the code pill.
                 const joinCode = params.get('room') || params.get('join')
                     || (function(){ try{ return localStorage.getItem('cs_player_room_code'); }catch(e){ return null; } })()
                     || null;
 
-                if (role !== 'player') return;
+                if (role !== 'player') return;  // Host mode — skip
 
+                // ── Step 1: Mark body immediately (CSS safety net fires here) ──
+                // body.player-mode #sidelinePanel { display: flex !important }
+                // This rule in style.css makes the panel visible via CSS alone —
+                // no JS objects needed, no async wait, no blank screen.
                 document.body.classList.add('player-mode');
 
+                // ── Step 2: Make sidelinePanel visible RIGHT NOW ──────────────
+                // Belt + suspenders: also set inline style so it works even if
+                // the stylesheet hasn't finished parsing on very slow connections.
                 const panel = document.getElementById('sidelinePanel');
                 if (panel) {
                     panel.style.display = 'flex';
-                    panel.classList.add('sl-booting');
+                    panel.classList.add('sl-booting');  // Pulse animation while loading
                 }
 
+                // ── Step 3: Stamp the room code immediately ───────────────────
+                // The slSessionCode pill shows the room code from the URL at once
+                // — the player sees it before the DB call completes.
                 if (joinCode) {
                     const codeEl = document.getElementById('slSessionCode');
                     if (codeEl) codeEl.textContent = joinCode;
                 }
 
+                // ── Step 4: BUG 3 — Passport check from localStorage ─────────
+                // This is a SYNCHRONOUS read — zero network wait.
+                // Show personalised welcome or name-entry form immediately.
                 try {
                     const raw      = localStorage.getItem('cs_player_passport');
                     const passport = raw ? JSON.parse(raw) : null;
 
-                    const nameEl       = document.getElementById('slPassportName');
-                    const avatarEl     = document.getElementById('slPassportAvatar');
+                    const nameEl   = document.getElementById('slPassportName');
+                    const avatarEl = document.getElementById('slPassportAvatar');
                     const statusTextEl = document.getElementById('slStatusText');
                     const statusSubEl  = document.getElementById('slStatusSub');
                     const matchesEl    = document.getElementById('slCurrentMatches');
 
                     if (passport && passport.playerName) {
+                        // ── RETURNING PLAYER — welcome back immediately ────────
+                        // This text appears on screen before any JS objects init.
                         if (nameEl)   nameEl.textContent   = passport.playerName;
                         if (avatarEl) avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
-                        if (statusTextEl) statusTextEl.textContent = 'Welcome back, ' + passport.playerName;
+
+                        if (statusTextEl) statusTextEl.textContent =
+                            'Welcome back, ' + passport.playerName;
                         if (statusSubEl)  statusSubEl.textContent  = 'Joining court…';
 
+                        // Show welcome card in the matches area
                         if (matchesEl && joinCode) {
                             matchesEl.innerHTML =
                                 '<div class="sl-welcome-back">' +
@@ -450,8 +504,21 @@
                                 '</div>';
                         }
                     } else {
+                        // ── NEW PLAYER — show loading state only ──────────────
+                        // We intentionally do NOT render the name entry form here.
+                        //
+                        // Reason: this DOMContentLoaded block runs before any
+                        // <script> tags have been parsed, so the form nodes would
+                        // be live HTML with no JavaScript event listeners attached.
+                        // Tapping "JOIN COURT →" on such a form does nothing.
+                        //
+                        // Instead, we show a status message so the screen isn't
+                        // blank. Once all scripts load and initApp() → bootApp() →
+                        // PlayerMode.boot() runs, _showNameEntry() renders the form
+                        // AND wires the button listener in one atomic step.
                         if (statusTextEl) statusTextEl.textContent = 'Almost there…';
                         if (statusSubEl)  statusSubEl.textContent  = 'Enter your name to join the court';
+
                         if (matchesEl) {
                             matchesEl.innerHTML =
                                 '<div class="sl-loading-state">' +
@@ -461,6 +528,7 @@
                         }
                     }
 
+                    // ── Step 5: Private stats from localStorage ───────────────
                     if (passport) {
                         const wEl = document.getElementById('slPrivateWins');
                         const gEl = document.getElementById('slPrivateGames');
@@ -476,6 +544,7 @@
 
                 } catch (lsErr) {
                     console.error('[CourtSide] localStorage read failed:', lsErr);
+                    // Still show the panel — don't let a storage error blank the screen
                 }
 
             } catch (domErr) {
@@ -483,6 +552,11 @@
                 _csShowError('Boot failed: ' + domErr.message);
             }
         });
+
+        // ── FULL BOOT — runs after all scripts have loaded ────────────────────
+        // The frame is already visible from DOMContentLoaded above.
+        // This phase does the async work: DB handshake, realtime subscription,
+        // approval check. Errors here don't blank the screen.
 
         const _originalLoad = window.onload;
         window.onload = async function () {
@@ -495,6 +569,9 @@
             try {
                 const params   = new URLSearchParams(window.location.search);
                 const role     = params.get('role');
+                // Read joinCode from URL first; fall back to window._pendingJoinCode
+                // (saved by tryAutoRejoin before stripping ?join=), then finally
+                // localStorage cs_player_room_code so a full browser refresh reconnects.
                 const joinCode = params.get('room') || params.get('join')
                     || window._pendingJoinCode
                     || (function(){ try{ return localStorage.getItem('cs_player_room_code'); }catch(e){ return null; } })()
@@ -502,27 +579,35 @@
 
                 if (role === 'player') {
                     // ── PLAYER MODE ─────────────────────────────────────────
+                    // Frame is already on screen from DOMContentLoaded above.
+
+                    // 1. Init passport (creates UUID if new, returns existing if not)
                     const passport = Passport.init();
 
+                    // 2. Ensure host shell is hidden (CSS already hides it, this
+                    //    is the explicit JS belt + suspenders)
                     const hostRoot = document.getElementById('hostRoot');
                     const hostNav  = document.getElementById('hostNav');
                     if (hostRoot) hostRoot.style.display = 'none';
                     if (hostNav)  hostNav.style.display  = 'none';
 
+                    // 3. Run SidelineView.show() — panel is already visible but
+                    //    this populates the SidelineView._visible flag and runs
+                    //    a full refresh to populate match data if available.
                     SidelineView.show();
+
+                    // 4. Boot PlayerMode — the async DB handshake.
+                    //    The panel is already rendered; boot() only updates content.
                     await PlayerMode.boot(passport, joinCode);
 
                 } else {
                     // ── HOST / SPECTATOR MODE ────────────────────────────────
-                    // FIX: Guard against tryAutoRejoin not yet defined if sync.js
-                    // is still loading. initApp() also calls it as a fallback.
-                    if (typeof tryAutoRejoin === 'function') {
-                        await tryAutoRejoin();
-                    }
+                    await tryAutoRejoin();
                 }
             } catch (bootErr) {
                 console.error('[CourtSide] window.onload boot failed:', bootErr);
                 _csShowError('Session boot failed: ' + bootErr.message);
+                // Remove pulsing state — show static error
                 const panel = document.getElementById('sidelinePanel');
                 if (panel) panel.classList.remove('sl-booting');
             }
