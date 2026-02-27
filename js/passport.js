@@ -845,6 +845,90 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
+    // REMOVED FROM SESSION
+    // Called by _handleBroadcast (player_removed broadcast) and by
+    // _handleMemberChange (postgres DELETE or status reset on session_members).
+    //
+    // What it does:
+    //   1. Clears the sessionStorage approval flag so the player is no longer
+    //      treated as approved on the next page load.
+    //   2. Clears any saved token for this room so the token fallback path
+    //      doesn't silently re-approve them.
+    //   3. Resets the status card to a clear "removed" message immediately.
+    //   4. Replaces slCurrentMatches with a removed state block — not the
+    //      stale "You're in the rotation" view.
+    //   5. Haptic bump so the player feels the change even if they're not
+    //      looking at the screen.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _onRemovedFromSession() {
+        // 1. Clear approval state so refresh doesn't re-approve
+        try {
+            const m = JSON.parse(sessionStorage.getItem('cs_approved') || '{}');
+            delete m[this._joinCode];
+            sessionStorage.setItem('cs_approved', JSON.stringify(m));
+        } catch { }
+
+        // 2. Clear saved token for this room
+        if (this._joinCode) this._clearToken(this._joinCode);
+
+        // 3. Update status card immediately
+        this.setStatus('pending', 'Removed from session', 'The host removed you from the court');
+
+        // 4. Replace the matches / rotation view with a clear removed state
+        const container = document.getElementById('slCurrentMatches');
+        if (container) {
+            container.innerHTML = `
+                <div class="sl-queued-state" style="border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.05);">
+                    <div class="sl-queued-icon">🚫</div>
+                    <div class="sl-queued-title" style="color: #ef4444;">REMOVED</div>
+                    <div class="sl-queued-sub">
+                        The host has removed you from this session.<br>
+                        You can request to rejoin below.
+                    </div>
+                    <button class="sl-queued-resend" id="slRejoinBtn"
+                        style="border-color: rgba(239,68,68,0.4); color: #ef4444;">
+                        Request to Rejoin
+                    </button>
+                </div>`;
+
+            document.getElementById('slRejoinBtn')?.addEventListener('click', async () => {
+                const passport = Passport.get();
+                if (!passport || !this._joinCode) return;
+                const btn = document.getElementById('slRejoinBtn');
+                if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+                try {
+                    const res = await fetch('/api/play-request', {
+                        method:  'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body:    JSON.stringify({
+                            room_code:   this._joinCode,
+                            name:        passport.playerName,
+                            player_uuid: passport.playerUUID,
+                        }),
+                    });
+                    if (res.ok) {
+                        this._showQueuedState(passport.playerName);
+                        this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
+                    } else {
+                        if (btn) { btn.disabled = false; btn.textContent = 'Request to Rejoin'; }
+                    }
+                } catch {
+                    if (btn) { btn.disabled = false; btn.textContent = 'Request to Rejoin'; }
+                }
+            });
+        }
+
+        // 5. Haptic feedback
+        if (window.Haptic) Haptic.error();
+
+        // 6. Toast confirmation
+        if (typeof showSessionToast === 'function') {
+            showSessionToast('🚫 You were removed from the session');
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
     // JOIN SESSION
     // ─────────────────────────────────────────────────────────────────────────
 
