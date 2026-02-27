@@ -105,13 +105,30 @@ function applyELOResults() {
 
 /**
  * FAIRNESS ENGINE — generateMatches()
- * Priority order for who plays next:
- * 1. Longest wait (highest waitRounds — rounds sitting out)
- * 2. Fewest games played this session (sessionPlayCount)
- * 3. Slight random shuffle to prevent predictability
- * Teams are then balanced by ELO (snake draft: 1&4 vs 2&3).
+ *
+ * CONSECUTIVE-GAME FATIGUE (new):
+ *   A player who has played 3+ rounds in a row is automatically placed on
+ *   a mandatory 1-round rest (p.forcedRest = true). They rejoin the eligible
+ *   pool next round. This prevents one person dominating every court slot
+ *   when the group is just large enough to field multiple games.
+ *   forcedRest is cleared as soon as they sit a round out.
+ *
+ * CROSS-COURT UNIQUENESS GUARANTEE (new):
+ *   The `assignedToGame` Set is the single source of truth for who is already
+ *   slotted into a game this round. Every court's 4 players are drawn from
+ *   the sorted eligible list in strict first-come order, so a player can
+ *   never appear in Game 1 AND Game 2 simultaneously.
+ *
+ * PRIORITY ORDER (unchanged):
+ *   1. forcedRest players sit out this round entirely (skipped in selection)
+ *   2. Longest wait (highest waitRounds — rounds sitting out)
+ *   3. Fewest games played this session (sessionPlayCount)
+ *   4. Slight random shuffle to prevent predictability
+ *   Teams are then balanced by ELO (snake draft: 1&4 vs 2&3).
  */
 function generateMatches() {
+    // ── 1. Build the eligible pool ─────────────────────────────────────────
+    // "active" = host hasn't manually rested them.
     const pool = squad.filter(p => p.active);
     if (pool.length < 4) {
         alert('Requires at least 4 active players.');
@@ -121,43 +138,104 @@ function generateMatches() {
     currentMatches = [];
     document.getElementById('matchContainer').innerHTML = '';
 
-    // Increment waitRounds for everyone — playing will reset it
+    // ── 2. CONSECUTIVE-GAME FATIGUE ────────────────────────────────────────
+    // Increment consecutiveGames for everyone still active; reset it for
+    // players who sat out last round (waitRounds > 0 means they didn't play).
+    // A player who reaches FATIGUE_THRESHOLD gets forcedRest = true and is
+    // excluded from this round's selection pool.
+    const FATIGUE_THRESHOLD = 3; // 3 consecutive games → mandatory 1-round rest
+
+    pool.forEach(p => {
+        // If they sat out last round, reset their consecutive streak
+        if ((p.waitRounds || 0) > 0) {
+            p.consecutiveGames = 0;
+            p.forcedRest       = false; // served their rest — eligible again
+        }
+    });
+
+    // ── 3. Increment waitRounds for everyone — playing will reset it ───────
     pool.forEach(p => { p.waitRounds = (p.waitRounds || 0) + 1; });
 
-    // Sort by fairness: most wait first, then fewest games, then random
-    const available = [...pool].sort((a, b) => {
-        const waitDiff = (b.waitRounds || 0) - (a.waitRounds || 0);
+    // ── 4. Split into eligible vs forced-rest ─────────────────────────────
+    // forcedRest players are excluded from game selection this round.
+    // They still appear in the squad chip list with a 😮‍💨 indicator.
+    const eligible   = pool.filter(p => !p.forcedRest);
+    const forcedOut  = pool.filter(p =>  p.forcedRest);
+
+    // Need at least 4 eligible to run even one game; otherwise clear all rests
+    // (graceful fallback so the app never deadlocks on small groups)
+    const runningPool = eligible.length >= 4 ? eligible : pool;
+    if (eligible.length < 4 && eligible.length < pool.length) {
+        // Not enough eligible players — lift forced rests and try again
+        pool.forEach(p => { p.forcedRest = false; p.consecutiveGames = 0; });
+    }
+
+    // ── 5. Sort eligible pool by fairness priority ─────────────────────────
+    const sorted = [...runningPool].sort((a, b) => {
+        const waitDiff  = (b.waitRounds || 0) - (a.waitRounds || 0);
         if (waitDiff !== 0) return waitDiff;
         const gamesDiff = a.sessionPlayCount - b.sessionPlayCount;
         if (gamesDiff !== 0) return gamesDiff;
         return Math.random() - 0.5;
     });
 
-    const courtCount = Math.floor(available.length / 4);
-    const playing    = available.slice(0, courtCount * 4);
-    const sitting    = available.slice(courtCount * 4);
+    // ── 6. Assign players to courts — UNIQUENESS GUARANTEED ────────────────
+    // `assignedToGame` tracks every player already placed in any game this
+    // round. We iterate `sorted` once in priority order; each player is
+    // considered exactly once, so a player cannot end up in two games.
+    const courtCount     = Math.floor(sorted.length / 4);
+    const assignedToGame = new Set(); // guards cross-court uniqueness
+    const playing        = [];
 
-    // Players who will play get waitRounds reset
-    playing.forEach(p => { p.waitRounds = 0; });
+    for (const p of sorted) {
+        if (assignedToGame.has(p.name)) continue; // already in a game (safety net)
+        if (playing.length >= courtCount * 4) break;
+        playing.push(p);
+        assignedToGame.add(p.name);
+    }
 
-    // Pre-calculate "Next Up" — 4 UNIQUE players from bench, by priority
-    // Use index tracking to guarantee no duplicates (fixes "David bug")
-    const benchPool = [...sitting].sort(
+    // Everyone not selected sits out this round
+    const sitting = runningPool.filter(p => !assignedToGame.has(p.name));
+
+    // ── 7. Update tracking stats for players who WILL play ─────────────────
+    playing.forEach(p => {
+        p.waitRounds        = 0;                          // reset wait counter
+        p.consecutiveGames  = (p.consecutiveGames || 0) + 1;
+        // Flag for NEXT round's fatigue check
+        p.forcedRest = p.consecutiveGames >= FATIGUE_THRESHOLD;
+    });
+
+    // Players sitting out this round had their consecutiveGames reset in step 2.
+    // forcedOut players keep forcedRest = true but get their streak reset since
+    // they ARE sitting this round.
+    forcedOut.forEach(p => {
+        p.consecutiveGames = 0;
+        p.forcedRest       = false; // will be re-evaluated when they play again
+    });
+    sitting.forEach(p => {
+        p.consecutiveGames = 0;
+        // forcedRest is already false (only playing triggers it)
+    });
+
+    // ── 8. "Next Up" ticker ─────────────────────────────────────────────────
+    // 4 UNIQUE players from bench, by priority. Index-based dedup prevents
+    // the "David bug" (same player appearing twice in the ticker).
+    const benchPool = [...sitting, ...forcedOut].sort(
         (a, b) => (b.waitRounds || 0) - (a.waitRounds || 0) || a.sessionPlayCount - b.sessionPlayCount
     );
     const nextUpPicked = new Set();
-    const nextUp = [];
+    const nextUp       = [];
     for (const p of benchPool) {
-        const uid = squad.indexOf(p); // use squad index as unique ID
+        const uid = squad.indexOf(p);
         if (!nextUpPicked.has(uid)) {
             nextUpPicked.add(uid);
             nextUp.push(p);
         }
         if (nextUp.length === 4) break;
     }
-    // If bench has fewer than 4, fill from playing pool tail (won't overlap — different indices)
+    // If bench has fewer than 4, fill from the playing pool tail
     if (nextUp.length < 4) {
-        for (const p of [...pool].reverse()) {
+        for (const p of [...playing].reverse()) {
             const uid = squad.indexOf(p);
             if (!nextUpPicked.has(uid)) {
                 nextUpPicked.add(uid);
@@ -168,11 +246,16 @@ function generateMatches() {
     }
     updateNextUpTicker(nextUp);
 
-    const matchData = [];
+    // ── 9. Build match cards ────────────────────────────────────────────────
+    // Deep-copy `playing` so splice doesn't mutate the original array.
+    const playingQueue = [...playing];
+    const matchData    = [];
+
     for (let i = 0; i < courtCount; i++) {
-        const p4 = playing.splice(0, 4);
+        const p4 = playingQueue.splice(0, 4);
         p4.forEach(p => p.sessionPlayCount++);
-        // Snake draft ELO balance: sort by rating, pair 1&4 vs 2&3
+
+        // Snake draft ELO balance: sort by rating desc, pair 1&4 vs 2&3
         p4.sort((a, b) => b.rating - a.rating);
 
         const tA   = [p4[0], p4[3]];
@@ -180,9 +263,9 @@ function generateMatches() {
         const odds = calculateOdds(tA, tB);
 
         currentMatches.push({
-            teams: [tA.map(p => p.name), tB.map(p => p.name)],
+            teams:           [tA.map(p => p.name), tB.map(p => p.name)],
             winnerTeamIndex: null,
-            odds
+            odds,
         });
         matchData.push({ idx: i, tA, tB, odds });
     }

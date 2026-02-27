@@ -491,6 +491,16 @@ input:focus {
     background: transparent;
 }
 
+/* Mandatory fatigue rest — played 3+ games in a row, sitting this round out */
+.player-chip.forced-rest {
+    opacity: 0.55;
+    border: 1.5px dashed #f59e0b66;
+    background: rgba(245, 158, 11, 0.06);
+}
+.player-chip.forced-rest .avatar {
+    filter: saturate(0.4);
+}
+
 .player-chip:active {
     transform: scale(0.93);
 }
