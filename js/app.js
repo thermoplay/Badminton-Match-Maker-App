@@ -85,10 +85,9 @@ function loadFromDisk() {
             playerQueue  = (data.playerQueue || [])
                 .filter(name => squad.find(p => p.name === name));
             activeCourts = data.activeCourts || 1;
-            // Sync button highlight to restored value
-            document.querySelectorAll('.court-btn').forEach((btn, i) => {
-                btn.classList.toggle('court-btn-active', i + 1 === activeCourts);
-            });
+            // Sync the input to the restored value
+            const courtInput = document.getElementById('courtCountInput');
+            if (courtInput) courtInput.value = activeCourts;
 
             renderSquad();
             renderSavedMatches();
@@ -261,11 +260,10 @@ function checkNextButtonState() {
 }
 
 function setCourts(n) {
-    activeCourts = Math.max(1, Math.min(5, n));
-    // Highlight selected button
-    document.querySelectorAll('.court-btn').forEach((btn, i) => {
-        btn.classList.toggle('court-btn-active', i + 1 === activeCourts);
-    });
+    activeCourts = Math.max(1, n || 1);
+    // Sync the input in case setCourts was called programmatically
+    const input = document.getElementById('courtCountInput');
+    if (input && parseInt(input.value) !== activeCourts) input.value = activeCourts;
     saveToDisk();
 }
 
