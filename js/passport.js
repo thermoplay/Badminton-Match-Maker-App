@@ -360,16 +360,6 @@ const PlayerMode = {
     // ─────────────────────────────────────────────────────────────────────────
 
     async boot(passport, joinCode) {
-        // ══════════════════════════════════════════════════════════════════════
-        // BOOT — Four-phase init. Each phase completes independently so the
-        // screen is never blank, even if the DB is slow or unreachable.
-        //
-        // PHASE 0 — Instant render     (synchronous, <1ms)
-        // PHASE 1 — Passport check     (synchronous localStorage read)
-        // PHASE 2 — Session handshake  (async DB call)
-        // PHASE 3 — Join or approve    (async, sets final status)
-        // ══════════════════════════════════════════════════════════════════════
-
         // Recover joinCode from localStorage if URL param was stripped on refresh
         if (!joinCode) {
             try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
@@ -383,13 +373,9 @@ const PlayerMode = {
         }
 
         // ── PHASE 0: Instant frame render ─────────────────────────────────────
-        // BUG 1 FIX: Render the UI shell RIGHT NOW before any async work.
-        // Add .sl-booting so the status card pulses while we wait for the DB.
-        // Remove it once we have a real answer.
         const panel = document.getElementById('sidelinePanel');
         if (panel) panel.classList.add('sl-booting');
 
-        // Render whatever identity we have — even '—' is better than blank
         this._renderIdentity(passport);
         this._renderStats(passport);
 
@@ -403,19 +389,13 @@ const PlayerMode = {
         }
 
         // ── PHASE 1: Check localStorage passport ──────────────────────────────
-        // BUG 3 FIX: Do this synchronously right here — zero network wait.
-        // Show a personalised welcome message immediately if name exists.
         const hasName = !!(passport.playerName && passport.playerName.trim());
         if (hasName) {
-            // "Welcome back" message shown instantly from localStorage
             this._showWelcomeBack(passport.playerName, joinCode);
             this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
         } else {
-            // No name yet — show the name entry form immediately
-            // (replaces the blank "No active round yet" placeholder)
             this.setStatus('pending', 'Almost there…', 'Enter your name to join');
             this._showNameEntry();
-            // Name entry is async — the rest of boot() waits here
             const name = await this._promptName();
             if (!name) {
                 if (panel) panel.classList.remove('sl-booting');
@@ -427,7 +407,6 @@ const PlayerMode = {
         }
 
         // ── Tier 1: sessionStorage fast-path ──────────────────────────────────
-        // Survives page refresh within the same tab session.
         if (this._isApprovedInSession(joinCode)) {
             if (panel) panel.classList.remove('sl-booting');
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
@@ -435,13 +414,8 @@ const PlayerMode = {
             return;
         }
 
-        // ── PHASE 2: DB handshake — show spinner while waiting ────────────────
-        // BUG 2 FIX: The DB call is now wrapped — if it returns null (session
-        // not found / network error) we show a "Searching for Court" state
-        // instead of crashing or staying blank.
+        // ── PHASE 2: DB handshake ─────────────────────────────────────────────
         this._subscribeAndPoll(joinCode, passport);
-
-        // Show "Searching for Court…" while the DB responds
         this._showSearchingSpinner();
 
         let upsertResult = null;
@@ -449,21 +423,16 @@ const PlayerMode = {
             upsertResult = await this._memberUpsert(Passport.get(), joinCode);
         } catch (err) {
             console.error('[PlayerMode.boot] member-upsert threw:', err);
-            // Treat as null — fall through to pending state
         }
 
-        // Stop pulsing — we have a result (or a failure)
         if (panel) panel.classList.remove('sl-booting');
         this._clearSearchingSpinner();
 
-        // ── BUG 2 FIX: Guard against null / missing session ───────────────────
         if (!upsertResult) {
             this.setStatus('pending',
                 'Court not found',
                 'The session may have ended. Check the room code.');
-            console.error('[CourtSide] Session lookup failed for room:', joinCode,
-                '— upsertResult was null. Check /api/member-upsert and network.');
-            // Show manual code entry so player isn't stuck
+            console.error('[CourtSide] Session lookup failed for room:', joinCode);
             this._promptForCode();
             return;
         }
@@ -492,16 +461,12 @@ const PlayerMode = {
             }
         }
 
-        // ── PHASE 3: New join — submit request, wait for host approval ────────
+        // ── PHASE 3: New join ─────────────────────────────────────────────────
         await this._submitJoinRequest(Passport.get(), joinCode);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
     // QUEUED STATE
-    // Renders in slCurrentMatches after the join request is sent.
-    // .sl-queued-state is a sentinel: SidelineView._renderMatches() skips
-    // rendering if this class is present, preventing game_state broadcasts
-    // from clobbering the waiting screen before the player is approved.
     // ─────────────────────────────────────────────────────────────────────────
 
     _showQueuedState(playerName) {
@@ -590,7 +555,7 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // WELCOME-BACK CARD — instant render from localStorage
+    // WELCOME-BACK CARD
     // ─────────────────────────────────────────────────────────────────────────
 
     _showWelcomeBack(playerName, roomCode) {
@@ -607,11 +572,6 @@ const PlayerMode = {
                 </div>
             </div>`;
     },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // NAME ENTRY TRIGGER — shows the form without waiting for _promptName()
-    // Called at the top of boot() so the input is visible instantly.
-    // ─────────────────────────────────────────────────────────────────────────
 
     _showNameEntry() {
         const container = document.getElementById('slCurrentMatches');
@@ -640,15 +600,10 @@ const PlayerMode = {
         setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 120);
     },
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // SEARCHING SPINNER — shown while DB responds (BUG 2)
-    // ─────────────────────────────────────────────────────────────────────────
-
     _showSearchingSpinner() {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
-        // Only replace if it still has the welcome-back card or is empty
-        if (container.querySelector('.sl-name-entry')) return; // name entry takes priority
+        if (container.querySelector('.sl-name-entry')) return;
         container.innerHTML = `
             <div class="sl-searching">
                 <div class="sl-searching-spinner"></div>
@@ -663,10 +618,6 @@ const PlayerMode = {
             container.innerHTML = '<div class="sl-empty">No active round yet</div>';
         }
     },
-    // ─────────────────────────────────────────────────────────────────────────
-    // MEMBER UPSERT — calls /api/member-upsert (via sync.js helper)
-    // Returns { status: 'pending'|'active', member } or null on failure.
-    // ─────────────────────────────────────────────────────────────────────────
 
     async _memberUpsert(passport, joinCode) {
         if (typeof memberUpsert !== 'function') return null;
@@ -674,8 +625,6 @@ const PlayerMode = {
     },
 
     _hydrateFromUpsert(upsertResult) {
-        // Optionally update local name if server has a different one
-        // (e.g. host edited it, or player joined from a different device)
         if (upsertResult?.member?.player_name) {
             const serverName = upsertResult.member.player_name;
             const passport   = Passport.get();
@@ -687,31 +636,24 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // APPROVAL — broadcast 'session_joined'
+    // APPROVAL
     // ─────────────────────────────────────────────────────────────────────────
 
     _onApprovalReceived(payload) {
         const passport = Passport.get();
         if (!passport) return;
-        if (payload.playerUUID !== passport.playerUUID) return;  // strict UUID match
+        if (payload.playerUUID !== passport.playerUUID) return;
 
-        // 1. Storage writes BEFORE any render
         this._markApprovedInSession(this._joinCode);
         if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
 
-        // 2. Hydrate globals
         if (payload.squad)           window.squad          = payload.squad;
         if (payload.current_matches) window.currentMatches = payload.current_matches;
 
-        // 3. UI
         this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
         this._subscribeAndPoll(this._joinCode, passport);
         setTimeout(() => this._updateStatus(passport), 1500);
     },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // LIVE FEED — broadcast 'game_state'
-    // ─────────────────────────────────────────────────────────────────────────
 
     _onGameStateUpdate(payload) {
         const passport = Passport.get();
@@ -720,10 +662,6 @@ const PlayerMode = {
         SidelineView.refresh();
         this._updateStatus(passport);
     },
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // POSTGRES FALLBACK — 'postgres_changes'
-    // ─────────────────────────────────────────────────────────────────────────
 
     _onSessionUpdate(session) {
         const passport = Passport.get();
@@ -746,38 +684,37 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // WIN DEDUP — prevents double-recording when both WS broadcast (match_resolved)
-    // and DB poll fallback (match_result) deliver the same game result.
-    // Key: `${playerUUID}-${gameLabel}`. Cleared when a new session is joined.
+    // WIN DEDUP
+    // FIX: Key now includes a round timestamp so "Game 1" in round 2 doesn't
+    // get silently blocked by the same key from round 1.
+    // The roundKey is set by the host in the match_resolved broadcast payload.
     // ─────────────────────────────────────────────────────────────────────────
     _processedResults: new Set(),
 
-    _markResultProcessed(gameLabel) {
+    _markResultProcessed(gameLabel, roundKey) {
         const passport = Passport.get();
         if (!passport) return false;
-        const key = `${passport.playerUUID}-${gameLabel || '_'}`;
-        if (this._processedResults.has(key)) return true; // already handled
+        // Include roundKey (timestamp from host) so the same game label in a
+        // new round generates a different dedup key.
+        const key = `${passport.playerUUID}-${roundKey || ''}-${gameLabel || '_'}`;
+        if (this._processedResults.has(key)) return true;
         this._processedResults.add(key);
         return false;
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MATCH RESULT — DB poll fallback only (WS missed events safety net)
-    //
-    // match_result individual broadcasts were removed from dispatchWinSignals
-    // to prevent double-recording. This handler now only fires from _pollSignal
-    // when the WS broadcast was missed (e.g. player was briefly offline).
+    // MATCH RESULT — DB poll fallback (WS missed events safety net)
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResult(payload) {
         const passport = Passport.get();
         if (!passport) return;
 
-        const { playerUUID, event, gameLabel } = payload;
+        const { playerUUID, event, gameLabel, roundKey } = payload;
         if (playerUUID !== passport.playerUUID) return;
 
-        // Dedup: skip if match_resolved already handled this game
-        if (this._markResultProcessed(gameLabel)) return;
+        // Dedup: skip if match_resolved already handled this game+round
+        if (this._markResultProcessed(gameLabel, roundKey)) return;
 
         if (event === 'WIN') {
             const updated = Passport.recordWin();
@@ -797,26 +734,31 @@ const PlayerMode = {
     // ─────────────────────────────────────────────────────────────────────────
     // MATCH RESOLVED — broadcast 'match_resolved' (primary win/loss path)
     //
-    // Fired by dispatchWinSignals() when host taps "Next Round".
-    // Carries winnerUUIDs + loserUUIDs — each player checks their own UUID.
+    // FIX 1: roundKey is now included in the payload from the host so the
+    //        dedup set doesn't block the same game label in a new round.
+    //
+    // FIX 2: A player is only recorded as a winner OR loser — not both.
+    //        winnerUUIDs and loserUUIDs are now mutually exclusive by
+    //        construction on the host side (dispatchWinSignals). The guard
+    //        here is a safety net in case of payload corruption.
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResolved(payload) {
         const passport = Passport.get();
         if (!passport) return;
 
-        const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel } = payload;
+        const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel, roundKey } = payload;
         const myUUID = passport.playerUUID;
 
         const isWinner   = winnerUUIDs.includes(myUUID);
-        const isLoser    = loserUUIDs.includes(myUUID);
+        // Safety: never mark as loser if also in winner list (shouldn't happen,
+        // but guards against a host-side bug where a UUID appears in both arrays)
+        const isLoser    = !isWinner && loserUUIDs.includes(myUUID);
         const wasInMatch = isWinner || isLoser;
 
-        // Mark processed FIRST — before any recordWin/recordLoss —
-        // so if _pollSignal fires in the same tick it sees the flag and skips.
-        if (wasInMatch && this._markResultProcessed(gameLabel)) return; // already handled
+        if (wasInMatch && this._markResultProcessed(gameLabel, roundKey)) return;
 
-        // 1. Write localStorage FIRST, before any UI
+        // 1. Write localStorage FIRST
         if (isWinner) {
             Passport.recordWin();
             MatchHistory.push('WIN', '—', gameLabel);
@@ -828,7 +770,7 @@ const PlayerMode = {
         // 2. Show "Last Match Winner" on feed for ALL players
         window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
 
-        // 3. Update UI
+        // 3. Update UI — always refresh so non-participants see the winner display
         this._renderStats(Passport.get());
         SidelineView.show();
         SidelineView.refresh();
@@ -876,39 +818,26 @@ const PlayerMode = {
         }
     },
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // DB APPROVAL — broadcast 'session_members' postgres_changes UPDATE
-    // Fired by _handleMemberChange in sync.js when status flips to 'active'.
-    // This is the "Approval Memory" realtime delivery path.
-    // ─────────────────────────────────────────────────────────────────────────
-
     _onMemberActivated(memberRecord) {
         const passport = Passport.get();
         if (!passport) return;
-        // Strict UUID check — only react to our own row
         if (memberRecord.player_uuid !== passport.playerUUID) return;
 
-        // 1. Write sessionStorage first (enables fast refresh skip next time)
         this._markApprovedInSession(this._joinCode);
 
-        // 2. Update name if host edited it during approval
         if (memberRecord.player_name && memberRecord.player_name !== passport.playerName) {
             Passport.rename(memberRecord.player_name);
             this._renderIdentity(Passport.get());
         }
 
-        // 3. Clear the queued-state block so live feed can render
         this._clearQueuedState();
 
-        // 4. Show approved status
         const p = Passport.get();
         this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
 
-        // 4. Show sideline view and compute queue position
         SidelineView.show();
         setTimeout(() => this._updateStatus(p), 1200);
 
-        // 5. Haptic + toast
         if (window.Haptic) Haptic.success();
         if (typeof showSessionToast === 'function') {
             showSessionToast("🏀 You're approved! Welcome to the court.");
@@ -916,7 +845,7 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // JOIN SESSION — submit the play request to host
+    // JOIN SESSION
     // ─────────────────────────────────────────────────────────────────────────
 
     async _submitJoinRequest(passport, joinCode) {
@@ -940,7 +869,6 @@ const PlayerMode = {
             const data = await res.json();
 
             if (data.alreadyActive) {
-                // Race condition: approved between upsert check and play-request submission
                 this._markApprovedInSession(joinCode);
                 this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "You're in the squad ✅");
                 SidelineView.refresh();
@@ -948,9 +876,6 @@ const PlayerMode = {
                 return;
             }
 
-            // ── SUCCESS: request sent, player is queued ────────────────────────────────
-            // Replace slCurrentMatches (frozen form or welcome-back card)
-            // with a clear “waiting for approval” UI state.
             this._showQueuedState(passport.playerName);
 
         } catch(e) {
@@ -959,15 +884,11 @@ const PlayerMode = {
         }
     },
 
-    // Legacy _joinSession — kept for compatibility with any external callers
     async _joinSession(passport, joinCode) {
         return this._submitJoinRequest(passport, joinCode);
     },
 
     _subscribeAndPoll(joinCode, passport) {
-        // Stamp the room code on window immediately so any synchronous reader
-        // (e.g. memberUpsert called right after this returns) has it available,
-        // even before the async joinOnlineSession fetch resolves.
         if (joinCode) window.currentRoomCode = joinCode;
         if (typeof joinOnlineSession === 'function') {
             joinOnlineSession(joinCode).catch(() => {});
@@ -977,6 +898,8 @@ const PlayerMode = {
 
     // ─────────────────────────────────────────────────────────────────────────
     // SIGNAL POLL — DB fallback if WS broadcast missed
+    // FIX: roundKey is now passed through from the signal payload so the
+    //      dedup set correctly distinguishes rounds with identical game labels.
     // ─────────────────────────────────────────────────────────────────────────
 
     _startSignalPoll(joinCode, passport) {
@@ -995,6 +918,7 @@ const PlayerMode = {
                     playerUUID: d.signal.player_uuid,
                     event:      d.signal.event,
                     gameLabel:  d.signal.game_label,
+                    roundKey:   d.signal.round_key || '',   // ← passed through from host
                 });
                 await fetch('/api/passport-signal', {
                     method:  'DELETE',
@@ -1096,31 +1020,17 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // NAME ENTRY — inline DOM form, never blocks render
-    //
-    // BUG 3 FIX: The old code used browser prompt() — a synchronous modal that
-    // BLOCKS all rendering. On mobile Safari this looks like a blank screen.
-    // This replacement renders a name form directly into slCurrentMatches.
-    // The Promise resolves when the player taps "Join Court".
-    // ─────────────────────────────────────────────────────────────────────────
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // NAME ENTRY — resolves when player submits their name.
-    // BUG 3 FIX: Uses the pre-rendered inline DOM form from _showNameEntry()
-    // (already on screen from PHASE 1 of boot). Never uses browser prompt().
+    // NAME ENTRY
     // ─────────────────────────────────────────────────────────────────────────
 
     _promptName() {
         return new Promise(resolve => {
-            // Re-use the form that _showNameEntry() already rendered, or create it
             let input = document.getElementById('slNameEntryInput');
             let btn   = document.getElementById('slNameEntrySubmit');
 
             if (!input || !btn) {
-                // Form isn't on screen yet — render it now
                 const container = document.getElementById('slCurrentMatches');
                 if (!container) {
-                    // Absolute last resort: DOM not ready
                     const n = window.prompt('Enter your name to join:');
                     return resolve(n ? n.trim() : null);
                 }
@@ -1136,7 +1046,6 @@ const PlayerMode = {
                 resolve(val);
             };
 
-            // Attach listeners (guard against double-attach on re-render)
             btn?.addEventListener('click', submit);
             input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
             setTimeout(() => input?.focus(), 80);
