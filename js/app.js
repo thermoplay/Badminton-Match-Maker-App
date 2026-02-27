@@ -1364,7 +1364,11 @@ async function dispatchWinSignals(mIdx) {
     const uuidMap = window._sessionUUIDMap || {};
     const label   = `Game ${mIdx + 1}`;
 
-    // UUID resolution: squad member uuid > uuidMap name lookup
+    // FIX: Use a single timestamp as the round key so every game in this
+    // round shares the same key. Stored on window so processAndNext() can
+    // pass the same value for all games in one button press.
+    const roundKey = window._currentRoundKey || String(Date.now());
+
     const resolveUUID = (name) => {
         const member = squad.find(p => p.name === name);
         return member?.uuid || uuidMap[name] || null;
@@ -1372,32 +1376,38 @@ async function dispatchWinSignals(mIdx) {
 
     const winnerNames = m.teams[winIdx]  || [];
     const loserNames  = m.teams[loseIdx] || [];
+
     const winnerUUIDs = winnerNames.map(resolveUUID).filter(Boolean);
     const loserUUIDs  = loserNames .map(resolveUUID).filter(Boolean);
 
-    // Broadcast MATCH_RESOLVED — carries winnerUUIDs + loserUUIDs so every player
-    // can record their own outcome. This is the single source of truth for stats.
-    // (match_result individual broadcasts were removed — they caused double-recording.)
+    // Safety: remove any UUID that appears in both arrays (shouldn't happen)
+    const winnerSet = new Set(winnerUUIDs);
+    const safeLoserUUIDs = loserUUIDs.filter(u => !winnerSet.has(u));
+
     const winnerDisplayNames = winnerNames.join(' & ');
+
+    // Broadcast match_resolved — carries roundKey for dedup
     if (typeof _broadcast === 'function' && isOnlineSession) {
         _broadcast('match_resolved', {
             winnerNames:  winnerDisplayNames,
             winnerUUIDs,
-            loserUUIDs,
+            loserUUIDs:   safeLoserUUIDs,
             gameLabel:    label,
+            roundKey,                        // ← NEW: round-scoped dedup key
         });
     }
 
-    // Durable DB fallback — uses winner_uuids/loser_uuids matching the API contract
-    if (winnerUUIDs.length > 0 || loserUUIDs.length > 0) {
+    // DB fallback signal — also carries round_key
+    if (winnerUUIDs.length > 0 || safeLoserUUIDs.length > 0) {
         fetch('/api/passport-signal', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
                 room_code:    currentRoomCode,
                 winner_uuids: winnerUUIDs,
-                loser_uuids:  loserUUIDs,
+                loser_uuids:  safeLoserUUIDs,
                 game_label:   label,
+                round_key:    roundKey,       // ← NEW: passed to signal row
             }),
         }).catch(e => console.error('Signal dispatch failed:', e));
     }

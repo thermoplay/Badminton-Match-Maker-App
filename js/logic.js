@@ -43,7 +43,6 @@ function processAndNext() {
             return;
         }
 
-        // Snapshot state BEFORE applying ELO — needed for undo
         const snapshot = {
             squadSnapshot: squad.map(p => ({ ...p })),
             matches:       currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
@@ -51,24 +50,28 @@ function processAndNext() {
         };
         roundHistory.push(snapshot);
 
-        // Archive to Supabase match_history for weekly leaderboard
         if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
 
-        // MATCH_RESOLVED: re-dispatch signals at Next Round time.
-        // setWinner fires signals on winner selection, but processAndNext
-        // is the canonical "round is over" moment. This is the guaranteed
-        // delivery point — all player passports record their stats here.
+        // FIX: Set a fresh round key ONCE for all games in this round.
+        // dispatchWinSignals reads window._currentRoundKey so every game
+        // in the same button press shares the same key.
+        window._currentRoundKey = String(Date.now());
+
         if (typeof dispatchWinSignals === 'function') {
             currentMatches.forEach((m, idx) => {
                 if (m.winnerTeamIndex !== null) dispatchWinSignals(idx);
             });
         }
 
+        // Clear round key after dispatch so a stale value isn't reused
+        window._currentRoundKey = null;
+
         applyELOResults();
         updateUndoButton();
     }
     generateMatches();
 }
+
 
 function applyELOResults() {
     // Players sitting out this round gain a wait round (handled in generateMatches)
