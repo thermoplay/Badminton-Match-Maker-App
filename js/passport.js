@@ -272,27 +272,66 @@ const SidelineView = {
 // =============================================================================
 
 const VictoryCard = {
+
+    // ── Win Banner (replaces the intrusive full-screen overlay) ───────────────
+    // Shows an animated celebration strip inside the sideline panel.
+    // Auto-dismisses after 8s. Has a "Share 🏆" button for the image export.
     show(playerName) {
-        const overlay = document.getElementById('victoryCardOverlay');
-        const nameEl  = document.getElementById('victoryCardName');
-        if (!overlay || !nameEl) return;
-        nameEl.textContent = playerName.toUpperCase();
-        overlay.style.display = 'flex';
-        requestAnimationFrame(() => overlay.classList.add('victory-visible'));
+        // Remove any existing banner
+        const old = document.getElementById('slWinBanner');
+        if (old) old.remove();
+
         if (window.Haptic)   Haptic.success();
-        if (window.Confetti) Confetti.burst(window.innerWidth / 2, window.innerHeight / 2, 120);
+        if (window.Confetti) Confetti.burst(window.innerWidth / 2, window.innerHeight / 3, 90);
+
+        const banner = document.createElement('div');
+        banner.id        = 'slWinBanner';
+        banner.className = 'sl-win-banner';
+        banner.innerHTML = `
+            <button class="sl-win-close" onclick="VictoryCard.hide()">✕</button>
+            <div class="sl-win-icon">🏆</div>
+            <div class="sl-win-title">VICTORY!</div>
+            <div class="sl-win-name">${playerName.toUpperCase()}</div>
+            <div class="sl-win-sub">Season Certified</div>
+            <button class="sl-win-share" onclick="VictoryCard.share()">↑ Share Victory</button>`;
+
+        // Inject into sideline panel, above the matches section
+        const panel = document.getElementById('sidelinePanel');
+        if (panel) {
+            panel.insertBefore(banner, panel.firstChild);
+            requestAnimationFrame(() => banner.classList.add('sl-win-banner--visible'));
+        }
+
+        // Auto-dismiss after 8s
+        clearTimeout(this._autoDismiss);
+        this._autoDismiss = setTimeout(() => this.hide(), 8000);
     },
 
     hide() {
-        const overlay = document.getElementById('victoryCardOverlay');
-        if (!overlay) return;
-        overlay.classList.remove('victory-visible');
-        setTimeout(() => { overlay.style.display = 'none'; }, 400);
+        clearTimeout(this._autoDismiss);
+        const banner = document.getElementById('slWinBanner');
+        if (!banner) return;
+        banner.classList.remove('sl-win-banner--visible');
+        setTimeout(() => banner.remove(), 350);
     },
 
+    // Keep the full-screen overlay accessible for the "Share" export capture.
+    // It's only shown briefly while html2canvas renders, then hidden.
     async share() {
-        const card = document.getElementById('victoryCard');
-        if (!card) return;
+        const overlay = document.getElementById('victoryCardOverlay');
+        const nameEl  = document.getElementById('victoryCardName');
+        const passport = Passport.get();
+        const name     = passport?.playerName || 'Player';
+
+        if (nameEl) nameEl.textContent = name.toUpperCase();
+
+        // Temporarily show the card for html2canvas (off-screen via opacity:0 pointer-events:none)
+        if (overlay) {
+            overlay.style.display   = 'flex';
+            overlay.style.opacity   = '0';
+            overlay.style.pointerEvents = 'none';
+        }
+
         if (!window.html2canvas) {
             await new Promise((res, rej) => {
                 const s = document.createElement('script');
@@ -301,15 +340,16 @@ const VictoryCard = {
                 document.head.appendChild(s);
             });
         }
+
         try {
+            const card = document.getElementById('victoryCard');
             const canvas = await html2canvas(card, {
                 backgroundColor: '#0a0a0f', scale: 2, width: 390, height: 693,
                 useCORS: true, logging: false,
             });
+            if (overlay) { overlay.style.display = 'none'; overlay.style.opacity = ''; overlay.style.pointerEvents = ''; }
             canvas.toBlob(async (blob) => {
-                const file     = new File([blob], 'courtside-victory.png', { type: 'image/png' });
-                const passport = Passport.get();
-                const name     = passport?.playerName || 'Player';
+                const file = new File([blob], 'courtside-victory.png', { type: 'image/png' });
                 if (navigator.share && navigator.canShare({ files: [file] })) {
                     await navigator.share({ title: 'The Court Side Pro', text: `${name} just won! 🏆`, files: [file] });
                 } else {
@@ -318,7 +358,10 @@ const VictoryCard = {
                 }
                 if (window.Haptic) Haptic.success();
             }, 'image/png');
-        } catch (e) { console.error('Victory share failed:', e); }
+        } catch (e) {
+            if (overlay) { overlay.style.display = 'none'; overlay.style.opacity = ''; overlay.style.pointerEvents = ''; }
+            console.error('Victory share failed:', e);
+        }
     },
 };
 
@@ -793,12 +836,27 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MATCH RESULT — broadcast 'match_result' (per-UUID private stat update)
+    // WIN DEDUP — prevents double-recording when both WS broadcast (match_resolved)
+    // and DB poll fallback (match_result) deliver the same game result.
+    // Key: `${playerUUID}-${gameLabel}`. Cleared when a new session is joined.
+    // ─────────────────────────────────────────────────────────────────────────
+    _processedResults: new Set(),
+
+    _markResultProcessed(gameLabel) {
+        const passport = Passport.get();
+        if (!passport) return false;
+        const key = `${passport.playerUUID}-${gameLabel || '_'}`;
+        if (this._processedResults.has(key)) return true; // already handled
+        this._processedResults.add(key);
+        return false;
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MATCH RESULT — DB poll fallback only (WS missed events safety net)
     //
-    // Issue #4 — BUG FIX:
-    //   The `playerUUID` in the broadcast comes from squad[n].uuid (stored at
-    //   approval), which is the SAME uuid as passport.playerUUID (generated
-    //   locally and sent in the play-request). Strict equality check.
+    // match_result individual broadcasts were removed from dispatchWinSignals
+    // to prevent double-recording. This handler now only fires from _pollSignal
+    // when the WS broadcast was missed (e.g. player was briefly offline).
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResult(payload) {
@@ -806,14 +864,16 @@ const PlayerMode = {
         if (!passport) return;
 
         const { playerUUID, event, gameLabel } = payload;
-        const isMe = playerUUID === passport.playerUUID;
-        if (!isMe) return; // strict UUID — ignore signals not addressed to this player
+        if (playerUUID !== passport.playerUUID) return;
+
+        // Dedup: if match_resolved already handled this game, skip
+        if (this._markResultProcessed(gameLabel)) return;
 
         if (event === 'WIN') {
             const updated = Passport.recordWin();
             MatchHistory.push('WIN', '—', gameLabel || '');
             this._renderStats(updated);
-            SidelineView.show();   // ensure _visible=true
+            SidelineView.show();
             SidelineView.refresh();
             VictoryCard.show(passport.playerName);
         } else if (event === 'LOSS') {
@@ -826,14 +886,10 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MATCH RESOLVED — broadcast 'match_resolved' (round-level event)
+    // MATCH RESOLVED — broadcast 'match_resolved' (primary win/loss path)
     //
-    // Issue #4 — "Next Round" button trigger:
-    //   This is fired by processAndNext() in logic.js (the Next Round button).
-    //   All players receive it. Handles:
-    //     - Win/loss stat recording (delegates to _onMatchResult)
-    //     - Last Match Winner display on sideline feed
-    //     - Match history entry for Performance Lab
+    // Fired by dispatchWinSignals() when host taps "Next Round".
+    // Carries winnerUUIDs + loserUUIDs — each player checks their own UUID.
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResolved(payload) {
@@ -843,10 +899,12 @@ const PlayerMode = {
         const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel } = payload;
         const myUUID = passport.playerUUID;
 
-        // Determine this player's outcome
         const isWinner = winnerUUIDs.includes(myUUID);
         const isLoser  = loserUUIDs.includes(myUUID);
         const wasInMatch = isWinner || isLoser;
+
+        // Dedup: mark this game processed so the DB poll fallback skips it
+        if (wasInMatch) this._markResultProcessed(gameLabel);
 
         // 1. Write localStorage FIRST, before any UI
         if (isWinner) {
