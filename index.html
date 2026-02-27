@@ -469,7 +469,11 @@
             try {
                 const params   = new URLSearchParams(window.location.search);
                 const role     = params.get('role');
-                const joinCode = params.get('room') || params.get('join');
+                // On refresh, ?join= is gone (stripped by tryAutoRejoin). Read from
+                // localStorage cs_player_room_code as final fallback for the code pill.
+                const joinCode = params.get('room') || params.get('join')
+                    || (function(){ try{ return localStorage.getItem('cs_player_room_code'); }catch(e){ return null; } })()
+                    || null;
 
                 if (role !== 'player') return;  // Host mode — skip
 
@@ -599,8 +603,12 @@
                 const params   = new URLSearchParams(window.location.search);
                 const role     = params.get('role');
                 // Read joinCode from URL first; fall back to window._pendingJoinCode
-                // which tryAutoRejoin() saves before stripping ?join= from the URL.
-                const joinCode = params.get('room') || params.get('join') || window._pendingJoinCode || null;
+                // (saved by tryAutoRejoin before stripping ?join=), then finally
+                // localStorage cs_player_room_code so a full browser refresh reconnects.
+                const joinCode = params.get('room') || params.get('join')
+                    || window._pendingJoinCode
+                    || (function(){ try{ return localStorage.getItem('cs_player_room_code'); }catch(e){ return null; } })()
+                    || null;
 
                 if (role === 'player') {
                     // ── PLAYER MODE ─────────────────────────────────────────

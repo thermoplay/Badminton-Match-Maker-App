@@ -539,8 +539,16 @@ function undoLastRound() {
     document.getElementById('matchContainer').innerHTML = '';
     renderSavedMatches();
 
-    // Remove all winner selections visually — host must re-pick after undo
-    // (currentMatches already has winnerTeamIndex: null from the map above)
+    // Re-select the previous winners visually so host knows what was picked
+    snapshot.matches.forEach((m, i) => {
+        if (m.winnerTeamIndex !== null) {
+            const boxes = document.querySelectorAll(`#match-${i} .team-box`);
+            if (boxes[m.winnerTeamIndex]) {
+                boxes[m.winnerTeamIndex].classList.add('selected');
+            }
+            currentMatches[i].winnerTeamIndex = m.winnerTeamIndex;
+        }
+    });
 
     updateUndoButton();
     checkNextButtonState();
@@ -863,7 +871,7 @@ async function renderLeaderboardTab() {
 
         const winRate = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
         const rows = data.players
-            .sort((a, b) => b.wins - a.wins || winRate(b) - winRate(a) || a.name.localeCompare(b.name))
+            .sort((a, b) => b.wins - a.wins || winRate(b) - winRate(a))
             .map((p, i) => `
                 <div class="lb-row ${i === 0 ? 'lb-top' : ''}">
                     <span class="lb-rank">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}</span>
@@ -1146,7 +1154,7 @@ function closePlayRequests() {
 async function approvePlayRequest(name, id, playerUUID = null) {
     // Add to squad
     if (!squad.find(p => p.name === name)) {
-        squad.push({ name, uuid: playerUUID || null, rating: 1200, wins: 0, games: 0, streak: 0, active: true, sessionPlayCount: 0 });
+        squad.push({ name, uuid: playerUUID || null, rating: 1000, wins: 0, games: 0, streak: 0, active: true });
     }
 
     // UUID map for win signal dispatch
@@ -1271,7 +1279,7 @@ function passportRename() {
     SidelineView.refresh();                     // 3. full view
 
     // 4. Broadcast to host via the broadcast channel (not a dead API route)
-    if (window.isOnlineSession && window.currentRoomCode) {
+    if (typeof isOnlineSession !== 'undefined' && isOnlineSession && currentRoomCode) {
         if (typeof broadcastNameUpdate === 'function') {
             broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
         }
@@ -1280,7 +1288,7 @@ function passportRename() {
     // 5. PART 1: Also write new name to session_members table.
     // This triggers the host's postgres_changes listener (_handleMemberChange)
     // which updates the squad name on the big screen in real-time — no refresh.
-    if (window.isOnlineSession && window.currentRoomCode && typeof memberRename === 'function') {
+    if (typeof isOnlineSession !== 'undefined' && isOnlineSession && currentRoomCode && typeof memberRename === 'function') {
         memberRename(passport.playerUUID, trimmed);   // non-blocking
     }
 
@@ -1295,11 +1303,11 @@ let _signalPollTimer = null;
 
 function startSignalPolling() {
     const passport = Passport.get();
-    if (!passport || !window.currentRoomCode) return;
+    if (!passport || !currentRoomCode) return;
 
     clearInterval(_signalPollTimer);
     _signalPollTimer = setInterval(async () => {
-        if (!window.currentRoomCode) return;
+        if (!currentRoomCode) return;
         try {
             const res  = await fetch(
                 `/api/passport-signal?player_uuid=${encodeURIComponent(passport.playerUUID)}&room_code=${encodeURIComponent(currentRoomCode)}`
@@ -1347,7 +1355,7 @@ async function handlePassportSignal(signal, passport) {
  *   2. uuidMap[name]    — fallback, may be stale if name changed
  */
 async function dispatchWinSignals(mIdx) {
-    if (!window.isOperator || !window.currentRoomCode) return;
+    if (!isOperator || !currentRoomCode) return;
     const m = currentMatches[mIdx];
     if (!m || m.winnerTeamIndex === null) return;
 
@@ -1384,7 +1392,7 @@ async function dispatchWinSignals(mIdx) {
         broadcastMatchResult(winnerUUIDs, loserUUIDs, label);
     }
 
-    // Durable DB fallback — catches devices that momentarily lost WS
+    // Durable DB fallback — uses winner_uuids/loser_uuids matching the API contract
     if (winnerUUIDs.length > 0 || loserUUIDs.length > 0) {
         fetch('/api/passport-signal', {
             method:  'POST',
@@ -1424,7 +1432,7 @@ function _installPassportIWTPOverride() {
     checkIWTPSmartRecognition = function() {
         const passport = Passport.get();
         const sheet    = document.getElementById('iwantToPlaySheet');
-        if (!sheet || !window.isOnlineSession || window.isOperator) return;
+        if (!sheet || !isOnlineSession || isOperator) return;
 
         if (passport && passport.playerName) {
             // Returning player — show welcome-back prompt

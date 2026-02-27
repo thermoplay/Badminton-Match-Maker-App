@@ -417,7 +417,17 @@ const PlayerMode = {
         // PHASE 3 — Join or approve    (async, sets final status)
         // ══════════════════════════════════════════════════════════════════════
 
+        // Recover joinCode from localStorage if URL param was stripped on refresh
+        if (!joinCode) {
+            try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
+        }
+
         this._joinCode = joinCode;
+
+        // Persist joinCode to localStorage so a refresh can recover it
+        if (joinCode) {
+            try { localStorage.setItem('cs_player_room_code', joinCode); } catch {}
+        }
 
         // ── PHASE 0: Instant frame render ─────────────────────────────────────
         // BUG 1 FIX: Render the UI shell RIGHT NOW before any async work.
@@ -795,26 +805,23 @@ const PlayerMode = {
         const passport = Passport.get();
         if (!passport) return;
 
-        const { playerUUID, event } = payload;
+        const { playerUUID, event, gameLabel } = payload;
         const isMe = playerUUID === passport.playerUUID;
+        if (!isMe) return; // strict UUID — ignore signals not addressed to this player
 
-        if (event === 'WIN' && isMe) {
-            // 1. localStorage first
+        if (event === 'WIN') {
             const updated = Passport.recordWin();
-            // 2. UI update
+            MatchHistory.push('WIN', '—', gameLabel || '');
             this._renderStats(updated);
+            SidelineView.show();   // ensure _visible=true
             SidelineView.refresh();
             VictoryCard.show(passport.playerName);
         } else if (event === 'LOSS') {
-            const myName = passport.playerName?.toLowerCase();
-            const wasPlaying = (window.currentMatches || []).some(m =>
-                [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n => n.toLowerCase()).includes(myName)
-            );
-            if (wasPlaying || isMe) {
-                const updated = Passport.recordLoss();
-                this._renderStats(updated);
-                SidelineView.refresh();
-            }
+            const updated = Passport.recordLoss();
+            MatchHistory.push('LOSS', '—', gameLabel || '');
+            this._renderStats(updated);
+            SidelineView.show();
+            SidelineView.refresh();
         }
     },
 
@@ -854,8 +861,10 @@ const PlayerMode = {
         // 2. Show "Last Match Winner" on feed for ALL players
         window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
 
-        // 3. Update UI after storage writes
+        // 3. Update UI — call show() first to ensure _visible=true so
+        //    _renderPerformanceLab() inside refresh() actually executes.
         this._renderStats(Passport.get());
+        SidelineView.show();
         SidelineView.refresh();
 
         // 4. Haptic feedback

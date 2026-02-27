@@ -26,6 +26,18 @@ let operatorKeyHash   = null;
 let realtimeChannel   = null;
 let syncDebounceTimer = null;
 
+// ---------------------------------------------------------------------------
+// STATE MIRROR — keeps window.X in sync with module-level `let` vars.
+// `let` does NOT create window properties (only `var` does), so any code in
+// app.js or passport.js that reads window.isOnlineSession etc. sees undefined
+// unless we explicitly write it. Call _syncState() after every assignment.
+// ---------------------------------------------------------------------------
+function _syncState() {
+    window.isOnlineSession = isOnlineSession;
+    window.isOperator      = isOperator;
+    window.currentRoomCode = currentRoomCode;
+}
+
 // session_members realtime state
 // Key: player_uuid → { player_uuid, player_name, status, room_code }
 window._sessionMembers = {};
@@ -85,6 +97,7 @@ async function createOnlineSession() {
         operatorKeyHash = await hashKey(opKey);
         isOperator      = true;
         isOnlineSession = true;
+        _syncState();
         localStorage.setItem('cs_room_code',    roomCode);
         localStorage.setItem('cs_operator_key', opKey);
         localStorage.setItem('cs_op_key_hash',  operatorKeyHash);
@@ -133,6 +146,7 @@ async function joinOnlineSession(roomCode) {
             operatorKeyHash = null;
             showSessionToast(`👁 Joined session`);
         }
+        _syncState();
         applyRemoteState(session);
         subscribeRealtime(code);
         updateSessionUI();
@@ -304,6 +318,7 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     if (!roomCode || !playerUUID || !playerName) return null;
     currentRoomCode        = roomCode; // keep local var in sync
     window.currentRoomCode = roomCode; // expose globally so other paths can read it
+    _syncState();
     try {
         const r = await fetch('/api/member-upsert', {
             method:  'POST',
@@ -487,7 +502,7 @@ function subscribeRealtime(roomCode) {
             const data = JSON.parse(msg.data);
             // Heartbeat
             if (data.event === 'heartbeat') {
-                ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: '3' }));
+                ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: data.ref }));
                 return;
             }
             // postgres_changes — route by table
@@ -519,11 +534,9 @@ function subscribeRealtime(roomCode) {
     ws.onerror = () => {};
     ws.onclose = () => {
         if (isOnlineSession) {
-            showReconnectingIndicator(true);
-            setTimeout(() => {
-                subscribeRealtime(roomCode);
-                setTimeout(() => showReconnectingIndicator(false), 2000);
-            }, 3000);
+            // Silent reconnect — no banner. WS drops briefly on mobile
+            // sleep/background and self-heals. The user doesn't need to see it.
+            setTimeout(() => subscribeRealtime(roomCode), 3000);
         }
     };
 }
@@ -628,6 +641,7 @@ function leaveSession() {
     currentRoomCode = null;
     operatorKey     = null;
     operatorKeyHash = null;
+    _syncState();
     if (realtimeChannel) { realtimeChannel.close(); realtimeChannel = null; }
     localStorage.removeItem('cs_room_code');
     localStorage.removeItem('cs_operator_key');
@@ -737,6 +751,7 @@ async function tryAutoRejoin() {
             window.currentRoomCode = joinCode;
             // Save joinCode to window so window.onload can read it even after URL is cleaned
             window._pendingJoinCode = joinCode;
+            _syncState();
             // Strip ?join= but preserve ?role= so window.onload can still see it
             const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
             window.history.replaceState({}, document.title, cleanUrl);
@@ -770,6 +785,7 @@ async function tryAutoRejoin() {
         } else {
             isOperator = false;
         }
+        _syncState();
         applyRemoteState(session);
         subscribeRealtime(savedCode);
         updateSessionUI();
