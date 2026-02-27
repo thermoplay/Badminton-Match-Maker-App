@@ -38,64 +38,96 @@ function calculateOdds(teamA, teamB) {
 // ROUND PROCESSING
 // ---------------------------------------------------------------------------
 
-function processAndNext() {
-    if (currentMatches.length > 0) {
-        if (!currentMatches.every(m => m.winnerTeamIndex !== null)) {
-            alert('Operations Hold: Please select winners for all active games.');
-            return;
-        }
+// ---------------------------------------------------------------------------
+// PER-COURT ADVANCEMENT — fires when host taps "Next Game" on one court
+// ---------------------------------------------------------------------------
 
-        // Snapshot state BEFORE applying ELO — needed for undo
-        const snapshot = {
-            squadSnapshot:   squad.map(p => ({ ...p })),
-            matches:         currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
-            queueSnapshot:   [...playerQueue],
-            timestamp:       Date.now(),
-        };
-        roundHistory.push(snapshot);
-
-        if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
-
-        if (typeof dispatchWinSignals === 'function') {
-            currentMatches.forEach((m, idx) => {
-                if (m.winnerTeamIndex !== null) dispatchWinSignals(idx);
-            });
-        }
-
-        applyELOResults();
-        rotateQueue();   // move finished players to back of queue
-        updateUndoButton();
+function processCourtResult(mIdx) {
+    const match = currentMatches[mIdx];
+    if (!match || match.winnerTeamIndex === null) {
+        alert('Select a winner first.');
+        return;
     }
+
+    // Snapshot for undo
+    const snapshot = {
+        squadSnapshot: squad.map(p => ({ ...p })),
+        matches:       currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
+        queueSnapshot: [...playerQueue],
+        timestamp:     Date.now(),
+    };
+    roundHistory.push(snapshot);
+    if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
+
+    // Apply ELO for this court only
+    applyELOForMatch(match);
+
+    // Dispatch win signals
+    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx);
+
+    // Rotate just this court's players back into the queue
+    rotateCourtPlayers(match);
+
+    // Pull the next 4 from the queue for this court
+    const next4 = pullNextFromQueue();
+    if (next4.length < 4) {
+        // Not enough players — remove this court slot and collapse
+        currentMatches.splice(mIdx, 1);
+        rebuildMatchCardIndices();
+        renderQueueStrip();
+        checkNextButtonState();
+        updateUndoButton();
+        saveToDisk();
+        return;
+    }
+
+    // Build new match for this court
+    const newMatch = buildMatchFromPlayers(next4);
+    currentMatches[mIdx] = newMatch;
+
+    // Replace this card in the DOM
+    const tA    = next4.slice(0, 2);
+    const tB    = next4.slice(2, 4);
+    const cardEl = document.getElementById(`match-${mIdx}`);
+    if (cardEl) cardEl.outerHTML = buildMatchCardHTML(mIdx, tA, tB, newMatch.odds);
+
+    renderQueueStrip();
+    checkNextButtonState();
+    updateUndoButton();
+    saveToDisk();
+    Haptic.bump();
+}
+
+// ---------------------------------------------------------------------------
+// FIRST START — fires the first time host presses "Start Session"
+// ---------------------------------------------------------------------------
+
+function processAndNext() {
+    // If courts are already live, this button is disabled — do nothing
+    if (currentMatches.length > 0) return;
     generateMatches();
 }
 
+function applyELOForMatch(m) {
+    if (m.winnerTeamIndex === null) return;
+    const winIdx  = m.winnerTeamIndex;
+    const loseIdx = winIdx === 0 ? 1 : 0;
+
+    const winners = m.teams[winIdx].map(n => findP(n)).filter(Boolean);
+    const losers  = m.teams[loseIdx].map(n => findP(n)).filter(Boolean);
+    if (!winners.length || !losers.length) return;
+
+    const winAvg  = winners.reduce((s, p) => s + p.rating, 0) / winners.length;
+    const loseAvg = losers.reduce((s, p)  => s + p.rating, 0) / losers.length;
+    const sift    = calculateELOSift(winAvg, loseAvg);
+
+    winners.forEach(p => { p.rating += sift; p.wins++; p.games++; p.streak++; });
+    losers.forEach(p  => { p.rating = Math.max(800, p.rating - sift); p.games++; p.streak = 0; });
+}
+
+// Legacy alias — kept for undo path
 function applyELOResults() {
-    // Players sitting out this round gain a wait round (handled in generateMatches)
-    currentMatches.forEach(m => {
-        const winIdx  = m.winnerTeamIndex;
-        const loseIdx = winIdx === 0 ? 1 : 0;
-
-        const winners = m.teams[winIdx].map(n => findP(n)).filter(Boolean);
-        const losers  = m.teams[loseIdx].map(n => findP(n)).filter(Boolean);
-
-        if (winners.length === 0 || losers.length === 0) return;
-
-        const winAvg  = winners.reduce((sum, p) => sum + p.rating, 0) / winners.length;
-        const loseAvg = losers.reduce((sum, p) => sum + p.rating, 0) / losers.length;
-        const sift    = calculateELOSift(winAvg, loseAvg);
-
-        winners.forEach(p => {
-            p.rating += sift;
-            p.wins++;
-            p.games++;
-            p.streak++;
-        });
-        losers.forEach(p => {
-            p.rating = Math.max(800, p.rating - sift);
-            p.games++;
-            p.streak = 0;
-        });
-    });
+    currentMatches.forEach(m => applyELOForMatch(m));
 }
 
 // ---------------------------------------------------------------------------
@@ -140,30 +172,106 @@ function initQueue() {
 //   losers first (shorter wait), then winners (earned rest).
 // ---------------------------------------------------------------------------
 
-function rotateQueue() {
-    const playing = currentMatches.flatMap(m => m.teams.flat());
-    if (playing.length === 0) return;
+// Rotate a single court's players back into the queue
+function rotateCourtPlayers(m) {
+    const allNames = m.teams.flat();
+    // Remove from wherever they currently sit
+    playerQueue = playerQueue.filter(n => !allNames.includes(n));
 
-    // Remove all just-played names from wherever they are in the queue
-    playerQueue = playerQueue.filter(n => !playing.includes(n));
+    if (m.winnerTeamIndex === null) {
+        playerQueue.push(...allNames);
+        return;
+    }
+    const winIdx  = m.winnerTeamIndex;
+    const loseIdx = winIdx === 0 ? 1 : 0;
+    // Losers back first (shorter wait), winners after (slight rest)
+    playerQueue.push(...m.teams[loseIdx], ...m.teams[winIdx]);
+}
 
-    // Collect losers and winners per match
-    const losers  = [];
-    const winners = [];
-    currentMatches.forEach(m => {
-        if (m.winnerTeamIndex === null) {
-            // No winner recorded — treat both teams as equal, append both
-            m.teams.flat().forEach(n => losers.push(n));
-            return;
+// Pull the next 4 eligible active players from the queue front.
+// Returns player OBJECTS (not names). Does NOT mutate the queue.
+function pullNextFromQueue() {
+    initQueue(); // ensure new/departed players are synced first
+    const onCourt   = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    const pulled    = [];
+    const pulledSet = new Set();
+
+    for (const name of playerQueue) {
+        if (pulled.length >= 4) break;
+        if (onCourt.has(name)) continue;        // already playing another court
+        if (pulledSet.has(name)) continue;      // dupe guard
+        const p = squad.find(s => s.name === name && s.active);
+        if (!p) continue;
+        pulled.push(p);
+        pulledSet.add(name);
+    }
+    return pulled;
+}
+
+// Build a match object from 4 player objects, applying history-aware pairing
+function buildMatchFromPlayers(p4) {
+    p4.forEach(p => p.sessionPlayCount++);
+
+    p4.sort(() => Math.random() - 0.5);
+    p4.sort((a, b) => b.rating - a.rating);
+
+    const pairings = [
+        { tA: [p4[0], p4[3]], tB: [p4[1], p4[2]] },
+        { tA: [p4[0], p4[2]], tB: [p4[1], p4[3]] },
+        { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
+    ];
+
+    const tmCount  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
+    const oppCount = (a, b) => (a.opponentHistory  || {})[b.name] || 0;
+    const scorePairing = ({ tA, tB }) =>
+        tmCount(tA[0], tA[1]) * 2 + tmCount(tB[0], tB[1]) * 2 +
+        oppCount(tA[0], tB[0]) + oppCount(tA[0], tB[1]) +
+        oppCount(tA[1], tB[0]) + oppCount(tA[1], tB[1]);
+
+    pairings.sort(() => Math.random() - 0.5);
+    pairings.sort((a, b) => scorePairing(a) - scorePairing(b));
+
+    const { tA, tB } = pairings[0];
+    const odds = calculateOdds(tA, tB);
+
+    const addHistory = (p, teammate, opponents) => {
+        p.teammateHistory = p.teammateHistory || {};
+        p.opponentHistory = p.opponentHistory || {};
+        p.teammateHistory[teammate.name] = (p.teammateHistory[teammate.name] || 0) + 1;
+        opponents.forEach(o => {
+            p.opponentHistory[o.name] = (p.opponentHistory[o.name] || 0) + 1;
+        });
+    };
+    addHistory(tA[0], tA[1], tB); addHistory(tA[1], tA[0], tB);
+    addHistory(tB[0], tB[1], tA); addHistory(tB[1], tB[0], tA);
+
+    return {
+        teams:           [tA.map(p => p.name), tB.map(p => p.name)],
+        winnerTeamIndex: null,
+        odds,
+    };
+}
+
+// Rebuild DOM indices after a court is removed (so id="match-N" stays accurate)
+function rebuildMatchCardIndices() {
+    const container = document.getElementById('matchContainer');
+    container.innerHTML = '';
+    currentMatches.forEach((m, i) => {
+        const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
+        const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
+        if (tA.length === 2 && tB.length === 2) {
+            container.insertAdjacentHTML('beforeend', buildMatchCardHTML(i, tA, tB, m.odds));
+            if (m.winnerTeamIndex !== null) {
+                const boxes = document.querySelectorAll(`#match-${i} .team-box`);
+                if (boxes[m.winnerTeamIndex]) boxes[m.winnerTeamIndex].classList.add('selected');
+            }
         }
-        const winIdx  = m.winnerTeamIndex;
-        const loseIdx = winIdx === 0 ? 1 : 0;
-        m.teams[loseIdx].forEach(n => losers.push(n));
-        m.teams[winIdx].forEach(n => winners.push(n));
     });
+}
 
-    // Losers re-enter before winners — they wait less
-    playerQueue.push(...losers, ...winners);
+// Legacy alias for undo — rotates ALL courts at once
+function rotateQueue() {
+    currentMatches.forEach(m => rotateCourtPlayers(m));
 }
 
 // ---------------------------------------------------------------------------
@@ -183,82 +291,24 @@ function generateMatches() {
         return;
     }
 
-    // Sync queue — adds new players, removes departed ones
     initQueue();
 
     currentMatches = [];
     document.getElementById('matchContainer').innerHTML = '';
 
-    // ── Pull players from the front of the queue ───────────────────────────
-    // Walk the queue in order; skip inactive players (resting) but keep their
-    // slot so they re-enter at the same position when they come back.
-    const courtCount  = Math.floor(activePool.length / 4);
-    const playing     = [];
-    const playingSet  = new Set();
-
-    for (const name of playerQueue) {
-        if (playing.length >= courtCount * 4) break;
-        const p = squad.find(s => s.name === name && s.active);
-        if (!p) continue;                          // inactive / resting — skip
-        if (playingSet.has(name)) continue;        // dupe guard
-        playing.push(p);
-        playingSet.add(name);
-    }
-
-    // ── Build match cards ──────────────────────────────────────────────────
-    const playingQueue = [...playing];
-    const matchData    = [];
+    // Cap courts to what the active pool can support (need 4 players per court)
+    const maxCourts  = Math.floor(activePool.length / 4);
+    const courtCount = Math.min(activeCourts, maxCourts);
+    const matchData  = [];
 
     for (let i = 0; i < courtCount; i++) {
-        const p4 = playingQueue.splice(0, 4);
-        if (p4.length < 4 || p4.some(p => !p)) continue;
-
-        p4.forEach(p => p.sessionPlayCount++);
-
-        // Shuffle → ELO sort → evaluate all 3 pairings → pick best variety
-        p4.sort(() => Math.random() - 0.5);
-        p4.sort((a, b) => b.rating - a.rating);
-
-        const pairings = [
-            { tA: [p4[0], p4[3]], tB: [p4[1], p4[2]] },
-            { tA: [p4[0], p4[2]], tB: [p4[1], p4[3]] },
-            { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
-        ];
-
-        const tmCount  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
-        const oppCount = (a, b) => (a.opponentHistory  || {})[b.name] || 0;
-
-        const scorePairing = ({ tA, tB }) =>
-            tmCount(tA[0], tA[1]) * 2 + tmCount(tB[0], tB[1]) * 2 +
-            oppCount(tA[0], tB[0]) + oppCount(tA[0], tB[1]) +
-            oppCount(tA[1], tB[0]) + oppCount(tA[1], tB[1]);
-
-        pairings.sort(() => Math.random() - 0.5);
-        pairings.sort((a, b) => scorePairing(a) - scorePairing(b));
-
-        const { tA, tB } = pairings[0];
-        const odds = calculateOdds(tA, tB);
-
-        // Record session history
-        const addHistory = (p, teammate, opponents) => {
-            p.teammateHistory = p.teammateHistory || {};
-            p.opponentHistory = p.opponentHistory || {};
-            p.teammateHistory[teammate.name] = (p.teammateHistory[teammate.name] || 0) + 1;
-            opponents.forEach(o => {
-                p.opponentHistory[o.name] = (p.opponentHistory[o.name] || 0) + 1;
-            });
-        };
-        addHistory(tA[0], tA[1], tB);
-        addHistory(tA[1], tA[0], tB);
-        addHistory(tB[0], tB[1], tA);
-        addHistory(tB[1], tB[0], tA);
-
-        currentMatches.push({
-            teams:           [tA.map(p => p.name), tB.map(p => p.name)],
-            winnerTeamIndex: null,
-            odds,
-        });
-        matchData.push({ idx: i, tA, tB, odds });
+        const p4 = pullNextFromQueue();
+        if (p4.length < 4) break;
+        const match = buildMatchFromPlayers(p4);
+        currentMatches.push(match);
+        const tA = p4.slice(0, 2);
+        const tB = p4.slice(2, 4);
+        matchData.push({ idx: i, tA, tB, odds: match.odds });
     }
 
     renderAllMatchCards(matchData);
@@ -309,7 +359,7 @@ function renderQueueStrip() {
                     <span class="queue-pos">${idx + 1}</span>
                     ${Avatar.html(p.name)}
                     <span class="queue-name">${escapeHTML(p.name)}</span>
-                    ${idx < 4 ? '<span class="queue-next-badge">NEXT</span>' : ''}
+                    ${idx < activeCourts * 4 ? '<span class="queue-next-badge">NEXT</span>' : ''}
                 </div>
             `).join('')}
         </div>
@@ -339,7 +389,7 @@ function buildMatchCardHTML(idx, tA, tB, odds) {
     return `
         <div class="match-card" id="match-${idx}">
             <div class="match-header">
-                <span class="match-label">Game ${idx + 1}</span>
+                <span class="match-label">Court ${idx + 1}</span>
                 <div class="prob-container">
                     <div class="prob-pill ${hA}">${odds[0]}%</div>
                     <div class="prob-pill ${hB}">${odds[1]}%</div>
@@ -354,6 +404,11 @@ function buildMatchCardHTML(idx, tA, tB, odds) {
             <div class="team-box" onclick="setWinner(${idx}, 1)">
                 <b>${escapeHTML(tB[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tB[1].name)}</b>
             </div>
+            <div class="court-next-row" id="court-next-${idx}">
+                <button class="court-next-btn" onclick="processCourtResult(${idx})" disabled>
+                    Next Game →
+                </button>
+            </div>
         </div>
     `;
 }
@@ -367,23 +422,21 @@ function setWinner(mIdx, tIdx) {
     boxes.forEach((box, i) => box.classList.toggle('selected', i === tIdx));
     currentMatches[mIdx].winnerTeamIndex = tIdx;
 
-    // Haptic: short tap on winner select
     Haptic.tap();
 
-    // Confetti: burst from the center of the winning team-box
+    // Confetti burst from the winning team-box
     const winBox = boxes[tIdx];
     if (winBox) {
         const rect = winBox.getBoundingClientRect();
-        const cx = rect.left + rect.width  / 2;
-        const cy = rect.top  + rect.height / 2;
-        Confetti.burst(cx, cy, 55);
+        Confetti.burst(rect.left + rect.width / 2, rect.top + rect.height / 2, 55);
     }
+
+    // Enable this court's Next Game button now that a winner is selected
+    const nextBtn = document.querySelector(`#court-next-${mIdx} .court-next-btn`);
+    if (nextBtn) nextBtn.disabled = false;
 
     checkNextButtonState();
     saveToDisk();
-    // NOTE: dispatchWinSignals is intentionally NOT called here.
-    // It fires exactly once from processAndNext() after all winners are set.
-    // Calling it here too would double-count every win.
 }
 
 // ---------------------------------------------------------------------------

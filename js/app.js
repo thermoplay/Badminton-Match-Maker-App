@@ -31,8 +31,9 @@ let supabase  = null;
 // ---------------------------------------------------------------------------
 let squad = [];
 let currentMatches = [];
-let playerQueue  = [];          // ordered rotation queue — persisted to disk
-let roundHistory = [];          // array of completed round snapshots for history + undo
+let playerQueue   = [];          // ordered rotation queue — persisted to disk
+let activeCourts  = 1;           // host-selected court count (1–5)
+let roundHistory  = [];          // array of completed round snapshots for history + undo
 let previousRoundSnapshot = null; // snapshot before last round for undo
 let selectedPlayerIndex = null;
 let pressTimer = null;
@@ -43,7 +44,7 @@ let isLongPress = false;
 // ---------------------------------------------------------------------------
 
 function saveToDisk() {
-    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory, playerQueue }));
+    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory, playerQueue, activeCourts }));
 }
 
 // ---------------------------------------------------------------------------
@@ -81,8 +82,13 @@ function loadFromDisk() {
             });
 
             // Restore the queue; filter out any names no longer in the squad
-            playerQueue = (data.playerQueue || [])
+            playerQueue  = (data.playerQueue || [])
                 .filter(name => squad.find(p => p.name === name));
+            activeCourts = data.activeCourts || 1;
+            // Sync button highlight to restored value
+            document.querySelectorAll('.court-btn').forEach((btn, i) => {
+                btn.classList.toggle('court-btn-active', i + 1 === activeCourts);
+            });
 
             renderSquad();
             renderSavedMatches();
@@ -244,15 +250,23 @@ function updateSideline() {
 function checkNextButtonState() {
     const btn = document.getElementById('nextRoundBtn');
     if (!btn) return;
-    // Enabled when: no matches exist yet, OR every match has a winner
-    const canProceed =
-        currentMatches.length === 0 ||
-        currentMatches.every(m => m.winnerTeamIndex !== null);
+    // Global "Next Round" enabled only when no matches exist yet (first start)
+    // Once courts are live, each court has its own Next Game button.
+    const canProceed = currentMatches.length === 0;
+    btn.style.opacity       = canProceed ? '1'       : '0.4';
+    btn.style.pointerEvents = canProceed ? 'auto'    : 'none';
+    btn.style.cursor        = canProceed ? 'pointer' : 'default';
+    btn.style.background    = canProceed ? 'var(--accent)' : '#2a2a3a';
+    btn.textContent         = currentMatches.length === 0 ? 'Start Session' : 'Running…';
+}
 
-    btn.style.opacity        = canProceed ? '1'            : '0.2';
-    btn.style.pointerEvents  = canProceed ? 'auto'         : 'none';
-    btn.style.cursor         = canProceed ? 'pointer'      : 'not-allowed';
-    btn.style.background     = canProceed ? 'var(--accent)': '#475569';
+function setCourts(n) {
+    activeCourts = Math.max(1, Math.min(5, n));
+    // Highlight selected button
+    document.querySelectorAll('.court-btn').forEach((btn, i) => {
+        btn.classList.toggle('court-btn-active', i + 1 === activeCourts);
+    });
+    saveToDisk();
 }
 
 // ---------------------------------------------------------------------------
@@ -578,8 +592,7 @@ function undoLastRound() {
 
     // Re-render everything
     renderSquad();
-    document.getElementById('matchContainer').innerHTML = '';
-    renderSavedMatches();
+    rebuildMatchCardIndices();
     renderQueueStrip();
 
     // Re-select the previous winners visually so host knows what was picked

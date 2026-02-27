@@ -72,7 +72,17 @@
 
     <nav class="nav-bar" id="hostNav">
         <button class="btn-icon" onclick="showOverlay('sync')" aria-label="Sync">📲</button>
-        <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()">Next Round</button>
+        <div class="court-selector">
+            <span class="court-selector-label">COURTS</span>
+            <div class="court-btn-group">
+                <button class="court-btn court-btn-active" onclick="setCourts(1)">1</button>
+                <button class="court-btn" onclick="setCourts(2)">2</button>
+                <button class="court-btn" onclick="setCourts(3)">3</button>
+                <button class="court-btn" onclick="setCourts(4)">4</button>
+                <button class="court-btn" onclick="setCourts(5)">5</button>
+            </div>
+        </div>
+        <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()">Start Session</button>
         <button class="btn-icon undo-btn" id="undoRoundBtn" onclick="undoLastRound()" aria-label="Undo" style="display:none;">
             <span class="undo-icon">↩</span>
             <span class="undo-label">Undo</span>
