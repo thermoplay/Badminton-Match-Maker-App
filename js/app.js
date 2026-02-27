@@ -84,10 +84,14 @@ function loadFromDisk() {
             // Restore the queue; filter out any names no longer in the squad
             playerQueue  = (data.playerQueue || [])
                 .filter(name => squad.find(p => p.name === name));
-            activeCourts = data.activeCourts || 1;
-            // Sync the input to the restored value
-            const courtInput = document.getElementById('courtCountInput');
-            if (courtInput) courtInput.value = activeCourts;
+            // Only restore if it's a valid positive number, else default to 1
+            activeCourts = (Number.isInteger(data.activeCourts) && data.activeCourts >= 1)
+                ? data.activeCourts : 1;
+            // Sync the input — use setTimeout so DOM is guaranteed ready
+            setTimeout(() => {
+                const courtInput = document.getElementById('courtCountInput');
+                if (courtInput) courtInput.value = activeCourts;
+            }, 0);
 
             renderSquad();
             renderSavedMatches();
@@ -260,11 +264,39 @@ function checkNextButtonState() {
 }
 
 function setCourts(n) {
-    activeCourts = Math.max(1, n || 1);
-    // Sync the input in case setCourts was called programmatically
+    const val = Math.max(1, parseInt(n) || 1);
+
+    // Sync input display regardless
     const input = document.getElementById('courtCountInput');
-    if (input && parseInt(input.value) !== activeCourts) input.value = activeCourts;
+    if (input) input.value = val;
+
+    if (activeCourts === val) return; // nothing changed
+    activeCourts = val;
     saveToDisk();
+
+    // If session hasn't started yet, just confirm silently
+    if (currentMatches.length === 0) {
+        if (typeof showSessionToast === 'function') showSessionToast(`🏀 ${activeCourts} court${activeCourts > 1 ? 's' : ''} set`);
+        return;
+    }
+
+    // Courts are live — ask if they want to apply immediately
+    if (confirm(`Apply ${activeCourts} court${activeCourts > 1 ? 's' : ''} now? This will reset the current round.`)) {
+        // Clear current matches and restart with new court count
+        currentMatches = [];
+        document.getElementById('matchContainer').innerHTML = '';
+        // Re-add all on-court players back to the front of the queue
+        const onCourt = squad.filter(p => p.active);
+        onCourt.forEach(p => {
+            if (!playerQueue.includes(p.name)) playerQueue.unshift(p.name);
+        });
+        generateMatches();
+    } else {
+        // Revert
+        activeCourts = currentMatches.length || 1;
+        if (input) input.value = activeCourts;
+        saveToDisk();
+    }
 }
 
 // ---------------------------------------------------------------------------

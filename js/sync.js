@@ -563,6 +563,13 @@ function applyRemoteState(session) {
     roundHistory   = session.round_history    || [];
     playerQueue    = (session.player_queue    || [])
         .filter(name => squad.find(p => p.name === name)); // drop stale names
+    if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
+        activeCourts = session.active_courts;
+        setTimeout(() => {
+            const courtInput = document.getElementById('courtCountInput');
+            if (courtInput) courtInput.value = activeCourts;
+        }, 0);
+    }
 
     // Migrate: remote squad rows may come from an older client that didn't
     // save rating / consecutiveGames / forcedRest. migratePlayer() is defined
