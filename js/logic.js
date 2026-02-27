@@ -240,30 +240,17 @@ function generateMatches() {
     });
 
     // ── 8. "Next Up" ticker ─────────────────────────────────────────────────
-    const benchPool = [...sitting].sort(
-        (a, b) => (b.waitRounds || 0) - (a.waitRounds || 0) || (a.sessionPlayCount || 0) - (b.sessionPlayCount || 0)
-    );
-    const nextUpPicked = new Set();
-    const nextUp       = [];
-    for (const p of benchPool) {
-        const uid = squad.indexOf(p);
-        if (!nextUpPicked.has(uid)) {
-            nextUpPicked.add(uid);
-            nextUp.push(p);
-        }
-        if (nextUp.length === 4) break;
-    }
-    // If bench has fewer than 4, fill from the playing pool tail
-    if (nextUp.length < 4) {
-        for (const p of [...playing].reverse()) {
-            const uid = squad.indexOf(p);
-            if (!nextUpPicked.has(uid)) {
-                nextUpPicked.add(uid);
-                nextUp.push(p);
-            }
-            if (nextUp.length === 4) break;
-        }
-    }
+    // Only show players who are NOT playing this round — never current-game
+    // players. If the bench is smaller than 4 we just show fewer names;
+    // showing someone already on a court is confusing and wrong.
+    const playingNames = new Set(playing.map(p => p.name));
+    const nextUp = [...sitting]
+        .filter(p => p && p.name && !playingNames.has(p.name))
+        .sort((a, b) =>
+            (b.waitRounds || 0) - (a.waitRounds || 0) ||
+            (a.sessionPlayCount || 0) - (b.sessionPlayCount || 0)
+        )
+        .slice(0, 4);
     updateNextUpTicker(nextUp);
 
     // ── 9. Build match cards ────────────────────────────────────────────────
