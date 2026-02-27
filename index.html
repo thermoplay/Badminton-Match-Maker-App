@@ -74,15 +74,18 @@
         <button class="btn-icon" onclick="showOverlay('sync')" aria-label="Sync">📲</button>
         <div class="court-selector">
             <span class="court-selector-label">COURTS</span>
-            <input
-                type="number"
-                id="courtCountInput"
-                class="court-count-input"
-                value="1"
-                min="1"
-                max="99"
-                oninput="setCourts(parseInt(this.value) || 1)"
-            >
+            <div class="court-input-row">
+                <input
+                    type="number"
+                    id="courtCountInput"
+                    class="court-count-input"
+                    value="1"
+                    min="1"
+                    max="99"
+                    onkeydown="if(event.key==='Enter') setCourts(parseInt(this.value)||1)"
+                >
+                <button class="court-set-btn" onclick="setCourts(parseInt(document.getElementById('courtCountInput').value)||1)">✓</button>
+            </div>
         </div>
         <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()">Start Session</button>
         <button class="btn-icon undo-btn" id="undoRoundBtn" onclick="undoLastRound()" aria-label="Undo" style="display:none;">
