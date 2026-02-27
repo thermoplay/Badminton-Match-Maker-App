@@ -45,6 +45,24 @@ function saveToDisk() {
     localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory }));
 }
 
+// ---------------------------------------------------------------------------
+// FIELD MIGRATION — call on every player object from localStorage OR network.
+// Backfills fields added in later releases so older saved/remote data never
+// causes a "Cannot read properties of undefined" crash at runtime.
+// ---------------------------------------------------------------------------
+function migratePlayer(p) {
+    if (p.rating           == null) p.rating           = 1200;
+    if (p.wins             == null) p.wins             = 0;
+    if (p.games            == null) p.games            = 0;
+    if (p.streak           == null) p.streak           = 0;
+    if (p.sessionPlayCount == null) p.sessionPlayCount = 0;
+    if (p.waitRounds       == null) p.waitRounds       = 0;
+    if (p.consecutiveGames == null) p.consecutiveGames = 0;
+    if (p.forcedRest       == null) p.forcedRest       = false;
+    if (p.active           == null) p.active           = true;
+    return p;
+}
+
 function loadFromDisk() {
     const saved = localStorage.getItem('cs_pro_vault');
     if (saved) {
@@ -53,20 +71,7 @@ function loadFromDisk() {
             squad          = data.squad        || [];
             roundHistory   = data.roundHistory || [];
 
-            // ── Field migration — backfill any fields added after initial release ──
-            // Old saves may be missing rating, consecutiveGames, or forcedRest.
-            // Patching here ensures calculateOdds never reads undefined.rating.
-            squad.forEach(p => {
-                if (p.rating           === undefined) p.rating           = 1200;
-                if (p.wins             === undefined) p.wins             = 0;
-                if (p.games            === undefined) p.games            = 0;
-                if (p.streak           === undefined) p.streak           = 0;
-                if (p.sessionPlayCount === undefined) p.sessionPlayCount = 0;
-                if (p.waitRounds       === undefined) p.waitRounds       = 0;
-                if (p.consecutiveGames === undefined) p.consecutiveGames = 0;
-                if (p.forcedRest       === undefined) p.forcedRest       = false;
-                if (p.active           === undefined) p.active           = true;
-            });
+            squad.forEach(migratePlayer);
 
             currentMatches = (data.currentMatches || []).filter(m => {
                 return m.teams.flat().every(name => squad.find(p => p.name === name));

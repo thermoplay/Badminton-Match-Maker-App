@@ -557,9 +557,15 @@ function applyRemoteState(session) {
     const prevCount = currentMatches.length;
 
     // Globals FIRST — no render reads stale data
-    squad          = session.squad           || [];
+    squad          = (session.squad           || []);
     currentMatches = session.current_matches || [];
     roundHistory   = session.round_history   || [];
+
+    // Migrate: remote squad rows may come from an older client that didn't
+    // save rating / consecutiveGames / forcedRest. migratePlayer() is defined
+    // in app.js and backfills any missing fields so calculateOdds never sees
+    // undefined.rating regardless of where the data came from.
+    if (typeof migratePlayer === 'function') squad.forEach(migratePlayer);
     window._sessionUUIDMap  = session.uuid_map         || {};
     window._approvedPlayers = session.approved_players || {};
 
