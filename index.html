@@ -35,7 +35,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script>window.QRCodeConstructor = window.QRCode;</script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-    </head>
+    <!-- html2canvas for Aura poster export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
 <body>
     <!-- #hostRoot: hidden when ?role=player is in URL -->
     <div id="hostRoot">
@@ -369,6 +371,37 @@
 
         </div><!-- /.sl-inner -->
     </div><!-- /#sidelinePanel -->
+
+    <!-- ═══ VICTORY CARD OVERLAY ════════════════════════════════════════════════ -->
+    <div id="victoryCardOverlay" style="display:none;" class="victory-overlay">
+        <!-- Capture target: exactly 9:16 -->
+        <div id="victoryCard" class="victory-card">
+
+            <!-- Background layers -->
+            <div class="vc-bg-gradient"></div>
+            <div class="vc-bg-grid"></div>
+
+            <!-- Branding -->
+            <div class="vc-brand">THE COURT<span>SIDE</span> PRO</div>
+
+            <!-- Core message -->
+            <div class="vc-content">
+                <div class="vc-victory-word">VICTORY</div>
+                <div class="vc-player-name" id="victoryCardName"></div>
+                <div class="vc-divider"></div>
+                <div class="vc-tagline">SEASON CERTIFIED</div>
+            </div>
+
+            <!-- Footer watermark -->
+            <div class="vc-footer">@thecourtsidepro</div>
+        </div>
+
+        <!-- Controls outside the capture area -->
+        <div class="victory-controls">
+            <button class="vc-share-btn" onclick="VictoryCard.share()">↑ Share Victory</button>
+            <button class="vc-close-btn" onclick="VictoryCard.hide()">✕ Close</button>
+        </div>
+    </div>
 
     <!--
         LOAD ORDER:

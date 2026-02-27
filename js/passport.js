@@ -252,8 +252,63 @@ const SidelineView = {
 // =============================================================================
 // VICTORY CARD — removed as intrusive; wins recorded silently in stats
 // =============================================================================
+<<<<<<< HEAD
 const VictoryCard = { show() {}, hide() {}, share() {} };
 
+=======
+
+const VictoryCard = {
+    show(playerName) {
+        const overlay = document.getElementById('victoryCardOverlay');
+        const nameEl  = document.getElementById('victoryCardName');
+        if (!overlay || !nameEl) return;
+        nameEl.textContent = playerName.toUpperCase();
+        overlay.style.display = 'flex';
+        requestAnimationFrame(() => overlay.classList.add('victory-visible'));
+        if (window.Haptic)   Haptic.success();
+        if (window.Confetti) Confetti.burst(window.innerWidth / 2, window.innerHeight / 2, 120);
+    },
+
+    hide() {
+        const overlay = document.getElementById('victoryCardOverlay');
+        if (!overlay) return;
+        overlay.classList.remove('victory-visible');
+        setTimeout(() => { overlay.style.display = 'none'; }, 400);
+    },
+
+    async share() {
+        const card = document.getElementById('victoryCard');
+        if (!card) return;
+        if (!window.html2canvas) {
+            await new Promise((res, rej) => {
+                const s = document.createElement('script');
+                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+                s.onload = res; s.onerror = rej;
+                document.head.appendChild(s);
+            });
+        }
+        try {
+            const canvas = await html2canvas(card, {
+                backgroundColor: '#0a0a0f', scale: 2, width: 390, height: 693,
+                useCORS: true, logging: false,
+            });
+            canvas.toBlob(async (blob) => {
+                const file     = new File([blob], 'courtside-victory.png', { type: 'image/png' });
+                const passport = Passport.get();
+                const name     = passport?.playerName || 'Player';
+                if (navigator.share && navigator.canShare({ files: [file] })) {
+                    await navigator.share({ title: 'The Court Side Pro', text: `${name} just won! 🏆`, files: [file] });
+                } else {
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob); a.download = 'courtside-victory.png'; a.click();
+                }
+                if (window.Haptic) Haptic.success();
+            }, 'image/png');
+        } catch (e) { console.error('Victory share failed:', e); }
+    },
+};
+
+>>>>>>> parent of 8573c6b (1.02)
 // =============================================================================
 // INVITE QR
 // =============================================================================
@@ -684,6 +739,7 @@ const PlayerMode = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
+<<<<<<< HEAD
     // FIX #1: _applyMatchOutcome — single authoritative path for recording
     // win/loss to localStorage. Called by BOTH _onMatchResolved (broadcast)
     // and _onMatchResult (DB poll). The dedup key prevents double-counting
@@ -691,6 +747,14 @@ const PlayerMode = {
     //
     // FIX #7: The dedup set is cleared between rounds by clearRoundDedup()
     // in logic.js, so "Game 1" in Round 2 correctly records a new result.
+=======
+    // MATCH RESULT — broadcast 'match_result' (per-UUID private stat update)
+    //
+    // Issue #4 — BUG FIX:
+    //   The `playerUUID` in the broadcast comes from squad[n].uuid (stored at
+    //   approval), which is the SAME uuid as passport.playerUUID (generated
+    //   locally and sent in the play-request). Strict equality check.
+>>>>>>> parent of 8573c6b (1.02)
     // ─────────────────────────────────────────────────────────────────────────
 
     _applyMatchOutcome(isWinner, opponentNames, gameLabel) {
@@ -715,6 +779,7 @@ const PlayerMode = {
         if (!passport) return;
 
         const { playerUUID, event, gameLabel } = payload;
+<<<<<<< HEAD
         if (playerUUID !== passport.playerUUID) return;
 
         // Delegate to shared outcome handler (handles dedup internally)
@@ -725,6 +790,38 @@ const PlayerMode = {
         }
     },
 
+=======
+        const isMe = playerUUID === passport.playerUUID;
+        if (!isMe) return; // strict UUID — ignore signals not addressed to this player
+
+        if (event === 'WIN') {
+            const updated = Passport.recordWin();
+            MatchHistory.push('WIN', '—', gameLabel || '');
+            this._renderStats(updated);
+            SidelineView.show();   // ensure _visible=true
+            SidelineView.refresh();
+            VictoryCard.show(passport.playerName);
+        } else if (event === 'LOSS') {
+            const updated = Passport.recordLoss();
+            MatchHistory.push('LOSS', '—', gameLabel || '');
+            this._renderStats(updated);
+            SidelineView.show();
+            SidelineView.refresh();
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MATCH RESOLVED — broadcast 'match_resolved' (round-level event)
+    //
+    // Issue #4 — "Next Round" button trigger:
+    //   This is fired by processAndNext() in logic.js (the Next Round button).
+    //   All players receive it. Handles:
+    //     - Win/loss stat recording (delegates to _onMatchResult)
+    //     - Last Match Winner display on sideline feed
+    //     - Match history entry for Performance Lab
+    // ─────────────────────────────────────────────────────────────────────────
+
+>>>>>>> parent of 8573c6b (1.02)
     _onMatchResolved(payload) {
         const passport = Passport.get();
         if (!passport) return;
@@ -732,10 +829,12 @@ const PlayerMode = {
         const { winnerNames, winnerUUIDs = [], loserUUIDs = [], gameLabel } = payload;
         const myUUID = passport.playerUUID;
 
-        const isWinner   = winnerUUIDs.includes(myUUID);
-        const isLoser    = loserUUIDs.includes(myUUID);
+        // Determine this player's outcome
+        const isWinner = winnerUUIDs.includes(myUUID);
+        const isLoser  = loserUUIDs.includes(myUUID);
         const wasInMatch = isWinner || isLoser;
 
+<<<<<<< HEAD
         // Show "Last Match Winner" for ALL players regardless of participation
         window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
 
@@ -744,6 +843,26 @@ const PlayerMode = {
             const opponentUUIDs = isWinner ? loserUUIDs : winnerUUIDs;
             // We don't have names here, but winnerNames gives the winner display string
             const opponentLabel = isWinner ? '—' : winnerNames || '—';
+=======
+        // 1. Write localStorage FIRST, before any UI
+        if (isWinner) {
+            Passport.recordWin();
+            MatchHistory.push('WIN', '—', gameLabel);
+            VictoryCard.show(passport.playerName);
+        } else if (isLoser) {
+            Passport.recordLoss();
+            MatchHistory.push('LOSS', winnerNames, gameLabel);
+        }
+
+        // 2. Show "Last Match Winner" on feed for ALL players
+        window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
+
+        // 3. Update UI — call show() first to ensure _visible=true so
+        //    _renderPerformanceLab() inside refresh() actually executes.
+        this._renderStats(Passport.get());
+        SidelineView.show();
+        SidelineView.refresh();
+>>>>>>> parent of 8573c6b (1.02)
 
             this._applyMatchOutcome(isWinner, opponentLabel, gameLabel);
 
