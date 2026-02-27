@@ -87,10 +87,7 @@ const Passport = {
     winRate() {
         const p = this.get();
         if (!p || p.privateTotalGames === 0) return '—';
-        const wins  = Math.floor(p.privateLifetimeWins / 2);
-        const games = Math.floor(p.privateTotalGames   / 2);
-        if (games === 0) return '—';
-        return Math.round((wins / games) * 100) + '%';
+        return Math.round((p.privateLifetimeWins / p.privateTotalGames) * 100) + '%';
     },
 
     _uuid() {
@@ -199,8 +196,8 @@ const SidelineView = {
         const winsEl  = document.getElementById('slPrivateWins');
         const gamesEl = document.getElementById('slPrivateGames');
         const wrEl    = document.getElementById('slPrivateWR');
-        if (winsEl)  winsEl.textContent  = Math.floor((passport.privateLifetimeWins || 0) / 2);
-        if (gamesEl) gamesEl.textContent = Math.floor((passport.privateTotalGames   || 0) / 2);
+        if (winsEl)  winsEl.textContent  = passport.privateLifetimeWins;
+        if (gamesEl) gamesEl.textContent = passport.privateTotalGames;
         if (wrEl)    wrEl.textContent    = Passport.winRate();
 
         this._renderMatches();
@@ -751,58 +748,25 @@ const PlayerMode = {
     // ─────────────────────────────────────────────────────────────────────────
     // WIN DEDUP — prevents double-recording when both WS broadcast (match_resolved)
     // and DB poll fallback (match_result) deliver the same game result.
-    //
-    // Key: `${playerUUID}-${gameLabel}`. Stored in sessionStorage so it survives
-    // soft refreshes within the same tab but resets when the tab closes.
-    // The Set-based approach was lossy on page refresh — sessionStorage fixes that.
+    // Key: `${playerUUID}-${gameLabel}`. Cleared when a new session is joined.
     // ─────────────────────────────────────────────────────────────────────────
     _processedResults: new Set(),
 
-    _getProcessedKey(gameLabel) {
-        const passport = Passport.get();
-        if (!passport) return null;
-        return `cs_result_${passport.playerUUID}_${gameLabel || '_'}`;
-    },
-
-    /**
-     * Returns true if this result was already recorded (duplicate), false if new.
-     * Marks it as processed on first call. Uses both the in-memory Set AND
-     * sessionStorage so the dedup survives a soft page refresh.
-     */
     _markResultProcessed(gameLabel) {
         const passport = Passport.get();
         if (!passport) return false;
         const key = `${passport.playerUUID}-${gameLabel || '_'}`;
-
-        // Check in-memory Set first (fastest path)
-        if (this._processedResults.has(key)) return true;
-
-        // Check sessionStorage (survives soft refresh within same tab)
-        const ssKey = this._getProcessedKey(gameLabel);
-        if (ssKey) {
-            try {
-                if (sessionStorage.getItem(ssKey)) {
-                    // Re-populate the in-memory Set from sessionStorage
-                    this._processedResults.add(key);
-                    return true;
-                }
-            } catch { /* ignore */ }
-        }
-
-        // Not yet processed — mark it now in both stores
+        if (this._processedResults.has(key)) return true; // already handled
         this._processedResults.add(key);
-        if (ssKey) {
-            try { sessionStorage.setItem(ssKey, '1'); } catch { /* ignore */ }
-        }
         return false;
     },
 
     // ─────────────────────────────────────────────────────────────────────────
     // MATCH RESULT — DB poll fallback only (WS missed events safety net)
     //
-    // Fires from _pollSignal when the WS broadcast was missed.
-    // MUST check _markResultProcessed to avoid double-counting with
-    // _onMatchResolved which fires via the WS broadcast channel.
+    // match_result individual broadcasts were removed from dispatchWinSignals
+    // to prevent double-recording. This handler now only fires from _pollSignal
+    // when the WS broadcast was missed (e.g. player was briefly offline).
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResult(payload) {
@@ -812,8 +776,7 @@ const PlayerMode = {
         const { playerUUID, event, gameLabel } = payload;
         if (playerUUID !== passport.playerUUID) return;
 
-        // DEDUP: if match_resolved already handled this game, skip entirely.
-        // This is the critical guard that prevents double-recording.
+        // Dedup: skip if match_resolved already handled this game
         if (this._markResultProcessed(gameLabel)) return;
 
         if (event === 'WIN') {
@@ -849,21 +812,17 @@ const PlayerMode = {
         const isLoser    = loserUUIDs.includes(myUUID);
         const wasInMatch = isWinner || isLoser;
 
-        // DEDUP: mark processed unconditionally so _onMatchResult (poll fallback)
-        // sees this game as already handled, regardless of whether we were in it.
-        // Previously this was gated on wasInMatch — that was the bug: spectators
-        // didn't mark the key, so _pollSignal could still double-record their stats.
-        if (this._markResultProcessed(gameLabel)) return; // already handled
+        // Mark processed FIRST — before any recordWin/recordLoss —
+        // so if _pollSignal fires in the same tick it sees the flag and skips.
+        if (wasInMatch && this._markResultProcessed(gameLabel)) return; // already handled
 
         // 1. Write localStorage FIRST, before any UI
         if (isWinner) {
             Passport.recordWin();
-            // Record opponent names for Performance Lab history
-            const opponentNames = (payload.loserNames || '—');
-            MatchHistory.push('WIN', opponentNames, gameLabel);
+            MatchHistory.push('WIN', '—', gameLabel);
         } else if (isLoser) {
             Passport.recordLoss();
-            MatchHistory.push('LOSS', winnerNames || '—', gameLabel);
+            MatchHistory.push('LOSS', winnerNames, gameLabel);
         }
 
         // 2. Show "Last Match Winner" on feed for ALL players
@@ -991,7 +950,7 @@ const PlayerMode = {
 
             // ── SUCCESS: request sent, player is queued ────────────────────────────────
             // Replace slCurrentMatches (frozen form or welcome-back card)
-            // with a clear "waiting for approval" UI state.
+            // with a clear “waiting for approval” UI state.
             this._showQueuedState(passport.playerName);
 
         } catch(e) {
@@ -1131,8 +1090,8 @@ const PlayerMode = {
         const w = document.getElementById('slPrivateWins');
         const g = document.getElementById('slPrivateGames');
         const r = document.getElementById('slPrivateWR');
-        if (w) w.textContent = Math.floor((p.privateLifetimeWins || 0) / 2);
-        if (g) g.textContent = Math.floor((p.privateTotalGames   || 0) / 2);
+        if (w) w.textContent = p.privateLifetimeWins || 0;
+        if (g) g.textContent = p.privateTotalGames   || 0;
         if (r) r.textContent = Passport.winRate()    || '—';
     },
 

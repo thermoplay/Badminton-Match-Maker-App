@@ -1,48 +1,36 @@
 // =============================================================================
-// COURTSIDE PRO — sync.js  v5
+// COURTSIDE PRO — sync.js  v4
 // =============================================================================
-// FIXES IN THIS VERSION:
-//   #2  — pushStateToSupabase now carries a version counter; server only
-//         applies updates with a higher version (prevents stale-write overwrite)
-//   #3  — session-presence PATCH no longer updates last_active, eliminating
-//         the heartbeat-poisons-stale-guard bug
-//   #6  — _subscribeAndPoll is called AFTER _submitJoinRequest, not before,
-//         so the queued-state block cannot be overwritten by an arriving
-//         game_state broadcast before it renders
-//   #12 — subscribeRealtime sends phx_leave for all three channels before
-//         re-joining, preventing phantom server-side subscriptions
-//   #13 — _startPolling guards with a module-level flag and clears the
-//         previous interval before creating a new one (no stacking)
-//   #22 — spectator_count incremented/decremented via Supabase RPC to
-//         avoid the non-atomic read-modify-write race
+// BROADCAST ARCHITECTURE
+// ─────────────────────────────────────────────────────────────────────────────
+// Two channels run simultaneously on the same WebSocket:
+//
+//  1. postgres_changes  — heavy state sync (squad, matches, round history)
+//     Host writes → Supabase → all subscribers receive full session row
+//     Used for: initial load, reconnects, undo, full state rehydration
+//     Debounced 800ms to avoid hammering
+//
+//  2. Broadcast channel  — instant lightweight events (no DB round-trip)
+//     Host sends → Supabase realtime → all subscribers <100ms
+//     Used for: session_joined, game_state, match_result, name_update
+//     These four events fix all four synchronisation bugs
+//
+// PRIVACY: match_result carries winnerUUID only. No stats cross the wire.
 // =============================================================================
 
-// Expose sync state on window immediately so app.js can reference these as
-// bare names regardless of script load order. _syncState() keeps them in sync
-// whenever they change, but these initial assignments prevent ReferenceErrors
-// if app.js runs before or interleaved with sync.js.
-window.isOnlineSession = false;
-window.isOperator      = false;
-window.currentRoomCode = null;
-
-let isOnlineSession   = window.isOnlineSession;
-let isOperator        = window.isOperator;
-let currentRoomCode   = window.currentRoomCode;
+let isOnlineSession   = false;
+let isOperator        = false;
+let currentRoomCode   = null;
 let operatorKey       = null;
 let operatorKeyHash   = null;
 let realtimeChannel   = null;
 let syncDebounceTimer = null;
 
-// FIX #2: monotonic version counter — incremented on every host push.
-// The server compares this to sessions.state_version and rejects lower values.
-let _stateVersion = 0;
-
-// FIX #13: single polling interval reference so it can be cleared on re-call.
-let _pollInterval    = null;
-let _pollingStarted  = false;
-
 // ---------------------------------------------------------------------------
-// STATE MIRROR
+// STATE MIRROR — keeps window.X in sync with module-level `let` vars.
+// `let` does NOT create window properties (only `var` does), so any code in
+// app.js or passport.js that reads window.isOnlineSession etc. sees undefined
+// unless we explicitly write it. Call _syncState() after every assignment.
 // ---------------------------------------------------------------------------
 function _syncState() {
     window.isOnlineSession = isOnlineSession;
@@ -50,6 +38,8 @@ function _syncState() {
     window.currentRoomCode = currentRoomCode;
 }
 
+// session_members realtime state
+// Key: player_uuid → { player_uuid, player_name, status, room_code }
 window._sessionMembers = {};
 
 const _RT_URL = 'wss://crqwaqovoqmlyvqeekhk.supabase.co/realtime/v1/websocket';
@@ -102,22 +92,15 @@ async function createOnlineSession() {
             body: { room_code: roomCode, operator_key: opKey, squad, current_matches: currentMatches },
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
-
         currentRoomCode = roomCode;
         operatorKey     = opKey;
         operatorKeyHash = await hashKey(opKey);
         isOperator      = true;
         isOnlineSession = true;
-        _stateVersion   = 1;
         _syncState();
-
-        // FIX #4 (partial): store raw key in sessionStorage only, not localStorage.
-        // sessionStorage is tab-scoped and cleared when the tab closes, limiting
-        // the exposure window vs. the previous localStorage storage.
-        sessionStorage.setItem('cs_operator_key', opKey);
-        localStorage.setItem('cs_room_code',   roomCode);
-        localStorage.setItem('cs_op_key_hash', operatorKeyHash);
-
+        localStorage.setItem('cs_room_code',    roomCode);
+        localStorage.setItem('cs_operator_key', opKey);
+        localStorage.setItem('cs_op_key_hash',  operatorKeyHash);
         subscribeRealtime(roomCode);
         updateSessionUI();
         closeOverlay();
@@ -145,17 +128,13 @@ async function joinOnlineSession(roomCode) {
             Haptic.error();
             return;
         }
-        const session    = result.data?.session || result.data;
+        // session-get returns { ok, session: {...} }
+        const session = result.data?.session || result.data;
         const savedCode  = localStorage.getItem('cs_room_code');
-        // FIX #4: read from sessionStorage first, fall back to localStorage for
-        // backward compatibility with sessions started before this patch.
-        const savedOpKey = sessionStorage.getItem('cs_operator_key')
-                        || localStorage.getItem('cs_operator_key');
+        const savedOpKey = localStorage.getItem('cs_operator_key');
         const savedHash  = localStorage.getItem('cs_op_key_hash');
-
         currentRoomCode = code;
         isOnlineSession = true;
-
         if (savedCode === code && savedHash && savedHash === session.operator_key_hash) {
             isOperator      = true;
             operatorKey     = savedOpKey;
@@ -182,14 +161,12 @@ async function joinOnlineSession(roomCode) {
 
 // ---------------------------------------------------------------------------
 // PUSH STATE — heavy sync, debounced
-// FIX #2: include _stateVersion so the server can reject stale writes.
 // ---------------------------------------------------------------------------
 
 function pushStateToSupabase() {
     if (!isOnlineSession || !isOperator) return;
     clearTimeout(syncDebounceTimer);
     syncDebounceTimer = setTimeout(async () => {
-        _stateVersion++;
         try {
             await apiCall('session-update', {
                 method: 'PATCH',
@@ -201,14 +178,9 @@ function pushStateToSupabase() {
                     round_history:    roundHistory,
                     uuid_map:         window._sessionUUIDMap  || {},
                     approved_players: window._approvedPlayers || {},
-                    state_version:    _stateVersion,
                 },
             });
-        } catch (e) {
-            console.error('CourtSide: push failed', e);
-            // Roll back the version increment so the next attempt retries correctly
-            _stateVersion--;
-        }
+        } catch (e) { console.error('CourtSide: push failed', e); }
     }, 800);
 }
 
@@ -216,6 +188,7 @@ function pushStateToSupabase() {
 // BROADCAST — instant events, no DB write, <100ms delivery
 // ---------------------------------------------------------------------------
 
+// Internal: send any broadcast event
 function _broadcast(type, payload) {
     if (!realtimeChannel || realtimeChannel.readyState !== WebSocket.OPEN) return;
     realtimeChannel.send(JSON.stringify({
@@ -226,6 +199,11 @@ function _broadcast(type, payload) {
     }));
 }
 
+/**
+ * BUG 1 FIX — broadcast approval to the specific player.
+ * Contains: playerUUID (so player can match), token (for sessionStorage),
+ * current squad + matches (so sideline view is immediately populated).
+ */
 function broadcastApproval(playerUUID, playerName, token) {
     if (!isOperator) return;
     _broadcast('session_joined', {
@@ -237,6 +215,11 @@ function broadcastApproval(playerUUID, playerName, token) {
     });
 }
 
+/**
+ * BUG 2 FIX — broadcast live game state whenever matches change.
+ * Called by saveToDisk hook, setWinner, processAndNext.
+ * Players update their live feed immediately without waiting for DB.
+ */
 function broadcastGameState() {
     if (!isOperator || !isOnlineSession) return;
     _broadcast('game_state', {
@@ -246,6 +229,10 @@ function broadcastGameState() {
     });
 }
 
+/**
+ * BUG 4 FIX — broadcast match result with exact UUIDs.
+ * One broadcast per player so each device does a strict UUID equality check.
+ */
 function broadcastMatchResult(winnerUUIDs, loserUUIDs, gameLabel) {
     if (!isOperator) return;
     winnerUUIDs.forEach(uuid => {
@@ -256,6 +243,10 @@ function broadcastMatchResult(winnerUUIDs, loserUUIDs, gameLabel) {
     });
 }
 
+/**
+ * BUG 3 FIX — player broadcasts their name change to the host.
+ * Any subscriber can call this (not operator-only).
+ */
 function broadcastNameUpdate(playerUUID, oldName, newName) {
     if (!realtimeChannel || realtimeChannel.readyState !== WebSocket.OPEN) return;
     realtimeChannel.send(JSON.stringify({
@@ -267,9 +258,15 @@ function broadcastNameUpdate(playerUUID, oldName, newName) {
 }
 
 // ---------------------------------------------------------------------------
-// SESSION MEMBERS — DB operations
+// SESSION MEMBERS — DB operations called from app.js
 // ---------------------------------------------------------------------------
 
+/**
+ * Called by approvePlayRequest() in app.js after adding the player to squad.
+ * Flips session_members.status → 'active' via the serverless API.
+ * This DB write triggers a Supabase Realtime postgres_changes UPDATE event
+ * that the player's phone receives in _handleMemberChange().
+ */
 async function memberApprove(playerUUID) {
     if (!isOperator || !currentRoomCode || !operatorKey || !playerUUID) return;
     try {
@@ -286,6 +283,10 @@ async function memberApprove(playerUUID) {
     } catch (e) { console.error('[CourtSide] member-approve error:', e); }
 }
 
+/**
+ * Called by passportRename() in app.js after the player updates their name.
+ * Updates session_members.player_name → triggers host realtime listener.
+ */
 async function memberRename(playerUUID, newName) {
     if (!currentRoomCode || !playerUUID || !newName) return;
     try {
@@ -302,11 +303,21 @@ async function memberRename(playerUUID, newName) {
     } catch (e) { console.error('[CourtSide] member-rename error:', e); }
 }
 
+/**
+ * Called by PlayerMode.boot() in passport.js.
+ * Upserts a session_members row (pending if new, preserves active if returning).
+ * Returns { status: 'pending' | 'active', member } — caller uses this
+ * to decide whether to bypass the pending screen.
+ */
 async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
+    // Prefer the explicitly-passed room code (always available in player mode boot)
+    // before falling back to the module-level variable or window global.
+    // The module-level currentRoomCode may not be set yet if joinOnlineSession()
+    // is still in-flight when this is called from PlayerMode.boot().
     const roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || null;
     if (!roomCode || !playerUUID || !playerName) return null;
-    currentRoomCode        = roomCode;
-    window.currentRoomCode = roomCode;
+    currentRoomCode        = roomCode; // keep local var in sync
+    window.currentRoomCode = roomCode; // expose globally so other paths can read it
     _syncState();
     try {
         const r = await fetch('/api/member-upsert', {
@@ -319,7 +330,7 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
             }),
         });
         if (!r.ok) { console.error('[CourtSide] member-upsert failed:', r.status); return null; }
-        return await r.json();
+        return await r.json();  // { ok, status, member }
     } catch (e) { console.error('[CourtSide] member-upsert error:', e); return null; }
 }
 
@@ -330,6 +341,7 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
 function _handleBroadcast(payload) {
     const { type } = payload;
 
+    // BUG 1: Player approved — flip from pending → active
     if (type === 'session_joined') {
         if (!isOperator && typeof PlayerMode !== 'undefined') {
             PlayerMode._onApprovalReceived(payload);
@@ -337,6 +349,7 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // Player removed by host — update removed player's screen immediately
     if (type === 'player_removed') {
         if (!isOperator && typeof PlayerMode !== 'undefined') {
             const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
@@ -349,8 +362,10 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // BUG 2: Live game state — update player feed immediately
     if (type === 'game_state') {
         if (!isOperator) {
+            // Globals first, then render
             window.squad          = payload.squad           || window.squad          || [];
             window.currentMatches = payload.current_matches || window.currentMatches || [];
             if (typeof PlayerMode !== 'undefined') {
@@ -362,6 +377,7 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // BUG 4: Individual match_result — UUID-matched private stat update
     if (type === 'match_result') {
         if (!isOperator && typeof PlayerMode !== 'undefined') {
             PlayerMode._onMatchResult(payload);
@@ -369,6 +385,8 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // MATCH_RESOLVED: round-level event with winner name display + individual UUIDs
+    // All players receive this; only UUID-matched ones increment wins
     if (type === 'match_resolved') {
         if (!isOperator && typeof PlayerMode !== 'undefined') {
             PlayerMode._onMatchResolved(payload);
@@ -376,6 +394,7 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // BUG 3: Name update — host applies the change
     if (type === 'name_update') {
         if (isOperator) {
             _applyNameUpdate(payload.playerUUID, payload.oldName, payload.newName);
@@ -384,21 +403,30 @@ function _handleBroadcast(payload) {
     }
 }
 
+// Host applies a name change broadcast from a player
+// Issue #3 FIX: UUID-first lookup so name changes survive previous renames.
+// squad member has .uuid stored at approval time — that never changes.
 function _applyNameUpdate(playerUUID, oldName, newName) {
     if (!newName?.trim() || !playerUUID) return;
     const trimmed = newName.trim();
 
+    // 1. Find player by UUID (stored on squad member at approval) — rename-safe
     let player = squad.find(p => p.uuid === playerUUID);
+    // 2. Fallback: find by oldName if uuid not yet on squad member
     if (!player) player = squad.find(p => p.name === oldName);
-    if (!player) return;
+
+    if (!player) return;  // player not in squad yet, ignore
 
     const prevName = player.name;
     player.name    = trimmed;
-    player.uuid    = playerUUID;
+    player.uuid    = playerUUID;   // ensure uuid is set for future lookups
 
+    // Update uuid_map: rename the key, ensure new key exists
     const uuidMap = window._sessionUUIDMap || {};
+    // Remove old name key if it points to this UUID
     if (uuidMap[prevName] === playerUUID) delete uuidMap[prevName];
-    uuidMap[trimmed]       = playerUUID;
+    // Always write new name key
+    uuidMap[trimmed] = playerUUID;
     window._sessionUUIDMap = uuidMap;
 
     renderSquad();
@@ -408,50 +436,21 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
 
 // ---------------------------------------------------------------------------
 // REAL-TIME SUBSCRIPTION
-// FIX #12: send phx_leave for all channels before re-subscribing to prevent
-// phantom server-side subscriptions accumulating across reconnects.
+// Two channels on one WebSocket connection
 // ---------------------------------------------------------------------------
 
-// Track which channels have been joined so we can leave them cleanly.
-let _joinedChannels = [];
-
 function subscribeRealtime(roomCode) {
-    // FIX #12: gracefully leave existing channels on the old socket before
-    // closing it, so Supabase cleans them up server-side immediately.
-    if (realtimeChannel && realtimeChannel.readyState === WebSocket.OPEN) {
-        _joinedChannels.forEach(topic => {
-            try {
-                realtimeChannel.send(JSON.stringify({
-                    topic,
-                    event:   'phx_leave',
-                    payload: {},
-                    ref:     String(Date.now()),
-                }));
-            } catch (_) { /* socket may already be closing */ }
-        });
-    }
-    _joinedChannels = [];
-
     if (realtimeChannel) {
-        // Prevent the onclose reconnect loop from firing while we intentionally close
-        realtimeChannel._intentionalClose = true;
         realtimeChannel.close();
         realtimeChannel = null;
     }
-
     const ws = new WebSocket(`${_RT_URL}?apikey=${_RT_KEY}&vsn=1.0.0`);
     realtimeChannel = ws;
-    ws._intentionalClose = false;
-
-    const sessionsChannel  = 'realtime:public:sessions';
-    const broadcastChannel = `realtime:courtside-${roomCode}`;
-    const membersChannel   = 'realtime:public:session_members';
 
     ws.onopen = () => {
-        _joinedChannels = [sessionsChannel, broadcastChannel, membersChannel];
-
+        // Channel 1: postgres_changes for full state sync
         ws.send(JSON.stringify({
-            topic: sessionsChannel,
+            topic: 'realtime:public:sessions',
             event: 'phx_join',
             payload: {
                 config: {
@@ -467,23 +466,27 @@ function subscribeRealtime(roomCode) {
             },
             ref: '1',
         }));
-
+        // Channel 2: broadcast for instant events
         ws.send(JSON.stringify({
-            topic: broadcastChannel,
+            topic: `realtime:courtside-${roomCode}`,
             event: 'phx_join',
             payload: { config: { broadcast: { self: false } } },
             ref: '2',
         }));
 
+        // Channel 3: postgres_changes on session_members
+        // HOST:   receives ALL member changes for this room (name updates, new joins)
+        // PLAYER: receives their OWN row change (status flip pending→active = approval)
+        // Both use the same channel but filter differently client-side in _handleMemberChange.
         ws.send(JSON.stringify({
-            topic: membersChannel,
+            topic: `realtime:public:session_members`,
             event: 'phx_join',
             payload: {
                 config: {
                     broadcast:        { self: false },
                     presence:         { key: '' },
                     postgres_changes: [{
-                        event:  '*',
+                        event:  '*',        // INSERT, UPDATE, DELETE
                         schema: 'public',
                         table:  'session_members',
                         filter: `room_code=eq.${roomCode}`,
@@ -497,70 +500,63 @@ function subscribeRealtime(roomCode) {
     ws.onmessage = (msg) => {
         try {
             const data = JSON.parse(msg.data);
+            // Heartbeat
             if (data.event === 'heartbeat') {
                 ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: data.ref }));
                 return;
             }
+            // postgres_changes — route by table
             if (data.event === 'postgres_changes') {
                 const table  = data.payload?.data?.table || data.payload?.table;
                 const record = data.payload?.data?.record;
                 const old    = data.payload?.data?.old_record;
 
-                if (table === 'session_members') {
+                if (table === 'session_members' || data.payload?.data?.table === 'session_members') {
+                    // session_members change — ALL subscribers handle this
                     if (record) _handleMemberChange(record, old, data.payload?.data?.type);
                     return;
                 }
 
+                // sessions table change — non-operators only (legacy full-state sync)
                 if (!isOperator && record) {
                     applyRemoteState(record);
                 }
                 return;
             }
+            // Broadcast events — all subscribers
             if (data.event === 'broadcast' && data.payload?.type) {
                 _handleBroadcast(data.payload);
                 return;
             }
-        } catch { /* ignore malformed frames */ }
+        } catch { /* ignore */ }
     };
 
     ws.onerror = () => {};
     ws.onclose = () => {
-        if (ws._intentionalClose) return; // we closed it ourselves — don't reconnect
         if (isOnlineSession) {
+            // Silent reconnect — no banner. WS drops briefly on mobile
+            // sleep/background and self-heals. The user doesn't need to see it.
             setTimeout(() => subscribeRealtime(roomCode), 3000);
         }
     };
 }
 
 // ---------------------------------------------------------------------------
-// APPLY REMOTE STATE
-// FIX #3: The stale-state guard now uses sessions.state_version (an integer)
-// instead of last_active (a timestamp that presence heartbeats also update).
+// APPLY REMOTE STATE — globals FIRST, then render
 // ---------------------------------------------------------------------------
 
-let _lastAppliedVersion = 0;
+let _lastRemoteUpdate = 0;
 
 function applyRemoteState(session) {
-    // FIX #3: prefer state_version over last_active for staleness checks.
-    // Fall back to timestamp comparison only for sessions that predate this fix.
-    const remoteVersion = session.state_version || 0;
-    if (remoteVersion > 0) {
-        if (remoteVersion <= _lastAppliedVersion) {
-            console.log('CourtSide: ignoring stale remote update (version)', remoteVersion, '<=', _lastAppliedVersion);
-            return;
-        }
-        _lastAppliedVersion = remoteVersion;
-    } else {
-        // Legacy fallback: timestamp-based guard, but EXCLUDE presence-only updates.
-        // Presence updates change only spectator_count + last_active — we detect them
-        // by checking if the game-state fields are unchanged (squad length as proxy).
-        const ts = session.last_active ? new Date(session.last_active).getTime() : 0;
-        const wasPresenceOnly = session._presenceOnly === true;
-        if (wasPresenceOnly) return; // skip — server must tag presence-only PATCHes
+    const ts = session.last_active ? new Date(session.last_active).getTime() : 0;
+    if (ts > 0 && ts < _lastRemoteUpdate) {
+        console.log('CourtSide: ignoring stale remote update');
+        return;
     }
-
+    _lastRemoteUpdate = ts || Date.now();
     const prevCount = currentMatches.length;
 
+    // Globals FIRST — no render reads stale data
     squad          = session.squad           || [];
     currentMatches = session.current_matches || [];
     roundHistory   = session.round_history   || [];
@@ -586,6 +582,7 @@ function applyRemoteState(session) {
 
 // ---------------------------------------------------------------------------
 // SESSION MEMBERS — realtime change handler
+// Called for ANY postgres_changes event on session_members for this room.
 // ---------------------------------------------------------------------------
 
 function _handleMemberChange(record, oldRecord, eventType) {
@@ -594,13 +591,22 @@ function _handleMemberChange(record, oldRecord, eventType) {
     const uuid = record.player_uuid;
     const name = record.player_name;
 
+    // ── HOST: member roster update ─────────────────────────────────────────
+    // Update _sessionMembers cache, then refresh squad names + notification badge.
     if (isOperator) {
         if (eventType === 'INSERT') {
+            // New pending member — add to cache
             window._sessionMembers[uuid] = record;
+            // No immediate squad change — host approves via the notification
+            // (play_requests table still drives the approval UI)
+
         } else if (eventType === 'UPDATE') {
             const prev = window._sessionMembers[uuid] || {};
             window._sessionMembers[uuid] = record;
+
+            // Name change? Update squad in-memory and re-render.
             if (prev.player_name && prev.player_name !== name) {
+                // Delegate to _applyNameUpdate which handles uuid_map + squad + render
                 _applyNameUpdate(uuid, prev.player_name, name);
                 showSessionToast(`✏️ ${prev.player_name} → ${name}`);
             }
@@ -610,12 +616,15 @@ function _handleMemberChange(record, oldRecord, eventType) {
         return;
     }
 
+    // ── PLAYER: own-row status change ──────────────────────────────────────
+    // Check if this record belongs to THIS player's passport.
     const passport = (typeof Passport !== 'undefined') ? Passport.get() : null;
     if (!passport || uuid !== passport.playerUUID) return;
 
     if (record.status === 'active') {
         if (typeof PlayerMode !== 'undefined') PlayerMode._onMemberActivated(record);
     } else if (record.status === 'pending' || eventType === 'DELETE') {
+        // Host removed or reset this player
         if (typeof PlayerMode !== 'undefined' && typeof PlayerMode._onRemovedFromSession === 'function') {
             PlayerMode._onRemovedFromSession();
         }
@@ -632,22 +641,11 @@ function leaveSession() {
     currentRoomCode = null;
     operatorKey     = null;
     operatorKeyHash = null;
-    _stateVersion   = 0;
-    _lastAppliedVersion = 0;
     _syncState();
-
-    if (realtimeChannel) {
-        realtimeChannel._intentionalClose = true;
-        realtimeChannel.close();
-        realtimeChannel = null;
-    }
-    _joinedChannels = [];
-
+    if (realtimeChannel) { realtimeChannel.close(); realtimeChannel = null; }
     localStorage.removeItem('cs_room_code');
-    localStorage.removeItem('cs_operator_key'); // clean up legacy key too
+    localStorage.removeItem('cs_operator_key');
     localStorage.removeItem('cs_op_key_hash');
-    sessionStorage.removeItem('cs_operator_key');
-
     updateSessionUI();
 }
 
@@ -729,7 +727,7 @@ saveToDisk = function () {
     _originalSaveToDisk();
     if (isOnlineSession && isOperator) {
         pushStateToSupabase();
-        broadcastGameState();
+        broadcastGameState();   // instant, no debounce
     }
 };
 
@@ -743,22 +741,29 @@ async function tryAutoRejoin() {
     const role      = urlParams.get('role');
 
     if (joinCode) {
+        // In player mode, PlayerMode.boot() (triggered by window.onload) owns the
+        // full join flow. We must NOT call joinOnlineSession here because it would
+        // race with boot(), call applyRemoteState() with _joinCode=null, and
+        // overwrite the sideline view before boot() has set PlayerMode._joinCode.
+        // Instead, just pre-seed the room code so memberUpsert() has it available.
         if (role === 'player') {
             currentRoomCode        = joinCode;
             window.currentRoomCode = joinCode;
+            // Save joinCode to window so window.onload can read it even after URL is cleaned
             window._pendingJoinCode = joinCode;
             _syncState();
+            // Strip ?join= but preserve ?role= so window.onload can still see it
             const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
             window.history.replaceState({}, document.title, cleanUrl);
             return;
         }
+        // Host/spectator mode: do the full join
         const cleanUrl = window.location.origin + window.location.pathname +
             (role ? `?role=${role}` : '');
         window.history.replaceState({}, document.title, cleanUrl);
         await joinOnlineSession(joinCode);
         return;
     }
-
     const savedCode = localStorage.getItem('cs_room_code');
     if (!savedCode) return;
     try {
@@ -769,20 +774,14 @@ async function tryAutoRejoin() {
             localStorage.removeItem('cs_op_key_hash');
             return;
         }
-        const session    = result.data?.session || result.data;
-        currentRoomCode  = savedCode;
-        isOnlineSession  = true;
-        const savedHash  = localStorage.getItem('cs_op_key_hash');
-        const savedOpKey = sessionStorage.getItem('cs_operator_key')
-                        || localStorage.getItem('cs_operator_key');
-
+        const session = result.data?.session || result.data;
+        currentRoomCode = savedCode;
+        isOnlineSession = true;
+        const savedHash = localStorage.getItem('cs_op_key_hash');
         if (savedHash && savedHash === session.operator_key_hash) {
             isOperator      = true;
-            operatorKey     = savedOpKey;
+            operatorKey     = localStorage.getItem('cs_operator_key');
             operatorKeyHash = savedHash;
-            // Sync version from server to avoid immediately pushing a stale write
-            _stateVersion = session.state_version || 0;
-            _lastAppliedVersion = _stateVersion;
         } else {
             isOperator = false;
         }
@@ -796,20 +795,14 @@ async function tryAutoRejoin() {
 
 // ---------------------------------------------------------------------------
 // SPECTATOR PRESENCE
-// FIX #22: Use Supabase RPC (or a dedicated endpoint) for atomic increment.
-// Until the server exposes an RPC, we POST action:'join'/'leave'/'ping' to
-// session-presence and let the SERVER do the atomic increment/decrement.
-// The previous non-atomic read-modify-write has been removed from the client.
 // ---------------------------------------------------------------------------
 
+let spectatorCount    = 0;
 let presenceHeartbeat = null;
 
 async function registerPresence() {
     if (isOperator) return;
     try {
-        // Server-side session-presence now does atomic increment via SQL:
-        //   UPDATE sessions SET spectator_count = spectator_count + 1
-        // No client-side read is needed.
         await apiCall('session-presence', {
             method: 'POST',
             body: { room_code: currentRoomCode, action: 'join' },
@@ -817,15 +810,13 @@ async function registerPresence() {
         clearInterval(presenceHeartbeat);
         presenceHeartbeat = setInterval(async () => {
             if (!isOnlineSession) { clearInterval(presenceHeartbeat); return; }
-            await apiCall('session-presence', {
-                method: 'POST',
-                body: { room_code: currentRoomCode, action: 'ping' },
-            }).catch(() => {});
+            await apiCall('session-presence', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
         }, 20000);
     } catch { /* silent */ }
 }
 
 function updateSpectatorCount(count) {
+    spectatorCount = count;
     const countEl = document.getElementById('spectatorCount');
     if (countEl) {
         countEl.textContent   = `👁 ${count}`;
@@ -833,8 +824,6 @@ function updateSpectatorCount(count) {
     }
 }
 
-// FIX #13: Override updateSessionUI ONCE with a version that uses _startPolling
-// safely. Guard with _pollingStarted so the interval never stacks.
 const _originalUpdateSessionUI = updateSessionUI;
 updateSessionUI = function() {
     _originalUpdateSessionUI();
@@ -851,22 +840,8 @@ updateSessionUI = function() {
     }
     if (isOnlineSession && !isOperator) registerPresence();
     if (typeof updateIWTPVisibility === 'function') updateIWTPVisibility();
-    // FIX #13: _startPolling is called here instead of everywhere else.
-    if (isOnlineSession && isOperator) _startPolling();
+    if (isOnlineSession && isOperator && typeof _startPolling === 'function') _startPolling();
 };
-
-// FIX #13: Guard-protected polling starter. Clears the existing interval
-// before creating a new one so it never stacks across updateSessionUI calls.
-function _startPolling() {
-    if (_pollInterval) {
-        clearInterval(_pollInterval);
-        _pollInterval = null;
-    }
-    pollPlayRequests(); // immediate first poll
-    _pollInterval = setInterval(() => {
-        if (isOnlineSession && isOperator) pollPlayRequests();
-    }, 10000);
-}
 
 // ---------------------------------------------------------------------------
 // MATCH HISTORY ARCHIVAL
