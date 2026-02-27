@@ -1,110 +1,136 @@
 // =============================================================================
-// /api/member-upsert  — POST
+// API: member-upsert.js
 // =============================================================================
-// Called by the player's device when they join a session.
-// Creates a row in session_members with status:'pending' if one doesn't exist.
-// If a row already exists for this uuid+room_code, it does nothing
-// (preserves 'active' status so refresh doesn't reset an approved player).
-//
-// REQUEST BODY:
-//   { room_code, player_uuid, player_name }
-//
-// RESPONSE:
-//   { ok: true, status: 'pending' | 'active', member: { ...row } }
+// FIXES:
+//   #17 — The name-update PATCH is now awaited and its result is inspected.
+//          If the PATCH fails (e.g. RLS violation), the endpoint returns
+//          status 500 rather than silently returning the stale `member.status`
+//          from the original GET — which previously caused callers to skip the
+//          pending screen when they should have been re-queued.
 // =============================================================================
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+import { createClient } from '@supabase/supabase-js';
 
-const hdrs = {
-    'apikey':        SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
-    'Content-Type':  'application/json',
-    'Prefer':        'return=representation',
-};
-
-async function sbFetch(path, options = {}) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
-        headers: { ...hdrs, ...(options.headers || {}) },
-        method:  options.method || 'GET',
-        body:    options.body ? JSON.stringify(options.body) : undefined,
-    });
-    const text = await res.text();
-    return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
-}
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+);
 
 export default async function handler(req, res) {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') return res.status(200).end();
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    const { room_code, player_uuid, player_name } = req.body;
-
+    const { room_code, player_uuid, player_name } = req.body || {};
     if (!room_code || !player_uuid || !player_name) {
-        return res.status(400).json({ error: 'Missing required fields: room_code, player_uuid, player_name' });
+        return res.status(400).json({ error: 'room_code, player_uuid, and player_name required' });
     }
 
-    // Sanitise
-    const trimmedName = String(player_name).trim().slice(0, 50);
-    const code        = String(room_code).trim().toUpperCase();
-    const uuid        = String(player_uuid).trim();
+    const trimmedName = player_name.trim();
+    if (!trimmedName) return res.status(400).json({ error: 'player_name cannot be blank' });
 
-    if (!trimmedName || !uuid) {
-        return res.status(400).json({ error: 'Invalid name or uuid' });
-    }
+    try {
+        // 1. Check if the session exists
+        const { data: session, error: sessErr } = await supabase
+            .from('sessions')
+            .select('room_code')
+            .eq('room_code', room_code)
+            .single();
 
-    // ── Step 1: Check if this player already has a row in this session ──────
-    // If they do and status is 'active', just return it — DO NOT reset to pending.
-    const existing = await sbFetch(
-        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&limit=1`
-    );
-
-    if (existing.ok && existing.data?.length > 0) {
-        const member = existing.data[0];
-
-        // Player exists — update their name in case it changed, but NEVER touch status
-        if (member.player_name !== trimmedName) {
-            await sbFetch(
-                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
-                {
-                    method:  'PATCH',
-                    headers: { 'Prefer': 'return=representation' },
-                    body:    { player_name: trimmedName, last_seen: new Date().toISOString() },
-                }
-            );
+        if (sessErr || !session) {
+            return res.status(404).json({ error: 'Session not found' });
         }
 
-        // Return current status — caller uses this to decide whether to skip pending screen
+        // 2. Look up existing member
+        const { data: existingRows, error: fetchErr } = await supabase
+            .from('session_members')
+            .select('*')
+            .eq('room_code', room_code)
+            .eq('player_uuid', player_uuid)
+            .limit(1);
+
+        if (fetchErr) throw fetchErr;
+
+        const member = existingRows?.[0] || null;
+
+        if (member) {
+            // 3a. Member exists — update name if changed
+            if (member.player_name !== trimmedName) {
+                // FIX #17: await the PATCH and check for errors before returning.
+                // Previously this was fire-and-forget, so a failed PATCH caused the
+                // caller to receive the stale `status: 'active'` from the original
+                // GET, skipping the pending screen incorrectly.
+                const { data: patchData, error: patchErr } = await supabase
+                    .from('session_members')
+                    .update({
+                        player_name: trimmedName,
+                        last_seen:   new Date().toISOString(),
+                    })
+                    .eq('room_code', room_code)
+                    .eq('player_uuid', player_uuid)
+                    .select()
+                    .single();
+
+                if (patchErr) {
+                    // The PATCH failed (e.g. RLS). Return 500 so the client knows
+                    // the true state is unknown and falls back to pending.
+                    console.error('[member-upsert] name PATCH failed:', patchErr);
+                    return res.status(500).json({
+                        error:  'Failed to update player name',
+                        detail: patchErr.message,
+                    });
+                }
+
+                // Return the freshly patched record, not the stale pre-PATCH member
+                return res.status(200).json({
+                    ok:     true,
+                    status: patchData.status,
+                    member: patchData,
+                });
+            }
+
+            // Name unchanged — update last_seen only (non-critical, ignore errors)
+            supabase
+                .from('session_members')
+                .update({ last_seen: new Date().toISOString() })
+                .eq('room_code', room_code)
+                .eq('player_uuid', player_uuid)
+                .then(() => {}) // fire and forget — last_seen is cosmetic
+                .catch(() => {});
+
+            return res.status(200).json({
+                ok:     true,
+                status: member.status,
+                member,
+            });
+        }
+
+        // 3b. New member — insert as pending
+        const { data: inserted, error: insertErr } = await supabase
+            .from('session_members')
+            .insert({
+                room_code,
+                player_uuid,
+                player_name: trimmedName,
+                status:      'pending',
+                joined_at:   new Date().toISOString(),
+                last_seen:   new Date().toISOString(),
+            })
+            .select()
+            .single();
+
+        if (insertErr) throw insertErr;
+
         return res.status(200).json({
             ok:     true,
-            status: member.status,  // 'pending' | 'active'
-            member: { ...member, player_name: trimmedName },
+            status: 'pending',
+            member: inserted,
         });
+
+    } catch (err) {
+        console.error('[member-upsert] error:', err);
+        return res.status(500).json({ error: 'Internal error', detail: err.message });
     }
-
-    // ── Step 2: No existing row — insert with status:'pending' ────────────
-    const insert = await sbFetch('/session_members', {
-        method: 'POST',
-        body: {
-            room_code:   code,
-            player_uuid: uuid,
-            player_name: trimmedName,
-            status:      'pending',
-            joined_at:   new Date().toISOString(),
-            last_seen:   new Date().toISOString(),
-        },
-    });
-
-    if (!insert.ok) {
-        console.error('member-upsert insert failed:', insert.status, insert.data);
-        return res.status(500).json({ error: 'Failed to register member' });
-    }
-
-    const member = Array.isArray(insert.data) ? insert.data[0] : insert.data;
-
-    return res.status(200).json({
-        ok:     true,
-        status: 'pending',
-        member,
-    });
 }

@@ -1,15 +1,23 @@
 // =============================================================================
-// COURTSIDE PRO — logic.js
-// Responsibilities: Match generation, ELO calculation, match rendering,
-//                  winner selection, round processing, team builder.
-// Depends on: app.js (must be loaded before this file)
+// COURTSIDE PRO — logic.js  v2
+// =============================================================================
+// FIXES IN THIS VERSION:
+//   #1/#7 — dispatchWinSignals called ONCE per round from processAndNext.
+//            clearRoundDedup() called at the top of every new round so the
+//            passport dedup set resets and Round 2 "Game 1" isn't blocked.
+//   #10   — generateMatches Next Up ticker is built exclusively from the bench
+//            pool (players NOT assigned to any court). The fallback that could
+//            pull currently-playing players has been replaced with a safe fill
+//            that only draws from active non-playing players.
+//   #11   — builderSwapFromSideline now also restores waitRounds on the
+//            outgoing player so they aren't unfairly penalised in the next
+//            round's fairness sort after being swapped out.
 // =============================================================================
 
 // ---------------------------------------------------------------------------
 // LOOKUP HELPER
 // ---------------------------------------------------------------------------
 
-/** Finds a player object by name. Returns undefined if not found. */
 function findP(name) {
     return squad.find(p => p.name === name);
 }
@@ -43,7 +51,6 @@ function processAndNext() {
             return;
         }
 
-        // Snapshot state BEFORE applying ELO — needed for undo
         const snapshot = {
             squadSnapshot: squad.map(p => ({ ...p })),
             matches:       currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
@@ -51,13 +58,11 @@ function processAndNext() {
         };
         roundHistory.push(snapshot);
 
-        // Archive to Supabase match_history for weekly leaderboard
         if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
 
-        // MATCH_RESOLVED: re-dispatch signals at Next Round time.
-        // setWinner fires signals on winner selection, but processAndNext
-        // is the canonical "round is over" moment. This is the guaranteed
-        // delivery point — all player passports record their stats here.
+        // FIX #1: dispatch signals ONCE here, at the canonical round-end point.
+        // setWinner() deliberately does NOT call dispatchWinSignals to prevent
+        // double-counting. This is the only place it fires.
         if (typeof dispatchWinSignals === 'function') {
             currentMatches.forEach((m, idx) => {
                 if (m.winnerTeamIndex !== null) dispatchWinSignals(idx);
@@ -66,12 +71,18 @@ function processAndNext() {
 
         applyELOResults();
         updateUndoButton();
+
+        // FIX #7: clear the per-round passport dedup set AFTER signals are
+        // dispatched but BEFORE generateMatches() starts the new round.
+        // This allows "Game 1" in the next round to be recorded correctly.
+        if (typeof PlayerMode !== 'undefined' && typeof PlayerMode.clearRoundDedup === 'function') {
+            PlayerMode.clearRoundDedup();
+        }
     }
     generateMatches();
 }
 
 function applyELOResults() {
-    // Players sitting out this round gain a wait round (handled in generateMatches)
     currentMatches.forEach(m => {
         const winIdx  = m.winnerTeamIndex;
         const loseIdx = winIdx === 0 ? 1 : 0;
@@ -101,16 +112,10 @@ function applyELOResults() {
 
 // ---------------------------------------------------------------------------
 // MATCH GENERATION
+// FIX #10: Next Up ticker is built exclusively from the BENCH (sitting players)
+// and never falls back to players who are actively assigned to a court.
 // ---------------------------------------------------------------------------
 
-/**
- * FAIRNESS ENGINE — generateMatches()
- * Priority order for who plays next:
- * 1. Longest wait (highest waitRounds — rounds sitting out)
- * 2. Fewest games played this session (sessionPlayCount)
- * 3. Slight random shuffle to prevent predictability
- * Teams are then balanced by ELO (snake draft: 1&4 vs 2&3).
- */
 function generateMatches() {
     const pool = squad.filter(p => p.active);
     if (pool.length < 4) {
@@ -121,7 +126,7 @@ function generateMatches() {
     currentMatches = [];
     document.getElementById('matchContainer').innerHTML = '';
 
-    // Increment waitRounds for everyone — playing will reset it
+    // Increment waitRounds for everyone before selection
     pool.forEach(p => { p.waitRounds = (p.waitRounds || 0) + 1; });
 
     // Sort by fairness: most wait first, then fewest games, then random
@@ -137,42 +142,35 @@ function generateMatches() {
     const playing    = available.slice(0, courtCount * 4);
     const sitting    = available.slice(courtCount * 4);
 
-    // Players who will play get waitRounds reset
+    // Reset waitRounds for players who are about to play
     playing.forEach(p => { p.waitRounds = 0; });
 
-    // Pre-calculate "Next Up" — 4 UNIQUE players from bench, by priority
-    // Use index tracking to guarantee no duplicates (fixes "David bug")
+    // FIX #10: Build Next Up ONLY from the bench (sitting players).
+    // Track by squad index to prevent duplicates.
+    // If the bench has fewer than 4 players, show what we have — do NOT
+    // fall back to on-court players, which causes the "David bug" where
+    // a playing player appears in the ticker.
     const benchPool = [...sitting].sort(
         (a, b) => (b.waitRounds || 0) - (a.waitRounds || 0) || a.sessionPlayCount - b.sessionPlayCount
     );
+
     const nextUpPicked = new Set();
     const nextUp = [];
     for (const p of benchPool) {
-        const uid = squad.indexOf(p); // use squad index as unique ID
+        const uid = squad.indexOf(p);
         if (!nextUpPicked.has(uid)) {
             nextUpPicked.add(uid);
             nextUp.push(p);
         }
         if (nextUp.length === 4) break;
     }
-    // If bench has fewer than 4, fill from playing pool tail (won't overlap — different indices)
-    if (nextUp.length < 4) {
-        for (const p of [...pool].reverse()) {
-            const uid = squad.indexOf(p);
-            if (!nextUpPicked.has(uid)) {
-                nextUpPicked.add(uid);
-                nextUp.push(p);
-            }
-            if (nextUp.length === 4) break;
-        }
-    }
+    // Show fewer than 4 if the bench is small — DO NOT include on-court players.
     updateNextUpTicker(nextUp);
 
     const matchData = [];
     for (let i = 0; i < courtCount; i++) {
         const p4 = playing.splice(0, 4);
         p4.forEach(p => p.sessionPlayCount++);
-        // Snake draft ELO balance: sort by rating, pair 1&4 vs 2&3
         p4.sort((a, b) => b.rating - a.rating);
 
         const tA   = [p4[0], p4[3]];
@@ -245,10 +243,8 @@ function setWinner(mIdx, tIdx) {
     boxes.forEach((box, i) => box.classList.toggle('selected', i === tIdx));
     currentMatches[mIdx].winnerTeamIndex = tIdx;
 
-    // Haptic: short tap on winner select
     Haptic.tap();
 
-    // Confetti: burst from the center of the winning team-box
     const winBox = boxes[tIdx];
     if (winBox) {
         const rect = winBox.getBoundingClientRect();
@@ -259,27 +255,21 @@ function setWinner(mIdx, tIdx) {
 
     checkNextButtonState();
     saveToDisk();
-    // NOTE: dispatchWinSignals is intentionally NOT called here.
-    // It fires exactly once from processAndNext() after all winners are set.
-    // Calling it here too would double-count every win.
+    // NOTE: dispatchWinSignals is NOT called here.
+    // It fires exactly once from processAndNext() after all winners are confirmed.
 }
 
 // ---------------------------------------------------------------------------
 // TEAM BUILDER
 // ---------------------------------------------------------------------------
 
-// Working state for the builder — separate from currentMatches until confirmed
-let builderMatchIdx  = null;  // which game we're editing
-let builderTeams     = null;  // [teamA_names[], teamB_names[]]
-let builderSelected  = null;  // { team: 0|1, name: string } — player being swapped
+let builderMatchIdx  = null;
+let builderTeams     = null;
+let builderSelected  = null;
 
-/**
- * Opens the team builder modal for a given match.
- * Deep-copies team names so edits don't touch currentMatches until confirmed.
- */
 function openTeamBuilder(mIdx) {
     builderMatchIdx = mIdx;
-    builderTeams    = currentMatches[mIdx].teams.map(t => [...t]); // deep copy
+    builderTeams    = currentMatches[mIdx].teams.map(t => [...t]);
     builderSelected = null;
     renderTeamBuilder();
     document.getElementById('teamBuilderModal').style.display = 'flex';
@@ -292,27 +282,15 @@ function closeTeamBuilder() {
     builderSelected  = null;
 }
 
-/**
- * Re-renders the team builder UI based on current builderTeams state.
- * Called after every swap or shuffle.
- */
 function renderTeamBuilder() {
-    const m = currentMatches[builderMatchIdx];
-
-    // All names currently in this game
-    const inGame = new Set([...builderTeams[0], ...builderTeams[1]]);
-
-    // Sideline = active players NOT in any game at all
+    const inGame   = new Set([...builderTeams[0], ...builderTeams[1]]);
     const allInGames = new Set(currentMatches.flatMap(match => match.teams.flat()));
     const sideline = squad.filter(p =>
-        (p.active && !allInGames.has(p.name)) ||
-        // also allow swapping players already in THIS game (they're shown in teams, not sideline)
-        (p.active && inGame.has(p.name) && !builderTeams[0].includes(p.name) && !builderTeams[1].includes(p.name))
-    ).filter(p => !inGame.has(p.name)); // sideline = truly not in this game
+        p.active && !allInGames.has(p.name)
+    ).filter(p => !inGame.has(p.name));
 
     document.getElementById('builderGameLabel').innerText = `Game ${builderMatchIdx + 1}`;
 
-    // Render Team A
     document.getElementById('builderTeamA').innerHTML = builderTeams[0].map(name => {
         const isSelected = builderSelected && builderSelected.name === name;
         return `<div class="builder-chip ${isSelected ? 'builder-selected' : ''}"
@@ -321,7 +299,6 @@ function renderTeamBuilder() {
                 </div>`;
     }).join('');
 
-    // Render Team B
     document.getElementById('builderTeamB').innerHTML = builderTeams[1].map(name => {
         const isSelected = builderSelected && builderSelected.name === name;
         return `<div class="builder-chip ${isSelected ? 'builder-selected' : ''}"
@@ -330,7 +307,6 @@ function renderTeamBuilder() {
                 </div>`;
     }).join('');
 
-    // Render sideline bench
     const sidelineEl = document.getElementById('builderSideline');
     if (sideline.length > 0) {
         sidelineEl.innerHTML = `
@@ -348,7 +324,6 @@ function renderTeamBuilder() {
         sidelineEl.innerHTML = '<div class="builder-section-label" style="opacity:0.4;">No players on sideline</div>';
     }
 
-    // Update odds preview
     const tAObjs = builderTeams[0].map(n => findP(n)).filter(Boolean);
     const tBObjs = builderTeams[1].map(n => findP(n)).filter(Boolean);
     if (tAObjs.length === 2 && tBObjs.length === 2) {
@@ -364,39 +339,25 @@ function renderTeamBuilder() {
     }
 }
 
-/**
- * Selects a player from a team for swapping.
- * If a player from the OTHER team is already selected → swap them.
- * If same team → deselect (toggle).
- * If sideline player was selected first, this clears that and selects in-game player.
- */
 function builderSelectPlayer(teamIdx, name) {
     if (builderSelected && builderSelected.name === name) {
-        // Toggle off — deselect
         builderSelected = null;
     } else if (builderSelected && builderSelected.team !== teamIdx) {
-        // Selected player from opposite team → swap positions
         const otherName = builderSelected.name;
         const otherTeam = builderSelected.team;
-
-        // Swap: remove name from teamIdx, add otherName. Remove otherName from otherTeam, add name.
-        builderTeams[teamIdx]  = builderTeams[teamIdx].map(n => n === name ? otherName : n);
+        builderTeams[teamIdx]   = builderTeams[teamIdx].map(n => n === name ? otherName : n);
         builderTeams[otherTeam] = builderTeams[otherTeam].map(n => n === otherName ? name : n);
         builderSelected = null;
     } else {
-        // Select this player
         builderSelected = { team: teamIdx, name };
     }
     renderTeamBuilder();
 }
 
-/**
- * Swaps a sideline player into the game, replacing the currently selected in-game player.
- * If no in-game player is selected yet, shows a subtle prompt.
- */
+// FIX #11: restore waitRounds on the outgoing player so they aren't
+// deprioritised in the next round's fairness sort.
 function builderSwapFromSideline(sidelineName) {
     if (!builderSelected) {
-        // No in-game player chosen yet — flash all in-game chips to signal "pick one first"
         document.querySelectorAll('.builder-chip:not(.bench)').forEach(el => {
             el.classList.add('builder-pulse');
             setTimeout(() => el.classList.remove('builder-pulse'), 600);
@@ -406,31 +367,32 @@ function builderSwapFromSideline(sidelineName) {
 
     const { team, name: outName } = builderSelected;
 
-    // The outgoing player goes to sideline — they need their sessionPlayCount decremented
-    // since they won't actually be playing this game
     const outPlayer = findP(outName);
-    if (outPlayer) outPlayer.sessionPlayCount = Math.max(0, outPlayer.sessionPlayCount - 1);
+    if (outPlayer) {
+        outPlayer.sessionPlayCount = Math.max(0, outPlayer.sessionPlayCount - 1);
+        // FIX #11: restore waitRounds so this player isn't penalised for being
+        // swapped out — they should queue fairly in the next round.
+        outPlayer.waitRounds = (outPlayer.waitRounds || 0) + 1;
+    }
 
-    // The incoming player gets a sessionPlayCount increment
     const inPlayer = findP(sidelineName);
-    if (inPlayer) inPlayer.sessionPlayCount++;
+    if (inPlayer) {
+        inPlayer.sessionPlayCount++;
+        // The swapped-in player was on the bench; reset their waitRounds as if
+        // they were selected normally by generateMatches.
+        inPlayer.waitRounds = 0;
+    }
 
-    // Swap in the team array
     builderTeams[team] = builderTeams[team].map(n => n === outName ? sidelineName : n);
     builderSelected = null;
     renderTeamBuilder();
 }
 
-/**
- * Shuffles only this game's 4 players into new balanced teams.
- * Keeps the same 4 players, re-runs the snake-draft logic.
- */
 function builderShuffle() {
     const allFour = [...builderTeams[0], ...builderTeams[1]]
         .map(n => findP(n))
         .filter(Boolean);
 
-    // Shuffle randomly first, then sort by rating for snake draft
     allFour.sort(() => Math.random() - 0.5);
     allFour.sort((a, b) => b.rating - a.rating);
 
@@ -442,12 +404,8 @@ function builderShuffle() {
     renderTeamBuilder();
 }
 
-/**
- * Confirms the team builder changes, updates currentMatches,
- * recalculates odds, and re-renders the affected match card.
- */
 function confirmTeamBuilder() {
-    const mIdx = builderMatchIdx;
+    const mIdx   = builderMatchIdx;
     const tAObjs = builderTeams[0].map(n => findP(n)).filter(Boolean);
     const tBObjs = builderTeams[1].map(n => findP(n)).filter(Boolean);
 
@@ -456,16 +414,14 @@ function confirmTeamBuilder() {
         return;
     }
 
-    // Update the match in state
     const newOdds = calculateOdds(tAObjs, tBObjs);
     currentMatches[mIdx].teams = [
         builderTeams[0],
         builderTeams[1]
     ];
     currentMatches[mIdx].odds = newOdds;
-    currentMatches[mIdx].winnerTeamIndex = null; // Reset winner since teams changed
+    currentMatches[mIdx].winnerTeamIndex = null;
 
-    // Re-render just this card by replacing it in the DOM
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
         cardEl.outerHTML = buildMatchCardHTML(mIdx, tAObjs, tBObjs, newOdds);
