@@ -299,6 +299,13 @@ function generateMatches() {
     // Cap courts to what the active pool can support (need 4 players per court)
     const maxCourts  = Math.floor(activePool.length / 4);
     const courtCount = Math.min(activeCourts, maxCourts);
+
+    if (activeCourts > maxCourts && typeof showSessionToast === 'function') {
+        showSessionToast(
+            `⚠️ Need ${activeCourts * 4} players for ${activeCourts} courts — only ${maxCourts} court${maxCourts !== 1 ? 's' : ''} generated with ${activePool.length} active players`
+        );
+    }
+
     const matchData  = [];
 
     for (let i = 0; i < courtCount; i++) {
