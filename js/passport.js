@@ -87,7 +87,10 @@ const Passport = {
     winRate() {
         const p = this.get();
         if (!p || p.privateTotalGames === 0) return '—';
-        return Math.round((p.privateLifetimeWins / p.privateTotalGames) * 100) + '%';
+        const wins  = Math.floor(p.privateLifetimeWins / 2);
+        const games = Math.floor(p.privateTotalGames   / 2);
+        if (games === 0) return '—';
+        return Math.round((wins / games) * 100) + '%';
     },
 
     _uuid() {
@@ -196,8 +199,8 @@ const SidelineView = {
         const winsEl  = document.getElementById('slPrivateWins');
         const gamesEl = document.getElementById('slPrivateGames');
         const wrEl    = document.getElementById('slPrivateWR');
-        if (winsEl)  winsEl.textContent  = passport.privateLifetimeWins;
-        if (gamesEl) gamesEl.textContent = passport.privateTotalGames;
+        if (winsEl)  winsEl.textContent  = Math.floor((passport.privateLifetimeWins || 0) / 2);
+        if (gamesEl) gamesEl.textContent = Math.floor((passport.privateTotalGames   || 0) / 2);
         if (wrEl)    wrEl.textContent    = Passport.winRate();
 
         this._renderMatches();
@@ -1128,8 +1131,8 @@ const PlayerMode = {
         const w = document.getElementById('slPrivateWins');
         const g = document.getElementById('slPrivateGames');
         const r = document.getElementById('slPrivateWR');
-        if (w) w.textContent = p.privateLifetimeWins || 0;
-        if (g) g.textContent = p.privateTotalGames   || 0;
+        if (w) w.textContent = Math.floor((p.privateLifetimeWins || 0) / 2);
+        if (g) g.textContent = Math.floor((p.privateTotalGames   || 0) / 2);
         if (r) r.textContent = Passport.winRate()    || '—';
     },
 
