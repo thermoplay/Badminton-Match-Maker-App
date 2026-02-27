@@ -182,24 +182,29 @@ function generateMatches() {
     });
 
     // ── 6. Assign players to courts — UNIQUENESS GUARANTEED ────────────────
-    // courtCount is derived from sorted.length (= runningPool.length) so it
-    // always reflects the post-deadlock-guard pool size, never a stale value.
-    // `assignedToGame` tracks every player already placed in any game this
-    // round. We iterate `sorted` once in priority order; each player is
-    // considered exactly once, so a player cannot end up in two games.
-    const courtCount     = Math.floor(sorted.length / 4);
-    const assignedToGame = new Set(); // guards cross-court uniqueness
+    // Build `playing` first using a name-keyed Set so duplicate squad entries
+    // (possible when applyRemoteState sets squad from remote data without a
+    // dupe check) are silently skipped. courtCount is derived from
+    // playing.length AFTER the loop — never from sorted.length — so it is
+    // always an exact multiple of 4 and playingQueue.splice(0,4) never yields
+    // fewer than 4 items, preventing the undefined.name crash on line 270.
+    const assignedToGame = new Set(); // name-keyed: one slot per unique name
     const playing        = [];
 
     for (const p of sorted) {
-        if (assignedToGame.has(p.name)) continue; // already in a game (safety net)
-        if (playing.length >= courtCount * 4) break;
+        if (!p || !p.name) continue;                   // skip corrupt entries
+        if (assignedToGame.has(p.name)) continue;      // skip name duplicates
         playing.push(p);
         assignedToGame.add(p.name);
     }
 
+    // courtCount derived from actual unique players collected, not sorted.length
+    const courtCount = Math.floor(playing.length / 4);
+    // Trim playing to the exact multiple of 4 courts can use
+    playing.splice(courtCount * 4);
+
     // Everyone not selected sits out this round
-    const sitting = runningPool.filter(p => !assignedToGame.has(p.name));
+    const sitting = runningPool.filter(p => p && !assignedToGame.has(p.name));
 
     // ── 7. Update tracking stats for players who WILL play ─────────────────
     playing.forEach(p => {
@@ -257,6 +262,10 @@ function generateMatches() {
 
     for (let i = 0; i < courtCount; i++) {
         const p4 = playingQueue.splice(0, 4);
+        // Safety net: if splice returned fewer than 4 (should never happen
+        // after the courtCount fix above, but guards against any future edge
+        // case), skip this court rather than crash with undefined.name.
+        if (p4.length < 4 || p4.some(p => !p)) continue;
         p4.forEach(p => p.sessionPlayCount++);
 
         // Snake draft ELO balance: sort by rating desc, pair 1&4 vs 2&3
