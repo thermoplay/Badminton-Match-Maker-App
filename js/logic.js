@@ -69,7 +69,9 @@ function processCourtResult(mIdx) {
     rotateCourtPlayers(match);
 
     // Pull the next 4 from the queue for this court
-    const next4 = pullNextFromQueue();
+    // Pass current on-court players so variety engine excludes them
+    const onCourtNow = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    const next4 = pullNextFromQueue(onCourtNow);
     if (next4.length < 4) {
         // Not enough players — remove this court slot and collapse
         currentMatches.splice(mIdx, 1);
@@ -188,52 +190,124 @@ function rotateCourtPlayers(m) {
     playerQueue.push(...m.teams[loseIdx], ...m.teams[winIdx]);
 }
 
-// Pull the next 4 eligible active players from the queue front.
-// Returns player OBJECTS (not names). Does NOT mutate the queue.
-function pullNextFromQueue() {
-    initQueue(); // ensure new/departed players are synced first
-    const onCourt   = new Set(currentMatches.flatMap(m => m.teams.flat()));
-    const pulled    = [];
-    const pulledSet = new Set();
+// ---------------------------------------------------------------------------
+// VARIETY ENGINE
+// ---------------------------------------------------------------------------
+//
+// The queue decides WHO IS ELIGIBLE to play next — the front half of the
+// waiting list. Within that candidate pool we pick the GROUP OF 4 and the
+// TEAM SPLIT that together minimise repeated pairings from session history.
+//
+// CANDIDATE POOL SIZE:
+//   We look at the first (4 × POOL_FACTOR) queue-eligible players.
+//   POOL_FACTOR = 2 → 8 candidates → C(8,4) = 70 group combinations.
+//   Each group has 3 possible team splits → 210 total evaluations per court.
+//   Fast enough to run synchronously on any device.
+//
+// FAIRNESS GUARANTEE:
+//   A player can only be a candidate if they're in the top half of the queue.
+//   Nobody outside the front pool can be chosen — so wait time is still
+//   respected. The variety scoring only operates within the eligible window.
 
-    for (const name of playerQueue) {
-        if (pulled.length >= 4) break;
-        if (onCourt.has(name)) continue;        // already playing another court
-        if (pulledSet.has(name)) continue;      // dupe guard
-        const p = squad.find(s => s.name === name && s.active);
-        if (!p) continue;
-        pulled.push(p);
-        pulledSet.add(name);
-    }
-    return pulled;
+const POOL_FACTOR = 2; // candidate pool = 4 * POOL_FACTOR players
+
+// Score a single team split — lower = fresher matchup
+function scoreSplit(tA, tB) {
+    const tm  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
+    const opp = (a, b) => (a.opponentHistory  || {})[b.name] || 0;
+    return (
+        tm(tA[0], tA[1]) * 2 + tm(tB[0], tB[1]) * 2 +
+        opp(tA[0], tB[0]) + opp(tA[0], tB[1]) +
+        opp(tA[1], tB[0]) + opp(tA[1], tB[1])
+    );
 }
 
-// Build a match object from 4 player objects, applying history-aware pairing
+// Score a group of 4 — best possible split score for this combination
+function scoreGroup(g) {
+    const splits = [
+        { tA: [g[0], g[3]], tB: [g[1], g[2]] },
+        { tA: [g[0], g[2]], tB: [g[1], g[3]] },
+        { tA: [g[0], g[1]], tB: [g[2], g[3]] },
+    ];
+    return Math.min(...splits.map(s => scoreSplit(s.tA, s.tB)));
+}
+
+// Generate all C(n, 4) combinations from an array
+function combinations4(arr) {
+    const out = [];
+    const n = arr.length;
+    for (let a = 0;     a < n - 3; a++)
+    for (let b = a + 1; b < n - 2; b++)
+    for (let c = b + 1; c < n - 1; c++)
+    for (let d = c + 1; d < n;     d++)
+        out.push([arr[a], arr[b], arr[c], arr[d]]);
+    return out;
+}
+
+// Get the candidate pool for one court — front of the queue, excluding
+// players already assigned to another court this round.
+function getCandidatePool(onCourt) {
+    initQueue();
+    const pool     = [];
+    const poolSet  = new Set();
+    const poolSize = 4 * POOL_FACTOR;
+
+    for (const name of playerQueue) {
+        if (pool.length >= poolSize) break;
+        if (onCourt.has(name)) continue;
+        if (poolSet.has(name))  continue;
+        const p = squad.find(s => s.name === name && s.active);
+        if (!p) continue;
+        pool.push(p);
+        poolSet.add(name);
+    }
+    return pool;
+}
+
+// Pick the best group of 4 from the candidate pool using the variety matrix.
+// Returns the 4 player objects, or fewer if the pool is too small.
+function pickBestGroup(pool) {
+    if (pool.length <= 4) return pool; // no choice to make
+
+    const combos = combinations4(pool);
+
+    // Add small random jitter so equal-score combos don't always resolve
+    // the same way (keeps things feeling fresh even with zero history)
+    combos.sort(() => Math.random() - 0.5);
+    combos.sort((a, b) => scoreGroup(a) - scoreGroup(b));
+
+    return combos[0];
+}
+
+// Pull the best 4 from the queue front for one court.
+// onCourt = Set of names already assigned this round (multi-court guard).
+function pullNextFromQueue(onCourt) {
+    if (!onCourt) onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    const pool = getCandidatePool(onCourt);
+    return pickBestGroup(pool);
+}
+
+// Build a match object from 4 player objects, applying best-split pairing.
 function buildMatchFromPlayers(p4) {
     p4.forEach(p => p.sessionPlayCount++);
 
+    // ELO sort with shuffle for tie-breaking
     p4.sort(() => Math.random() - 0.5);
     p4.sort((a, b) => b.rating - a.rating);
 
-    const pairings = [
+    // All 3 team splits — pick the freshest
+    const splits = [
         { tA: [p4[0], p4[3]], tB: [p4[1], p4[2]] },
         { tA: [p4[0], p4[2]], tB: [p4[1], p4[3]] },
         { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
     ];
+    splits.sort(() => Math.random() - 0.5);
+    splits.sort((a, b) => scoreSplit(a.tA, a.tB) - scoreSplit(b.tA, b.tB));
 
-    const tmCount  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
-    const oppCount = (a, b) => (a.opponentHistory  || {})[b.name] || 0;
-    const scorePairing = ({ tA, tB }) =>
-        tmCount(tA[0], tA[1]) * 2 + tmCount(tB[0], tB[1]) * 2 +
-        oppCount(tA[0], tB[0]) + oppCount(tA[0], tB[1]) +
-        oppCount(tA[1], tB[0]) + oppCount(tA[1], tB[1]);
-
-    pairings.sort(() => Math.random() - 0.5);
-    pairings.sort((a, b) => scorePairing(a) - scorePairing(b));
-
-    const { tA, tB } = pairings[0];
+    const { tA, tB } = splits[0];
     const odds = calculateOdds(tA, tB);
 
+    // Record session history for all 4 players
     const addHistory = (p, teammate, opponents) => {
         p.teammateHistory = p.teammateHistory || {};
         p.opponentHistory = p.opponentHistory || {};
@@ -306,15 +380,20 @@ function generateMatches() {
         );
     }
 
-    const matchData  = [];
+    const matchData = [];
+    // Track who's already assigned this session start (multi-court uniqueness)
+    const assignedThisRound = new Set();
 
     for (let i = 0; i < courtCount; i++) {
-        const p4 = pullNextFromQueue();
+        const p4 = pullNextFromQueue(assignedThisRound);
         if (p4.length < 4) break;
+        // Mark these 4 as assigned so next court's candidate pool excludes them
+        p4.forEach(p => assignedThisRound.add(p.name));
         const match = buildMatchFromPlayers(p4);
         currentMatches.push(match);
-        const tA = p4.slice(0, 2);
-        const tB = p4.slice(2, 4);
+        // tA/tB for rendering come from match.teams after buildMatchFromPlayers sorts them
+        const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
+        const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
         matchData.push({ idx: i, tA, tB, odds: match.odds });
     }
 
