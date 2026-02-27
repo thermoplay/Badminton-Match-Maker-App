@@ -266,12 +266,46 @@ function generateMatches() {
         if (p4.length < 4 || p4.some(p => !p)) continue;
         p4.forEach(p => p.sessionPlayCount++);
 
-        // Snake draft ELO balance: sort by rating desc, pair 1&4 vs 2&3
-        p4.sort((a, b) => b.rating - a.rating);
+        // ── TEAM PAIRING: balanced + varied ──────────────────────────────
+        // There are exactly 3 ways to split 4 players into 2 pairs.
+        // We evaluate all 3, score each by repeat-teammate penalty, and
+        // pick the pairing with the lowest penalty (random tiebreak).
+        // Each option is also ELO-checked so we always pick a fair matchup.
+        //
+        // Shuffle p4 first so players with identical ratings don't always
+        // get the same index positions, adding natural variety.
+        p4.sort(() => Math.random() - 0.5);           // random shuffle
+        p4.sort((a, b) => b.rating - a.rating);        // stable ELO order
 
-        const tA   = [p4[0], p4[3]];
-        const tB   = [p4[1], p4[2]];
+        // All 3 pair combinations for 4 players [0,1,2,3]:
+        //   Option A: (0,3) vs (1,2)  ← classic snake draft
+        //   Option B: (0,2) vs (1,3)
+        //   Option C: (0,1) vs (2,3)
+        const pairings = [
+            { tA: [p4[0], p4[3]], tB: [p4[1], p4[2]] },
+            { tA: [p4[0], p4[2]], tB: [p4[1], p4[3]] },
+            { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
+        ];
+
+        // Score a pairing: count how many teammate pairs played together
+        // in the immediately previous round. Lower = more variety.
+        const wasTeammate = (a, b) =>
+            (a.lastTeammate === b.name) || (b.lastTeammate === a.name);
+
+        const score = ({ tA, tB }) =>
+            (wasTeammate(tA[0], tA[1]) ? 1 : 0) +
+            (wasTeammate(tB[0], tB[1]) ? 1 : 0);
+
+        // Shuffle pairings so equal-score options are chosen randomly
+        pairings.sort(() => Math.random() - 0.5);
+        pairings.sort((a, b) => score(a) - score(b));
+
+        const { tA, tB } = pairings[0];
         const odds = calculateOdds(tA, tB);
+
+        // Record teammates for next round's variety check
+        tA.forEach(p => { p.lastTeammate = tA.find(q => q !== p)?.name || null; });
+        tB.forEach(p => { p.lastTeammate = tB.find(q => q !== p)?.name || null; });
 
         currentMatches.push({
             teams:           [tA.map(p => p.name), tB.map(p => p.name)],

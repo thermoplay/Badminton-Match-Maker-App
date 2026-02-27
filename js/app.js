@@ -60,6 +60,7 @@ function migratePlayer(p) {
     if (p.consecutiveGames == null) p.consecutiveGames = 0;
     if (p.forcedRest       == null) p.forcedRest       = false;
     if (p.active           == null) p.active           = true;
+    if (p.lastTeammate     == null) p.lastTeammate     = null;
     return p;
 }
 
