@@ -598,7 +598,9 @@
             try {
                 const params   = new URLSearchParams(window.location.search);
                 const role     = params.get('role');
-                const joinCode = params.get('room') || params.get('join');
+                // Read joinCode from URL first; fall back to window._pendingJoinCode
+                // which tryAutoRejoin() saves before stripping ?join= from the URL.
+                const joinCode = params.get('room') || params.get('join') || window._pendingJoinCode || null;
 
                 if (role === 'player') {
                     // ── PLAYER MODE ─────────────────────────────────────────

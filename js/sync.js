@@ -295,12 +295,15 @@ async function memberRename(playerUUID, newName) {
  * Returns { status: 'pending' | 'active', member } — caller uses this
  * to decide whether to bypass the pending screen.
  */
-async function memberUpsert(playerUUID, playerName) {
-    // currentRoomCode is a `let` scoped to this file.
-    // passport.js (separate script) sets window.currentRoomCode — read that as fallback.
-    const roomCode = currentRoomCode || window.currentRoomCode || null;
+async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
+    // Prefer the explicitly-passed room code (always available in player mode boot)
+    // before falling back to the module-level variable or window global.
+    // The module-level currentRoomCode may not be set yet if joinOnlineSession()
+    // is still in-flight when this is called from PlayerMode.boot().
+    const roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || null;
     if (!roomCode || !playerUUID || !playerName) return null;
-    currentRoomCode = roomCode; // keep local var in sync
+    currentRoomCode        = roomCode; // keep local var in sync
+    window.currentRoomCode = roomCode; // expose globally so other paths can read it
     try {
         const r = await fetch('/api/member-upsert', {
             method:  'POST',
@@ -482,9 +485,9 @@ function subscribeRealtime(roomCode) {
     ws.onmessage = (msg) => {
         try {
             const data = JSON.parse(msg.data);
-            // Heartbeat — echo back the ref received, as required by Phoenix protocol
+            // Heartbeat
             if (data.event === 'heartbeat') {
-                ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: data.ref }));
+                ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: '3' }));
                 return;
             }
             // postgres_changes — route by table
@@ -722,7 +725,24 @@ async function tryAutoRejoin() {
     const urlParams = new URLSearchParams(window.location.search);
     const joinCode  = urlParams.get('join');
     const role      = urlParams.get('role');
+
     if (joinCode) {
+        // In player mode, PlayerMode.boot() (triggered by window.onload) owns the
+        // full join flow. We must NOT call joinOnlineSession here because it would
+        // race with boot(), call applyRemoteState() with _joinCode=null, and
+        // overwrite the sideline view before boot() has set PlayerMode._joinCode.
+        // Instead, just pre-seed the room code so memberUpsert() has it available.
+        if (role === 'player') {
+            currentRoomCode        = joinCode;
+            window.currentRoomCode = joinCode;
+            // Save joinCode to window so window.onload can read it even after URL is cleaned
+            window._pendingJoinCode = joinCode;
+            // Strip ?join= but preserve ?role= so window.onload can still see it
+            const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
+            window.history.replaceState({}, document.title, cleanUrl);
+            return;
+        }
+        // Host/spectator mode: do the full join
         const cleanUrl = window.location.origin + window.location.pathname +
             (role ? `?role=${role}` : '');
         window.history.replaceState({}, document.title, cleanUrl);

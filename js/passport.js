@@ -707,7 +707,7 @@ const PlayerMode = {
 
     async _memberUpsert(passport, joinCode) {
         if (typeof memberUpsert !== 'function') return null;
-        return await memberUpsert(passport.playerUUID, passport.playerName);
+        return await memberUpsert(passport.playerUUID, passport.playerName, joinCode);
     },
 
     _hydrateFromUpsert(upsertResult) {
@@ -805,12 +805,16 @@ const PlayerMode = {
             this._renderStats(updated);
             SidelineView.refresh();
             VictoryCard.show(passport.playerName);
-        } else if (event === 'LOSS' && isMe) {
-            // Only record loss if we're strictly identified by UUID
-            const updated = Passport.recordLoss();
-            MatchHistory.push('LOSS', '—', payload.gameLabel || '');
-            this._renderStats(updated);
-            SidelineView.refresh();
+        } else if (event === 'LOSS') {
+            const myName = passport.playerName?.toLowerCase();
+            const wasPlaying = (window.currentMatches || []).some(m =>
+                [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n => n.toLowerCase()).includes(myName)
+            );
+            if (wasPlaying || isMe) {
+                const updated = Passport.recordLoss();
+                this._renderStats(updated);
+                SidelineView.refresh();
+            }
         }
     },
 
@@ -986,6 +990,10 @@ const PlayerMode = {
     },
 
     _subscribeAndPoll(joinCode, passport) {
+        // Stamp the room code on window immediately so any synchronous reader
+        // (e.g. memberUpsert called right after this returns) has it available,
+        // even before the async joinOnlineSession fetch resolves.
+        if (joinCode) window.currentRoomCode = joinCode;
         if (typeof joinOnlineSession === 'function') {
             joinOnlineSession(joinCode).catch(() => {});
         }
