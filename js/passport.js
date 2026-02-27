@@ -748,25 +748,58 @@ const PlayerMode = {
     // ─────────────────────────────────────────────────────────────────────────
     // WIN DEDUP — prevents double-recording when both WS broadcast (match_resolved)
     // and DB poll fallback (match_result) deliver the same game result.
-    // Key: `${playerUUID}-${gameLabel}`. Cleared when a new session is joined.
+    //
+    // Key: `${playerUUID}-${gameLabel}`. Stored in sessionStorage so it survives
+    // soft refreshes within the same tab but resets when the tab closes.
+    // The Set-based approach was lossy on page refresh — sessionStorage fixes that.
     // ─────────────────────────────────────────────────────────────────────────
     _processedResults: new Set(),
 
+    _getProcessedKey(gameLabel) {
+        const passport = Passport.get();
+        if (!passport) return null;
+        return `cs_result_${passport.playerUUID}_${gameLabel || '_'}`;
+    },
+
+    /**
+     * Returns true if this result was already recorded (duplicate), false if new.
+     * Marks it as processed on first call. Uses both the in-memory Set AND
+     * sessionStorage so the dedup survives a soft page refresh.
+     */
     _markResultProcessed(gameLabel) {
         const passport = Passport.get();
         if (!passport) return false;
         const key = `${passport.playerUUID}-${gameLabel || '_'}`;
-        if (this._processedResults.has(key)) return true; // already handled
+
+        // Check in-memory Set first (fastest path)
+        if (this._processedResults.has(key)) return true;
+
+        // Check sessionStorage (survives soft refresh within same tab)
+        const ssKey = this._getProcessedKey(gameLabel);
+        if (ssKey) {
+            try {
+                if (sessionStorage.getItem(ssKey)) {
+                    // Re-populate the in-memory Set from sessionStorage
+                    this._processedResults.add(key);
+                    return true;
+                }
+            } catch { /* ignore */ }
+        }
+
+        // Not yet processed — mark it now in both stores
         this._processedResults.add(key);
+        if (ssKey) {
+            try { sessionStorage.setItem(ssKey, '1'); } catch { /* ignore */ }
+        }
         return false;
     },
 
     // ─────────────────────────────────────────────────────────────────────────
     // MATCH RESULT — DB poll fallback only (WS missed events safety net)
     //
-    // match_result individual broadcasts were removed from dispatchWinSignals
-    // to prevent double-recording. This handler now only fires from _pollSignal
-    // when the WS broadcast was missed (e.g. player was briefly offline).
+    // Fires from _pollSignal when the WS broadcast was missed.
+    // MUST check _markResultProcessed to avoid double-counting with
+    // _onMatchResolved which fires via the WS broadcast channel.
     // ─────────────────────────────────────────────────────────────────────────
 
     _onMatchResult(payload) {
@@ -776,7 +809,8 @@ const PlayerMode = {
         const { playerUUID, event, gameLabel } = payload;
         if (playerUUID !== passport.playerUUID) return;
 
-        // Dedup: skip if match_resolved already handled this game
+        // DEDUP: if match_resolved already handled this game, skip entirely.
+        // This is the critical guard that prevents double-recording.
         if (this._markResultProcessed(gameLabel)) return;
 
         if (event === 'WIN') {
@@ -812,17 +846,21 @@ const PlayerMode = {
         const isLoser    = loserUUIDs.includes(myUUID);
         const wasInMatch = isWinner || isLoser;
 
-        // Mark processed FIRST — before any recordWin/recordLoss —
-        // so if _pollSignal fires in the same tick it sees the flag and skips.
-        if (wasInMatch && this._markResultProcessed(gameLabel)) return; // already handled
+        // DEDUP: mark processed unconditionally so _onMatchResult (poll fallback)
+        // sees this game as already handled, regardless of whether we were in it.
+        // Previously this was gated on wasInMatch — that was the bug: spectators
+        // didn't mark the key, so _pollSignal could still double-record their stats.
+        if (this._markResultProcessed(gameLabel)) return; // already handled
 
         // 1. Write localStorage FIRST, before any UI
         if (isWinner) {
             Passport.recordWin();
-            MatchHistory.push('WIN', '—', gameLabel);
+            // Record opponent names for Performance Lab history
+            const opponentNames = (payload.loserNames || '—');
+            MatchHistory.push('WIN', opponentNames, gameLabel);
         } else if (isLoser) {
             Passport.recordLoss();
-            MatchHistory.push('LOSS', winnerNames, gameLabel);
+            MatchHistory.push('LOSS', winnerNames || '—', gameLabel);
         }
 
         // 2. Show "Last Match Winner" on feed for ALL players
@@ -950,7 +988,7 @@ const PlayerMode = {
 
             // ── SUCCESS: request sent, player is queued ────────────────────────────────
             // Replace slCurrentMatches (frozen form or welcome-back card)
-            // with a clear “waiting for approval” UI state.
+            // with a clear "waiting for approval" UI state.
             this._showQueuedState(passport.playerName);
 
         } catch(e) {
