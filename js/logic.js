@@ -293,7 +293,6 @@ function renderQueueStrip() {
 
     if (waiting.length === 0) {
         strip.style.display = 'none';
-        updateNextUpTicker([]);
         return;
     }
 
@@ -316,8 +315,6 @@ function renderQueueStrip() {
         </div>
     `;
 
-    // Also update the ticker with the first 4 waiting
-    updateNextUpTicker(waiting.slice(0, 4));
 }
 // ---------------------------------------------------------------------------
 // MATCH CARD RENDERING

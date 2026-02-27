@@ -226,7 +226,6 @@ function renderSquad() {
         </div>
     `);
     container.innerHTML = chips.join('');
-    updateSideline();
 }
 
 function updateSideline() {
@@ -1258,21 +1257,7 @@ const _startPolling = () => {
     setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
 };
 
-// ---------------------------------------------------------------------------
-// NEXT UP TICKER
-// ---------------------------------------------------------------------------
-
-function updateNextUpTicker(players) {
-    const ticker = document.getElementById('nextUpTicker');
-    if (!ticker) return;
-    if (!players || players.length === 0) {
-        ticker.style.display = 'none';
-        return;
-    }
-    ticker.style.display = 'flex';
-    document.getElementById('nextUpNames').textContent =
-        players.map(p => p.name.toUpperCase()).join('  ·  ');
-}
+// Next Up Ticker removed — replaced by Queue Strip
 
 // ---------------------------------------------------------------------------
 // NEXT UP TICKER — sync update for spectators
