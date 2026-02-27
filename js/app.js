@@ -6,21 +6,7 @@
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// GLOBAL DECLARATIONS — must be at the very top so every function in this
-// file and every inline onclick handler can reference these names without a
-// ReferenceError, even before initApp() has filled them with real values.
-//
-// passport  — the player's identity object ({playerUUID, playerName, …})
-//             Mirrors the data in localStorage under 'cs_player_passport'.
-//             Kept in sync: write localStorage first, then update this ref.
-//
-// inviteQR  — alias for the InviteQR object defined in passport.js.
-//             Assigned in initApp() after passport.js has been parsed.
-//             HTML onclick="inviteQR.show(…)" safely resolves to it.
-//
-// supabase  — reserved for a future Supabase JS client instance.
-//             Currently the app uses raw fetch; this slot prevents a
-//             ReferenceError if any code path checks `if (supabase)`.
+// GLOBAL DECLARATIONS
 // ---------------------------------------------------------------------------
 let passport  = null;
 let inviteQR  = null;
@@ -31,8 +17,8 @@ let supabase  = null;
 // ---------------------------------------------------------------------------
 let squad = [];
 let currentMatches = [];
-let roundHistory = [];          // array of completed round snapshots for history + undo
-let previousRoundSnapshot = null; // snapshot before last round for undo
+let roundHistory = [];
+let previousRoundSnapshot = null;
 let selectedPlayerIndex = null;
 let pressTimer = null;
 let isLongPress = false;
@@ -68,10 +54,6 @@ function loadFromDisk() {
     updateUndoButton();
 }
 
-/**
- * Re-renders match cards from saved state.
- * Extracted from loadFromDisk for clarity.
- */
 function renderSavedMatches() {
     if (currentMatches.length === 0) return;
     const container = document.getElementById('matchContainer');
@@ -79,7 +61,6 @@ function renderSavedMatches() {
     currentMatches.forEach((m, i) => {
         const tAObjects = m.teams[0].map(n => findP(n));
         const tBObjects = m.teams[1].map(n => findP(n));
-        // findP is safe here because we filtered invalid matches in loadFromDisk
         renderMatchCard(i, tAObjects, tBObjects, m.odds);
         if (m.winnerTeamIndex !== null) {
             const boxes = document.querySelectorAll(`#match-${i} .team-box`);
@@ -99,7 +80,6 @@ function addPlayer() {
     const name = el.value.trim();
     if (!name) return;
     if (squad.find(p => p.name.toLowerCase() === name.toLowerCase())) {
-        // Duplicate check is case-insensitive
         el.value = '';
         return;
     }
@@ -120,21 +100,74 @@ function addPlayer() {
 
 function editPlayerName() {
     const p = squad[selectedPlayerIndex];
-    const oldName = p.name; // capture BEFORE rename
-    const newName = prompt('Edit Name:', p.name);
-    if (newName && newName.trim()) {
-        p.name = newName.trim();
-        // Update name references in currentMatches using oldName
+    if (!p) return;
+
+    const oldName = p.name;
+
+    // Find the chip element for this player
+    const chips = document.querySelectorAll('.player-chip');
+    const chip  = chips[selectedPlayerIndex];
+    if (!chip) return;
+
+    const nameEl = chip.querySelector('.chip-name');
+    if (!nameEl) return;
+
+    const prevText = nameEl.textContent;
+    const input    = document.createElement('input');
+    input.type           = 'text';
+    input.value          = oldName;
+    input.className      = 'player-name-edit-input';
+    input.maxLength      = 30;
+    input.autocomplete   = 'off';
+    input.autocorrect    = 'off';
+    input.autocapitalize = 'words';
+    input.setAttribute('inputmode', 'text');
+
+    const commit = () => {
+        const newName = input.value.trim();
+        input.replaceWith(nameEl);
+        if (!newName || newName === oldName) return;
+
+        p.name = newName;
+
         currentMatches.forEach(m => {
-            m.teams = m.teams.map(team =>
-                team.map(n => (n === oldName ? p.name : n))
-            );
+            m.teams = m.teams.map(team => team.map(n => n === oldName ? newName : n));
         });
+
+        const uuidMap = window._sessionUUIDMap || {};
+        if (uuidMap[oldName]) {
+            uuidMap[newName] = uuidMap[oldName];
+            delete uuidMap[oldName];
+            window._sessionUUIDMap = uuidMap;
+        }
+
         closeMenu();
         renderSquad();
         renderSavedMatches();
         saveToDisk();
-    }
+
+        if (typeof broadcastNameUpdate === 'function' && window.isOnlineSession) {
+            const uuid = p.uuid || (window._sessionUUIDMap || {})[newName] || null;
+            broadcastNameUpdate(uuid, oldName, newName);
+        }
+
+        Haptic.success();
+    };
+
+    const cancel = () => {
+        input.replaceWith(nameEl);
+        closeMenu();
+    };
+
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', commit);
+
+    nameEl.replaceWith(input);
+    input.select();
+    input.focus();
 }
 
 function deletePlayer() {
@@ -154,7 +187,6 @@ function deletePlayer() {
     checkNextButtonState();
     saveToDisk();
 
-    // Notify the removed player's screen immediately
     if (isOnlineSession && typeof _broadcast === 'function') {
         _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
     }
@@ -205,7 +237,6 @@ function updateSideline() {
 function checkNextButtonState() {
     const btn = document.getElementById('nextRoundBtn');
     if (!btn) return;
-    // Enabled when: no matches exist yet, OR every match has a winner
     const canProceed =
         currentMatches.length === 0 ||
         currentMatches.every(m => m.winnerTeamIndex !== null);
@@ -271,13 +302,11 @@ function showOverlay(type) {
         renderStatsTab('performance');
 
     } else {
-        // SYNC / MULTIPLAYER panel
         title.innerText = 'Session Hub';
         content.innerHTML = `
             <div id="syncStatusMsg" class="sync-status" style="display:none;"></div>
 
             ${isOnlineSession ? `
-                <!-- ACTIVE SESSION VIEW -->
                 <div class="session-live-card">
                     <div class="session-live-top">
                         <span class="session-live-dot"></span>
@@ -299,7 +328,6 @@ function showOverlay(type) {
                     `}
                 </div>
             ` : `
-                <!-- CREATE / JOIN VIEW -->
                 <div style="margin-bottom:24px;">
                     <div class="sync-section-label">Host a New Session</div>
                     <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
@@ -355,29 +383,16 @@ function showOverlay(type) {
         `;
 
         if (isOnlineSession) {
-            // ── HOST QR CODE ────────────────────────────────────────────────────
-            // Null guard: currentRoomCode must be set before we generate the QR.
-            // If it's missing the session was never properly created — show an error
-            // instead of encoding an invalid URL that leaves players with "No Room Code".
             if (!currentRoomCode) {
                 console.error('[CourtSide] generateQR: currentRoomCode is null or undefined — QR not generated');
                 const qrDiv = document.getElementById('qrcode');
                 if (qrDiv) qrDiv.innerHTML = '<p style="color:#ef4444;font-size:12px;text-align:center;">Room code missing — try ending and restarting the session.</p>';
             } else {
-                // URL construction: ?join= is the parameter that index.html,
-                // sync.js (tryAutoRejoin), and passport.js (InviteQR) all read.
-                // Using ?room= here would break every reader and produce "No Room Code".
                 const joinUrl = window.location.origin + window.location.pathname + '?join=' + currentRoomCode + '&role=player';
-
-                // Verify the URL in the host console before the QR renders
                 console.log('[CourtSide] Generating QR for:', joinUrl);
-
-                // Use the qrcodejs constructor API as instructed.
-                // QRCodeConstructor is saved in index.html before qrcode@1.5.1 overwrites the global.
                 const QRCtor = window.QRCodeConstructor || window.QRCode;
                 const qrDiv  = document.getElementById('qrcode');
                 if (qrDiv && QRCtor) {
-                    // Clear any previous QR (e.g. overlay reopened)
                     qrDiv.innerHTML = '';
                     new QRCtor(qrDiv, {
                         text:          joinUrl,
@@ -388,7 +403,6 @@ function showOverlay(type) {
                         correctLevel:  QRCtor.CorrectLevel?.H || 0,
                     });
                 } else if (qrDiv) {
-                    // Both QR libraries unavailable (CDN failure) — show the URL as tap-to-copy text
                     console.warn('[CourtSide] QRCode library not loaded, showing plain URL');
                     qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
                 }
@@ -403,12 +417,9 @@ function closeOverlay() {
 
 // ---------------------------------------------------------------------------
 // QR CODE & SYNC TOKEN
-// (Previously duplicated — now defined exactly once)
 // ---------------------------------------------------------------------------
 
 function generateQR() {
-    // Local backup path — encodes squad+matches as a base64 token (not a URL).
-    // Uses the same div#qrcode element as the host session QR.
     const token = btoa(JSON.stringify({ squad, currentMatches }));
     const qrDiv = document.getElementById('qrcode');
     if (!qrDiv) return;
@@ -425,7 +436,6 @@ function generateQR() {
 }
 
 function copySyncToken() {
-    // In online mode — copy the room code, not the full token
     const text = isOnlineSession
         ? currentRoomCode
         : btoa(JSON.stringify({ squad, currentMatches }));
@@ -440,7 +450,6 @@ function copySyncToken() {
 }
 
 function fallbackCopy(text) {
-    // Fallback for browsers/devices where clipboard API isn't available
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
@@ -467,7 +476,6 @@ function importSyncToken() {
         currentMatches = data.currentMatches || [];
         saveToDisk();
         closeOverlay();
-        // FIX: Full re-render instead of location.reload() — no page flash, no state loss
         renderSquad();
         document.getElementById('matchContainer').innerHTML = '';
         renderSavedMatches();
@@ -488,10 +496,6 @@ function eraseAllData() {
 // UTILITIES
 // ---------------------------------------------------------------------------
 
-/**
- * Escapes HTML special characters to prevent XSS when inserting player
- * names (user-supplied strings) into innerHTML.
- */
 function escapeHTML(str) {
     return String(str)
         .replace(/&/g, '&amp;')
@@ -502,44 +506,27 @@ function escapeHTML(str) {
 }
 
 // ---------------------------------------------------------------------------
-// INIT — see initApp() at the bottom of this file
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // UNDO LAST ROUND
 // ---------------------------------------------------------------------------
 
-/**
- * Shows or hides the undo button based on whether there's history to undo.
- */
 function updateUndoButton() {
     let btn = document.getElementById('undoRoundBtn');
     if (!btn) return;
     btn.style.display  = roundHistory.length > 0 ? 'inline-flex' : 'none';
 }
 
-/**
- * Rolls back the last completed round.
- * Restores squad stats, ELO, and match cards to pre-round state.
- */
 function undoLastRound() {
     if (roundHistory.length === 0) return;
     if (!confirm('Undo the last round? This will reverse all ELO changes.')) return;
 
     const snapshot = roundHistory.pop();
-
-    // Restore squad stats from snapshot
     squad = snapshot.squadSnapshot.map(s => ({ ...s }));
-
-    // Restore match cards so host can re-pick winners
     currentMatches = snapshot.matches.map(m => ({ ...m, winnerTeamIndex: null }));
 
-    // Re-render everything
     renderSquad();
     document.getElementById('matchContainer').innerHTML = '';
     renderSavedMatches();
 
-    // Re-select the previous winners visually so host knows what was picked
     snapshot.matches.forEach((m, i) => {
         if (m.winnerTeamIndex !== null) {
             const boxes = document.querySelectorAll(`#match-${i} .team-box`);
@@ -562,10 +549,6 @@ function undoLastRound() {
 // STATS OVERLAY — TABS
 // ---------------------------------------------------------------------------
 
-/**
- * Renders the stats overlay with tabbed navigation.
- * tab: 'performance' | 'history'
- */
 function renderStatsTab(tab) {
     const content = document.getElementById('overlayContent');
 
@@ -581,15 +564,23 @@ function renderStatsTab(tab) {
     `;
 
     if (tab === 'performance') {
-        const sorted   = [...squad].sort((a, b) => b.rating - a.rating);
-        const topCount = Math.max(1, Math.ceil(squad.length * 0.3));
-        const peak     = sorted.slice(0, topCount).sort((a, b) => a.name.localeCompare(b.name));
-        const active   = sorted.slice(topCount).sort((a, b) => a.name.localeCompare(b.name));
+        // Only rank players who have actually played a game
+        const activePlayers = squad.filter(p => p.active);
+        const ranked   = activePlayers.filter(p => (p.games || 0) > 0)
+                                       .sort((a, b) => b.rating - a.rating);
+        const unranked = activePlayers.filter(p => (p.games || 0) === 0);
+
+        if (activePlayers.length === 0) {
+            content.innerHTML = tabs + '<div class="stats-empty">No active players yet.</div>';
+            return;
+        }
+
+        const topCount = Math.max(1, Math.ceil(ranked.length * 0.3));
         const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
 
         const renderGroup = (label, list) => {
             if (list.length === 0) return '';
-            const cards = list.map((p, i) => {
+            const cards = list.map((p) => {
                 const sqIdx = squad.indexOf(p);
                 return `
                 <div class="stats-card" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
@@ -605,10 +596,26 @@ function renderStatsTab(tab) {
             `;
         };
 
-        content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
+        const unrankedHTML = unranked.length > 0 ? `
+            <div class="stats-group">
+                <div class="stats-header" style="opacity:0.5">Unranked (no games yet)</div>
+                <div class="stats-grid">
+                    ${unranked.map(p => {
+                        const sqIdx = squad.indexOf(p);
+                        return `<div class="stats-card" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                            <div class="stats-name">${escapeHTML(p.name)}</div>
+                            <div class="stats-meta" style="opacity:0.5">No games yet</div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>` : '';
+
+        content.innerHTML = tabs
+            + renderGroup('Peak Performers', ranked.slice(0, topCount))
+            + renderGroup('Active Roster', ranked.slice(topCount))
+            + unrankedHTML;
 
     } else {
-        // History tab
         if (roundHistory.length === 0) {
             content.innerHTML = tabs + `
                 <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
@@ -649,23 +656,9 @@ function renderStatsTab(tab) {
 }
 
 // ---------------------------------------------------------------------------
-// CHECK-IN MODE (Spectator view)
-// ---------------------------------------------------------------------------
-
-/**
- * Renders the check-in UI shown to spectators.
- * Displays all squad members — tap to toggle active/resting for this session.
- * Changes are pushed to Supabase so the host sees them live.
- */
-
-// ---------------------------------------------------------------------------
 // PLAYER CARDS
 // ---------------------------------------------------------------------------
 
-/**
- * Auto-generates a fun title based on a player's real stats.
- * Everyone gets something — titles aren't only for high performers.
- */
 function getPlayerTitle(p) {
     const wr = p.games > 0 ? p.wins / p.games : 0;
 
@@ -684,10 +677,6 @@ function getPlayerTitle(p) {
     return { title: 'The Veteran', icon: '🏅' };
 }
 
-/**
- * Opens a full-screen player card for a given squad index.
- * Accessible from long-press menu (host) and Performance Lab (anyone).
- */
 function openPlayerCard(idx) {
     const p  = squad[idx];
     if (!p) return;
@@ -734,15 +723,10 @@ function closePlayerCard() {
     document.getElementById('playerCardModal').style.display = 'none';
 }
 
-/**
- * Captures the player card as an image and opens the native share sheet.
- * Uses html2canvas loaded from CDN.
- */
 async function sharePlayerCard() {
     const card = document.querySelector('.player-card');
     if (!card) return;
 
-    // Load html2canvas if not already present
     if (!window.html2canvas) {
         await new Promise((resolve, reject) => {
             const s = document.createElement('script');
@@ -770,7 +754,6 @@ async function sharePlayerCard() {
                     files:  [file],
                 });
             } else {
-                // Fallback: download the image
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 a.download = 'courtside-player-card.png';
@@ -794,14 +777,12 @@ async function shareAuraPoster(matchIdx) {
     const tA = m.teams[0];
     const tB = m.teams[1];
 
-    // Populate the hidden poster div
     document.getElementById('auraPosterGame').textContent  = `GAME ${matchIdx + 1}`;
     document.getElementById('auraPosterTeamA').textContent = tA.join(' & ');
     document.getElementById('auraPosterTeamB').textContent = tB.join(' & ');
     document.getElementById('auraPosterOddsA').textContent = `${m.odds[0]}%`;
     document.getElementById('auraPosterOddsB').textContent = `${m.odds[1]}%`;
 
-    // Move poster into view temporarily for capture
     const poster = document.getElementById('auraPoster');
     poster.style.left = '-9999px';
     poster.style.top  = '0';
@@ -825,7 +806,6 @@ async function shareAuraPoster(matchIdx) {
                     files: [file],
                 });
             } else {
-                // Fallback: download
                 const a = document.createElement('a');
                 a.href     = URL.createObjectURL(blob);
                 a.download = 'courtside-aura.png';
@@ -841,7 +821,7 @@ async function shareAuraPoster(matchIdx) {
 }
 
 // ---------------------------------------------------------------------------
-// WEEKLY LEADERBOARD — rendered in stats overlay
+// WEEKLY LEADERBOARD
 // ---------------------------------------------------------------------------
 
 async function renderLeaderboardTab() {
@@ -897,18 +877,8 @@ async function renderLeaderboardTab() {
 // "I WANT TO PLAY" — Spectator feature
 // ---------------------------------------------------------------------------
 
-let playRequests = []; // host-side list of pending requests
+let playRequests = [];
 
-// updateIWTPVisibility is defined once below in the Passport Integration
-// section where it also calls checkIWTPSmartRecognition. A second definition
-// here would be a duplicate function declaration — a SyntaxError in strict
-// mode that causes the entire script to fail silently on Vercel.
-
-// ---------------------------------------------------------------------------
-// IWTP — DECISION FLOW (Zero-assumption, clean collapse)
-// ---------------------------------------------------------------------------
-
-/** Helper: show only one IWTP sub-view, hide all others */
 function _iwtpShow(id) {
     ['iwtpChoiceView','iwtpNewPlayerView','iwtpExistingView','iwtpSpectatorView'].forEach(v => {
         const el = document.getElementById(v);
@@ -943,10 +913,6 @@ function showIWTPExisting() {
     `).join('');
 }
 
-/**
- * Player picks their name → instant collapse to confirmed read-only view.
- * Screen is 100% clear of forms. Spectator mode enforced.
- */
 function confirmSpectateAs(name) {
     localStorage.setItem('cs_spectator_name', name);
     document.getElementById('iwtpSpectatorName').textContent    = name.toUpperCase();
@@ -957,10 +923,6 @@ function confirmSpectateAs(name) {
     showSessionToast(`👁 Watching as ${name}`);
 }
 
-/**
- * Collapse the entire IWTP sheet off-screen.
- * Called when spectator taps "Enter Live View".
- */
 function collapseIWTPSheet() {
     const sheet = document.getElementById('iwantToPlaySheet');
     if (!sheet) return;
@@ -971,10 +933,6 @@ function collapseIWTPSheet() {
     Haptic.tap();
 }
 
-/**
- * New player submits join request.
- * On success: entire sheet collapses immediately — toast confirms.
- */
 async function submitIWantToPlay() {
     const input = document.getElementById('iwtpNameInput');
     const name  = (input?.value || '').trim();
@@ -1001,9 +959,7 @@ async function submitIWantToPlay() {
 
         if (res.ok) {
             localStorage.setItem('cs_spectator_name', name);
-            // INSTANT: collapse entire sheet — screen is clean
             collapseIWTPSheet();
-            // Small toast confirms action
             setTimeout(() => showSessionToast('🏀 Request sent! Pending host approval…'), 300);
             Haptic.success();
         } else {
@@ -1016,10 +972,6 @@ async function submitIWantToPlay() {
     }
 }
 
-/**
- * On load: check if returning spectator — skip choice, restore their view.
- * Otherwise show the two-choice landing.
- */
 function checkIWTPSmartRecognition() {
     const sheet = document.getElementById('iwantToPlaySheet');
     if (!sheet || !isOnlineSession || isOperator) return;
@@ -1032,13 +984,9 @@ function checkIWTPSmartRecognition() {
             return;
         }
     }
-    // First time — show choice
     showIWTPChoice();
 }
 
-/**
- * Host: poll for pending play requests and show badge.
- */
 let _lastSeenRequestIds = new Set();
 
 async function pollPlayRequests() {
@@ -1049,7 +997,6 @@ async function pollPlayRequests() {
         const incoming = data.requests || [];
         playRequests = incoming;
 
-        // Detect NEW requests not seen before — trigger notification
         incoming.forEach(r => {
             if (!_lastSeenRequestIds.has(r.id)) {
                 _lastSeenRequestIds.add(r.id);
@@ -1057,7 +1004,6 @@ async function pollPlayRequests() {
             }
         });
 
-        // Update badge count
         const badge = document.getElementById('playRequestsBadge');
         const count = document.getElementById('playRequestsCount');
         if (badge && count) {
@@ -1067,10 +1013,6 @@ async function pollPlayRequests() {
     } catch { /* silent */ }
 }
 
-/**
- * High-visibility slide-down notification for new join requests.
- * Stacks if multiple arrive — each one queues and shows in sequence.
- */
 const _notifQueue = [];
 let   _notifShowing = false;
 
@@ -1104,7 +1046,7 @@ function dismissJoinNotification() {
     if (!notif) return;
     clearTimeout(notif._timer);
     notif.classList.remove('show');
-    setTimeout(processNotifQueue, 400); // wait for slide-out animation
+    setTimeout(processNotifQueue, 400);
 }
 
 async function notifApprove() {
@@ -1152,37 +1094,26 @@ function closePlayRequests() {
 }
 
 async function approvePlayRequest(name, id, playerUUID = null) {
-    // Add to squad
     if (!squad.find(p => p.name === name)) {
         squad.push({ name, uuid: playerUUID || null, rating: 1000, wins: 0, games: 0, streak: 0, active: true });
     }
 
-    // UUID map for win signal dispatch
     window._sessionUUIDMap = window._sessionUUIDMap || {};
     if (playerUUID) window._sessionUUIDMap[name] = playerUUID;
 
-    // Verification token — stored in session for refresh persistence
     const token = _makeApprovalToken();
     window._approvedPlayers = window._approvedPlayers || {};
     window._approvedPlayers[playerUUID || name] = { token, name, uuid: playerUUID, approvedAt: Date.now() };
 
     renderSquad();
-    saveToDisk();   // triggers pushStateToSupabase + broadcastGameState via hook
+    saveToDisk();
     showSessionToast(`✅ ${name} added`);
     Haptic.success();
 
-    // PART 1: Flip session_members.status → 'active' in the database.
-    // This DB write triggers a Supabase Realtime postgres_changes event that
-    // the player's phone receives in _handleMemberChange() → _onMemberActivated().
-    // This is the "Approval Memory" mechanism — survives page refresh.
     if (typeof memberApprove === 'function' && playerUUID) {
-        memberApprove(playerUUID);   // non-blocking, fire and forget
+        memberApprove(playerUUID);
     }
 
-    // BUG 1 FIX: broadcast approval INSTANTLY via the broadcast channel.
-    // The player's _onApprovalReceived handler catches this, matches UUID,
-    // saves token to sessionStorage, and flips UI to active sideline view.
-    // This is separate from (and faster than) the debounced DB write.
     if (typeof broadcastApproval === 'function') {
         broadcastApproval(playerUUID, name, token);
     }
@@ -1208,12 +1139,6 @@ async function denyPlayRequest(id) {
     } catch { /* silent */ }
 }
 
-// Start polling when host goes live
-const _startPolling = () => {
-    pollPlayRequests();
-    setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
-};
-
 // ---------------------------------------------------------------------------
 // NEXT UP TICKER
 // ---------------------------------------------------------------------------
@@ -1230,10 +1155,6 @@ function updateNextUpTicker(players) {
         players.map(p => p.name.toUpperCase()).join('  ·  ');
 }
 
-// ---------------------------------------------------------------------------
-// NEXT UP TICKER — sync update for spectators
-// ---------------------------------------------------------------------------
-
 function updateIWTPVisibility() {
     const sheet = document.getElementById('iwantToPlaySheet');
     if (!sheet) return;
@@ -1248,18 +1169,11 @@ function updateIWTPVisibility() {
 // PASSPORT INTEGRATION
 // =============================================================================
 
-/**
- * Called on page load and whenever the IWTP sheet is about to show.
- * If the player has a passport, skip name entry entirely.
- */
 function passportInit() {
     const passport = Passport.init();
     return passport;
 }
 
-/**
- * Rename flow — triggered by tapping the player name in sideline view.
- */
 function passportRename() {
     const passport = Passport.get();
     if (!passport) return;
@@ -1270,35 +1184,25 @@ function passportRename() {
     const trimmed = newName.trim();
     const oldName = passport.playerName;
 
-    // BUG 3 FIX: write localStorage FIRST, then update UI, then broadcast.
-    // This order prevents any render reading stale data.
-    Passport.rename(trimmed);                   // 1. localStorage
+    Passport.rename(trimmed);
     if (typeof PlayerMode !== 'undefined') {
-        PlayerMode._renderIdentity(Passport.get()); // 2. identity card
+        PlayerMode._renderIdentity(Passport.get());
     }
-    SidelineView.refresh();                     // 3. full view
+    SidelineView.refresh();
 
-    // 4. Broadcast to host via the broadcast channel (not a dead API route)
     if (typeof isOnlineSession !== 'undefined' && isOnlineSession && currentRoomCode) {
         if (typeof broadcastNameUpdate === 'function') {
             broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
         }
     }
 
-    // 5. PART 1: Also write new name to session_members table.
-    // This triggers the host's postgres_changes listener (_handleMemberChange)
-    // which updates the squad name on the big screen in real-time — no refresh.
     if (typeof isOnlineSession !== 'undefined' && isOnlineSession && currentRoomCode && typeof memberRename === 'function') {
-        memberRename(passport.playerUUID, trimmed);   // non-blocking
+        memberRename(passport.playerUUID, trimmed);
     }
 
     showSessionToast(`✅ Name updated to ${trimmed}`);
 }
 
-/**
- * Poll for win/loss signals addressed to this passport UUID.
- * Runs every 8 seconds while in an online session.
- */
 let _signalPollTimer = null;
 
 function startSignalPolling() {
@@ -1329,7 +1233,6 @@ async function handlePassportSignal(signal, passport) {
     }
     SidelineView.refresh();
 
-    // Acknowledge — clear signal from server
     await fetch('/api/passport-signal', {
         method:  'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -1340,20 +1243,6 @@ async function handlePassportSignal(signal, passport) {
     }).catch(() => {});
 }
 
-/**
- * Host dispatches win signals after selecting winners.
- * Called from setWinner() in logic.js.
- * Resolves player names → UUIDs using the session's uuid_map.
- */
-/**
- * Called from setWinner() in logic.js when host selects a winner.
- * Also called from processAndNext() to ensure signal fires even if
- * setWinner was called before Next Round.
- *
- * UUID RESOLUTION — UUID-first priority chain (survives name changes):
- *   1. squad[n].uuid    — stored at approval time, never changes with renames
- *   2. uuidMap[name]    — fallback, may be stale if name changed
- */
 async function dispatchWinSignals(mIdx) {
     if (!isOperator || !currentRoomCode) return;
     const m = currentMatches[mIdx];
@@ -1364,7 +1253,6 @@ async function dispatchWinSignals(mIdx) {
     const uuidMap = window._sessionUUIDMap || {};
     const label   = `Game ${mIdx + 1}`;
 
-    // UUID resolution: squad member uuid > uuidMap name lookup
     const resolveUUID = (name) => {
         const member = squad.find(p => p.name === name);
         return member?.uuid || uuidMap[name] || null;
@@ -1375,20 +1263,19 @@ async function dispatchWinSignals(mIdx) {
     const winnerUUIDs = winnerNames.map(resolveUUID).filter(Boolean);
     const loserUUIDs  = loserNames .map(resolveUUID).filter(Boolean);
 
-    // Broadcast MATCH_RESOLVED — carries winnerUUIDs + loserUUIDs so every player
-    // can record their own outcome. This is the single source of truth for stats.
-    // (match_result individual broadcasts were removed — they caused double-recording.)
     const winnerDisplayNames = winnerNames.join(' & ');
+    const loserDisplayNames  = loserNames.join(' & ');
+
     if (typeof _broadcast === 'function' && isOnlineSession) {
         _broadcast('match_resolved', {
             winnerNames:  winnerDisplayNames,
+            loserNames:   loserDisplayNames,
             winnerUUIDs,
             loserUUIDs,
             gameLabel:    label,
         });
     }
 
-    // Durable DB fallback — uses winner_uuids/loser_uuids matching the API contract
     if (winnerUUIDs.length > 0 || loserUUIDs.length > 0) {
         fetch('/api/passport-signal', {
             method:  'POST',
@@ -1407,22 +1294,6 @@ async function dispatchWinSignals(mIdx) {
 // PASSPORT-AWARE JOIN FLOW OVERRIDE
 // =============================================================================
 
-/**
- * Installs the passport-aware override on checkIWTPSmartRecognition.
- *
- * WHY A FUNCTION INSTEAD OF MODULE-LEVEL CODE:
- *   The original pattern was:
- *       const _originalCheckIWTP = checkIWTPSmartRecognition;   ← runs at parse time
- *       checkIWTPSmartRecognition = function() { ... };
- *
- *   On Vercel, scripts are fetched in parallel. If app.js finishes parsing
- *   before passport.js is evaluated, checkIWTPSmartRecognition is captured
- *   before the Passport object exists, and the reassignment is lost when
- *   passport.js later defines its own version of the function.
- *
- *   Moving this into a named function and calling it from initApp() — after
- *   DOMContentLoaded guarantees all scripts are parsed — eliminates the race.
- */
 function _installPassportIWTPOverride() {
     const _originalCheckIWTP = checkIWTPSmartRecognition;
     checkIWTPSmartRecognition = function() {
@@ -1431,11 +1302,9 @@ function _installPassportIWTPOverride() {
         if (!sheet || !isOnlineSession || isOperator) return;
 
         if (passport && passport.playerName) {
-            // Returning player — show welcome-back prompt
             showPassportWelcome(passport);
             return;
         }
-        // No passport — show normal choice flow
         _originalCheckIWTP();
     };
 }
@@ -1444,7 +1313,6 @@ function showPassportWelcome(passport) {
     const sheet = document.getElementById('iwantToPlaySheet');
     if (!sheet) return;
 
-    // Hijack the choice view with a personalised welcome
     const choiceView = document.getElementById('iwtpChoiceView');
     if (!choiceView) return;
 
@@ -1471,7 +1339,6 @@ function showPassportWelcome(passport) {
 async function passportJoinSession() {
     const passport = Passport.get();
     if (!passport || !currentRoomCode) return;
-
     await submitPassportJoinRequest(passport.playerName, passport.playerUUID);
 }
 
@@ -1496,7 +1363,6 @@ async function submitPassportJoinRequest(name, uuid) {
         });
 
         if (res.ok) {
-            // Collapse sheet — show sideline view
             collapseIWTPSheet();
             setTimeout(() => {
                 SidelineView.show();
@@ -1518,35 +1384,14 @@ function spectateOnly() {
     document.body.classList.add('spectator-mode');
     showSessionToast('👁 Spectating live');
 }
+
 // =============================================================================
-// initApp — single async entry point for ALL app initialization
-// =============================================================================
-//
-// EXECUTION GUARANTEE:
-//   Called only from the DOMContentLoaded listener at the bottom of this file.
-//   By that point the browser has fully parsed every <script> tag in index.html
-//   (polish.js → passport.js → app.js → logic.js → sync.js), so Passport,
-//   InviteQR, PlayerMode, tryAutoRejoin, and loadFromDisk all exist.
-//
-// STEP ORDER:
-//   1. passport fail-safe  — globals set before any other logic runs
-//   2. inviteQR alias      — wire lowercase inviteQR → InviteQR object
-//   3. IWTP override       — install passport-aware checkIWTPSmartRecognition
-//   4. Disk load           — restore squad/matches from localStorage
-//   5. QR deferred         — generateQR() only called after UI is ready
-//   6. Boot handoff        — hand off to bootApp() (passport.js) for the
-//                            async Supabase / PlayerMode initialisation
+// initApp — single entry point for ALL app initialization
 // =============================================================================
 
 async function initApp() {
 
     // ── STEP 1: Passport fail-safe ────────────────────────────────────────────
-    // Set the global `passport` variable as the very first thing.
-    // Every subsequent step — and every function in this file — can safely
-    // read `passport` without checking whether it was ever assigned.
-    //
-    // Key: 'cs_player_passport' matches the PASSPORT_KEY constant in passport.js.
-    // If localStorage throws (private browsing on some iOS), fall back gracefully.
     try {
         const _raw = localStorage.getItem('cs_player_passport');
         passport = _raw ? JSON.parse(_raw) : null;
@@ -1555,92 +1400,66 @@ async function initApp() {
         passport = null;
     }
 
-    // If no passport exists yet, create a fresh one via the Passport object
-    // (defined in passport.js, guaranteed to exist by DOMContentLoaded timing).
     if (!passport && typeof Passport !== 'undefined') {
         passport = Passport.init();
     }
 
-    // Ensure window._passport is in sync — bootApp() (passport.js) reads this.
     window._passport = passport;
 
     // ── STEP 2: Wire inviteQR alias ───────────────────────────────────────────
-    // InviteQR (capital) is the object literal defined in passport.js.
-    // inviteQR (lowercase, declared at the top of this file) is the alias that
-    // HTML onclick handlers like onclick="inviteQR.show(…)" resolve against.
-    // Without this assignment, any tap on the Invite button throws:
-    //   ReferenceError: Can't find variable: inviteQR
     if (typeof InviteQR !== 'undefined') {
         inviteQR = InviteQR;
     }
 
     // ── STEP 3: Install passport-aware IWTP override ──────────────────────────
-    // Must run after all scripts are parsed so checkIWTPSmartRecognition is
-    // already defined (it's declared in this file at ~line 970).
     if (typeof _installPassportIWTPOverride === 'function') {
         _installPassportIWTPOverride();
     }
 
     // ── STEP 4: Restore local state from disk ─────────────────────────────────
-    // loadFromDisk reads localStorage → populates squad/currentMatches →
-    // calls renderSquad() + checkNextButtonState(). Safe to call here because
-    // the DOM is fully parsed (DOMContentLoaded has fired).
     try {
         loadFromDisk();
     } catch (e) {
         console.error('[CourtSide] initApp: loadFromDisk failed', e);
     }
 
-    // ── STEP 5: Deferred QR generation ────────────────────────────────────────
-    // generateQR() requires the QRCode library (qrcode.min.js) and a #qrCanvas
-    // element. Both are guaranteed to exist after DOMContentLoaded, but the
-    // canvas only appears when the sync overlay is open — so we don't call it
-    // here; it's called inside showOverlay('sync') when the overlay renders.
-    // This comment documents the intent: never call generateQR() at parse time.
+    // ── STEP 5: URL parsing & boot handoff ────────────────────────────────────
+    // tryAutoRejoin handles host reconnect AND ?join= URL params for spectators.
+    // PlayerMode.boot handles the player role (?role=player).
+    const urlParams = new URLSearchParams(window.location.search);
+    const role      = urlParams.get('role');
+    const joinCode  = urlParams.get('join') || localStorage.getItem('cs_player_room_code') || null;
 
-    // ── STEP 6: Async boot handoff ────────────────────────────────────────────
-    // bootApp() is defined at the bottom of passport.js. It owns everything
-    // async: Supabase rejoin, PlayerMode boot, URL parsing.
-    // initApp() is synchronous-first; bootApp() handles the network work.
-    if (typeof bootApp === 'function') {
-        await bootApp();
-    } else {
-        // bootApp not available (e.g. passport.js failed to load) — fall back
-        // to tryAutoRejoin so the host session still reconnects.
-        console.warn('[CourtSide] initApp: bootApp not found, falling back to tryAutoRejoin');
-        if (typeof tryAutoRejoin === 'function') {
-            await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
+    if (role === 'player' || (joinCode && !localStorage.getItem('cs_room_code'))) {
+        // ── PLAYER MODE ───────────────────────────────────────────────────────
+        if (typeof SidelineView !== 'undefined') SidelineView.show();
+        if (typeof PlayerMode !== 'undefined') {
+            await PlayerMode.boot(passport, joinCode).catch(e =>
+                console.error('[CourtSide] PlayerMode.boot failed:', e)
+            );
         }
+    } else {
+        // ── HOST / SPECTATOR MODE ─────────────────────────────────────────────
+        if (typeof tryAutoRejoin === 'function') {
+            await tryAutoRejoin().catch(e =>
+                console.error('[CourtSide] tryAutoRejoin failed:', e)
+            );
+        }
+    }
+
+    // ── STEP 6: Service worker ────────────────────────────────────────────────
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
 }
 
 // =============================================================================
-// ENTRY POINT
-// =============================================================================
-//
-// DOMContentLoaded fires after the HTML is fully parsed AND all synchronous
-// <script> tags have been fetched and executed. This is the correct event for
-// Vercel deployments where scripts are fetched in parallel over HTTP/2:
-//   - It guarantees polish.js, passport.js, app.js, logic.js, sync.js are
-//     all fully evaluated before initApp() touches any of their exports.
-//   - It fires before images/fonts finish loading (unlike window 'load'),
-//     so there is no perceived delay.
-//
-// The window 'load' listener in passport.js (bootApp) is intentionally kept
-// as a second entry point — DOMContentLoaded calls initApp() for the sync
-// work, and 'load' calls bootApp() for the async network work. Both are
-// idempotent: if bootApp() runs twice it is a no-op the second time because
-// it checks window._passport before re-initialising.
-//
-// DO NOT add window.onload = ... anywhere in this file. Assigning window.onload
-// overwrites any previously assigned handler and causes boot steps to be
-// silently skipped.
+// ENTRY POINT — single DOMContentLoaded listener, no window.onload
 // =============================================================================
 
 window.addEventListener('DOMContentLoaded', () => {
     initApp().catch(err => {
         console.error('[CourtSide] initApp() failed:', err);
-        // Surface the error in the on-screen banner (defined in index.html)
         if (typeof _csShowError === 'function') {
             _csShowError('App init failed: ' + (err?.message || err));
         }
