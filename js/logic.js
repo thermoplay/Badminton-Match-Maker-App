@@ -25,8 +25,10 @@ function calculateELOSift(winnerRating, loserRating) {
 }
 
 function calculateOdds(teamA, teamB) {
-    const rA = (teamA[0].rating + teamA[1].rating) / 2;
-    const rB = (teamB[0].rating + teamB[1].rating) / 2;
+    // Null-safe: if a player object is missing (stale data), default rating to 1200
+    const r = p => (p && p.rating != null ? p.rating : 1200);
+    const rA = (r(teamA[0]) + r(teamA[1])) / 2;
+    const rB = (r(teamB[0]) + r(teamB[1])) / 2;
     const expectedA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
     const probA = Math.round(expectedA * 100);
     return [probA, 100 - probA];
@@ -180,6 +182,8 @@ function generateMatches() {
     });
 
     // ── 6. Assign players to courts — UNIQUENESS GUARANTEED ────────────────
+    // courtCount is derived from sorted.length (= runningPool.length) so it
+    // always reflects the post-deadlock-guard pool size, never a stale value.
     // `assignedToGame` tracks every player already placed in any game this
     // round. We iterate `sorted` once in priority order; each player is
     // considered exactly once, so a player cannot end up in two games.

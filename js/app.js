@@ -52,6 +52,22 @@ function loadFromDisk() {
             const data = JSON.parse(saved);
             squad          = data.squad        || [];
             roundHistory   = data.roundHistory || [];
+
+            // ── Field migration — backfill any fields added after initial release ──
+            // Old saves may be missing rating, consecutiveGames, or forcedRest.
+            // Patching here ensures calculateOdds never reads undefined.rating.
+            squad.forEach(p => {
+                if (p.rating           === undefined) p.rating           = 1200;
+                if (p.wins             === undefined) p.wins             = 0;
+                if (p.games            === undefined) p.games            = 0;
+                if (p.streak           === undefined) p.streak           = 0;
+                if (p.sessionPlayCount === undefined) p.sessionPlayCount = 0;
+                if (p.waitRounds       === undefined) p.waitRounds       = 0;
+                if (p.consecutiveGames === undefined) p.consecutiveGames = 0;
+                if (p.forcedRest       === undefined) p.forcedRest       = false;
+                if (p.active           === undefined) p.active           = true;
+            });
+
             currentMatches = (data.currentMatches || []).filter(m => {
                 return m.teams.flat().every(name => squad.find(p => p.name === name));
             });
@@ -79,7 +95,9 @@ function renderSavedMatches() {
     currentMatches.forEach((m, i) => {
         const tAObjects = m.teams[0].map(n => findP(n));
         const tBObjects = m.teams[1].map(n => findP(n));
-        // findP is safe here because we filtered invalid matches in loadFromDisk
+        // Guard: skip any match where a player object couldn't be resolved.
+        // This can happen with stale localStorage data from an older app version.
+        if (tAObjects.some(p => !p) || tBObjects.some(p => !p)) return;
         renderMatchCard(i, tAObjects, tBObjects, m.odds);
         if (m.winnerTeamIndex !== null) {
             const boxes = document.querySelectorAll(`#match-${i} .team-box`);
@@ -105,12 +123,14 @@ function addPlayer() {
     }
     squad.push({
         name,
-        active: true,
-        wins: 0,
-        games: 0,
-        streak: 0,
+        active:           true,
+        wins:             0,
+        games:            0,
+        streak:           0,
         sessionPlayCount: 0,
-        rating: 1200
+        rating:           1200,
+        consecutiveGames: 0,
+        forcedRest:       false,
     });
     el.value = '';
     renderSquad();
@@ -175,14 +195,14 @@ function toggleRestingState() {
 function renderSquad() {
     const container = document.getElementById('squadList');
     const chips = squad.map((p, i) => `
-        <div class="player-chip ${p.active ? 'active' : 'resting'}"
+        <div class="player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''}"
              onmousedown="startPress(${i})"
              onmouseup="endPress(${i})"
              ontouchstart="startPress(${i})"
              ontouchend="endPress(${i})"
              oncontextmenu="return false;">
             ${Avatar.html(p.name)}
-            <span class="chip-name">${escapeHTML(p.name)}${!p.active ? ' ☕' : ''}${p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${escapeHTML(p.name)}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 😮‍💨' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
         </div>
     `);
     container.innerHTML = chips.join('');
