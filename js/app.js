@@ -60,7 +60,8 @@ function migratePlayer(p) {
     if (p.consecutiveGames == null) p.consecutiveGames = 0;
     if (p.forcedRest       == null) p.forcedRest       = false;
     if (p.active           == null) p.active           = true;
-    if (p.lastTeammate     == null) p.lastTeammate     = null;
+    if (p.teammateHistory  == null) p.teammateHistory  = {};
+    if (p.opponentHistory  == null) p.opponentHistory  = {};
     return p;
 }
 
@@ -135,8 +136,10 @@ function addPlayer() {
         streak:           0,
         sessionPlayCount: 0,
         rating:           1200,
-        consecutiveGames: 0,
-        forcedRest:       false,
+        consecutiveGames:  0,
+        forcedRest:        false,
+        teammateHistory:   {},
+        opponentHistory:   {},
     });
     el.value = '';
     renderSquad();

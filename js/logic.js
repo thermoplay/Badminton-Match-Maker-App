@@ -266,46 +266,61 @@ function generateMatches() {
         if (p4.length < 4 || p4.some(p => !p)) continue;
         p4.forEach(p => p.sessionPlayCount++);
 
-        // ── TEAM PAIRING: balanced + varied ──────────────────────────────
+        // ── TEAM PAIRING: balanced + maximally varied ────────────────────
         // There are exactly 3 ways to split 4 players into 2 pairs.
-        // We evaluate all 3, score each by repeat-teammate penalty, and
-        // pick the pairing with the lowest penalty (random tiebreak).
-        // Each option is also ELO-checked so we always pick a fair matchup.
-        //
-        // Shuffle p4 first so players with identical ratings don't always
-        // get the same index positions, adding natural variety.
-        p4.sort(() => Math.random() - 0.5);           // random shuffle
-        p4.sort((a, b) => b.rating - a.rating);        // stable ELO order
+        // We score all 3 against full session history (not just last round):
+        //   - Repeat TEAMMATE penalty: weighted by how often they've paired
+        //   - Repeat OPPONENT penalty: weighted by how often they've faced off
+        // The pairing with the lowest combined penalty wins (random tiebreak).
+        // This guarantees different teammates AND different opponents over time.
 
-        // All 3 pair combinations for 4 players [0,1,2,3]:
-        //   Option A: (0,3) vs (1,2)  ← classic snake draft
-        //   Option B: (0,2) vs (1,3)
-        //   Option C: (0,1) vs (2,3)
+        // Shuffle first so equal-rating players don't freeze into fixed slots
+        p4.sort(() => Math.random() - 0.5);
+        p4.sort((a, b) => b.rating - a.rating);
+
+        // All 3 unique splits of [0,1,2,3] into two pairs:
         const pairings = [
             { tA: [p4[0], p4[3]], tB: [p4[1], p4[2]] },
             { tA: [p4[0], p4[2]], tB: [p4[1], p4[3]] },
             { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
         ];
 
-        // Score a pairing: count how many teammate pairs played together
-        // in the immediately previous round. Lower = more variety.
-        const wasTeammate = (a, b) =>
-            (a.lastTeammate === b.name) || (b.lastTeammate === a.name);
+        // Look up how many times a has been teammate/opponent with b this session.
+        // teammateHistory and opponentHistory are Maps stored on each player object:
+        //   p.teammateHistory  = { [name]: count }
+        //   p.opponentHistory  = { [name]: count }
+        const tmCount  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
+        const oppCount = (a, b) => (a.opponentHistory  || {})[b.name] || 0;
 
-        const score = ({ tA, tB }) =>
-            (wasTeammate(tA[0], tA[1]) ? 1 : 0) +
-            (wasTeammate(tB[0], tB[1]) ? 1 : 0);
+        // Score a pairing — lower is better (more variety).
+        // Teammate repeats weighted 2x vs opponent repeats: same team every game
+        // is more noticeable/annoying than facing the same opponent.
+        const scorePairing = ({ tA, tB }) =>
+            tmCount(tA[0], tA[1]) * 2 + tmCount(tB[0], tB[1]) * 2 +
+            oppCount(tA[0], tB[0]) + oppCount(tA[0], tB[1]) +
+            oppCount(tA[1], tB[0]) + oppCount(tA[1], tB[1]);
 
-        // Shuffle pairings so equal-score options are chosen randomly
+        // Random shuffle first so equal-score options don't always resolve
+        // to the same array order.
         pairings.sort(() => Math.random() - 0.5);
-        pairings.sort((a, b) => score(a) - score(b));
+        pairings.sort((a, b) => scorePairing(a) - scorePairing(b));
 
         const { tA, tB } = pairings[0];
         const odds = calculateOdds(tA, tB);
 
-        // Record teammates for next round's variety check
-        tA.forEach(p => { p.lastTeammate = tA.find(q => q !== p)?.name || null; });
-        tB.forEach(p => { p.lastTeammate = tB.find(q => q !== p)?.name || null; });
+        // Update session history for both teams
+        const addHistory = (p, teammate, opponents) => {
+            p.teammateHistory = p.teammateHistory || {};
+            p.opponentHistory = p.opponentHistory || {};
+            p.teammateHistory[teammate.name] = (p.teammateHistory[teammate.name] || 0) + 1;
+            opponents.forEach(o => {
+                p.opponentHistory[o.name] = (p.opponentHistory[o.name] || 0) + 1;
+            });
+        };
+        addHistory(tA[0], tA[1], tB);
+        addHistory(tA[1], tA[0], tB);
+        addHistory(tB[0], tB[1], tA);
+        addHistory(tB[1], tB[0], tA);
 
         currentMatches.push({
             teams:           [tA.map(p => p.name), tB.map(p => p.name)],
