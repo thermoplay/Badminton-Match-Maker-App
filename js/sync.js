@@ -17,9 +17,17 @@
 //         avoid the non-atomic read-modify-write race
 // =============================================================================
 
-let isOnlineSession   = false;
-let isOperator        = false;
-let currentRoomCode   = null;
+// Expose sync state on window immediately so app.js can reference these as
+// bare names regardless of script load order. _syncState() keeps them in sync
+// whenever they change, but these initial assignments prevent ReferenceErrors
+// if app.js runs before or interleaved with sync.js.
+window.isOnlineSession = false;
+window.isOperator      = false;
+window.currentRoomCode = null;
+
+let isOnlineSession   = window.isOnlineSession;
+let isOperator        = window.isOperator;
+let currentRoomCode   = window.currentRoomCode;
 let operatorKey       = null;
 let operatorKeyHash   = null;
 let realtimeChannel   = null;
