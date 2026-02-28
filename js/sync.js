@@ -50,13 +50,25 @@ const _RT_KEY = 'sb_publishable_2NEOSY4wadPb93X55k_uvg_ASydylcv';
 // ---------------------------------------------------------------------------
 
 async function apiCall(route, options = {}) {
-    const res = await fetch(`/api/${route}`, {
-        method:  options.method || 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        body:    options.body ? JSON.stringify(options.body) : undefined,
-    });
-    const data = await res.json().catch(() => ({}));
-    return { ok: res.ok, status: res.status, data };
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    try {
+        const res = await fetch(`/api/${route}`, {
+            method:  options.method || 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            body:    options.body ? JSON.stringify(options.body) : undefined,
+            signal:  controller.signal,
+        });
+        clearTimeout(timeout);
+        const data = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, data };
+    } catch (e) {
+        clearTimeout(timeout);
+        if (e.name === 'AbortError') {
+            throw new Error('Request timed out. Check your connection and try again.');
+        }
+        throw e;
+    }
 }
 
 function generateRoomCode() {
@@ -83,18 +95,31 @@ async function hashKey(key) {
 // ---------------------------------------------------------------------------
 
 async function createOnlineSession() {
+    // Prevent double-tap
+    const goLiveBtn = document.querySelector('#overlayContent .btn-main');
+    if (goLiveBtn) { goLiveBtn.disabled = true; goLiveBtn.textContent = '⏳ Creating…'; }
+
     showSyncStatus('Creating session…', 'info');
     try {
         const roomCode = generateRoomCode();
         const opKey    = generateOperatorKey();
+        const opHash   = await hashKey(opKey); // hash BEFORE sending
+
         const result   = await apiCall('session-create', {
             method: 'POST',
-            body: { room_code: roomCode, operator_key: opKey, squad, current_matches: currentMatches },
+            body: {
+                room_code:         roomCode,
+                operator_key:      opKey,
+                operator_key_hash: opHash,  // send hash so server can store it
+                squad,
+                current_matches: currentMatches,
+            },
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
+
         currentRoomCode = roomCode;
         operatorKey     = opKey;
-        operatorKeyHash = await hashKey(opKey);
+        operatorKeyHash = opHash;
         isOperator      = true;
         isOnlineSession = true;
         _syncState();
@@ -109,7 +134,12 @@ async function createOnlineSession() {
         _updatePlayerCount();
     } catch (e) {
         console.error('CourtSide: create failed', e);
-        showSyncStatus('Failed to create session. Check your connection.', 'error');
+        const msg = e.message?.includes('timed out')
+            ? 'Connection timed out. Check your internet and try again.'
+            : 'Failed to create session. Check your connection.';
+        showSyncStatus(msg, 'error');
+        // Re-enable the button so user can retry
+        if (goLiveBtn) { goLiveBtn.disabled = false; goLiveBtn.textContent = '🌐 Go Live'; }
         Haptic.error();
     }
 }
