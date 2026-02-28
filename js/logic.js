@@ -105,6 +105,7 @@ function processCourtResult(mIdx) {
     checkNextButtonState();
     updateUndoButton();
     saveToDisk();
+    if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.bump();
 }
 
@@ -188,27 +189,12 @@ function rotateCourtPlayers(m) {
     // Remove from wherever they currently sit
     playerQueue = playerQueue.filter(n => !allNames.includes(n));
 
-    // Increment waitRounds for players NOT in this match who are active + in queue
-    const onCourtAll = new Set(currentMatches.flatMap(match => match.teams.flat()));
-    squad.forEach(p => {
-        if (p.active && !onCourtAll.has(p.name) && playerQueue.includes(p.name)) {
-            p.waitRounds = (p.waitRounds || 0) + 1;
-        }
-    });
-
     if (m.winnerTeamIndex === null) {
         playerQueue.push(...allNames);
         return;
     }
     const winIdx  = m.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
-
-    // Reset waitRounds for players rejoining from this court
-    allNames.forEach(name => {
-        const p = findP(name);
-        if (p) p.waitRounds = 0;
-    });
-
     // Losers back first (shorter wait), winners after (slight rest)
     playerQueue.push(...m.teams[loseIdx], ...m.teams[winIdx]);
 }
@@ -426,6 +412,7 @@ function generateMatches() {
     checkNextButtonState();
     renderSquad();
     saveToDisk();
+    if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.bump();
 }
 
