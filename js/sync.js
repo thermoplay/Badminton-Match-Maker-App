@@ -748,6 +748,10 @@ function showReconnectingIndicator(show) {
 
 async function endAndDeleteSession() {
     if (!isOperator || !currentRoomCode) return;
+
+    // Show session summary before wiping state
+    if (typeof _showSessionSummary === 'function') _showSessionSummary();
+
     try {
         await apiCall('session-delete', {
             method: 'DELETE',

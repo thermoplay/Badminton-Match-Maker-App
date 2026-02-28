@@ -134,8 +134,21 @@ const SidelineView = {
         const rowEl = document.getElementById('slNextUpRow');
         if (!el || !rowEl) return;
         const text = window._lastNextUp || (document.getElementById('nextUpNames')?.textContent?.trim() || '');
-        if (text) { el.textContent = text; rowEl.style.display = 'flex'; }
-        else { rowEl.style.display = 'none'; }
+        if (!text) { rowEl.style.display = 'none'; return; }
+
+        // Parse names and render with avatars if Avatar is available
+        if (window.Avatar) {
+            const names = text.split(/\s*[,&]\s*/).map(n => n.trim()).filter(Boolean);
+            el.innerHTML = names.map(name =>
+                `<span class="sl-next-avatar-chip">
+                    <span class="sl-next-avatar" style="background:${Avatar.color(name)}">${Avatar.initials(name)}</span>
+                    <span class="sl-next-name">${escapeHTML ? escapeHTML(name) : name}</span>
+                </span>`
+            ).join('<span class="sl-next-sep">·</span>');
+        } else {
+            el.textContent = text;
+        }
+        rowEl.style.display = 'flex';
     },
 
     _renderLastWinner() {
