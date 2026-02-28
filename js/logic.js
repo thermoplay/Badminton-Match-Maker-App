@@ -68,9 +68,14 @@ function processCourtResult(mIdx) {
     // Rotate just this court's players back into the queue
     rotateCourtPlayers(match);
 
-    // Pull the next 4 from the queue for this court
-    // Pass current on-court players so variety engine excludes them
-    const onCourtNow = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    // Pull the next 4 from the queue for this court.
+    // Exclude players on OTHER courts only — the current court's players
+    // have already rotated back into the queue and are eligible again.
+    const onCourtNow = new Set(
+        currentMatches
+            .filter((_, i) => i !== mIdx)
+            .flatMap(m => m.teams.flat())
+    );
     const next4 = pullNextFromQueue(onCourtNow);
     if (next4.length < 4) {
         // Not enough players — remove this court slot and collapse
@@ -105,7 +110,6 @@ function processCourtResult(mIdx) {
     checkNextButtonState();
     updateUndoButton();
     saveToDisk();
-    if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.bump();
 }
 
@@ -412,7 +416,6 @@ function generateMatches() {
     checkNextButtonState();
     renderSquad();
     saveToDisk();
-    if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.bump();
 }
 
