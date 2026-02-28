@@ -3930,22 +3930,9 @@ button:active,
 }
 
 .sl-match-mine {
-    border: 2px solid var(--accent);
-    background: linear-gradient(135deg, rgba(0,255,163,0.08), rgba(0,255,163,0.03));
-    box-shadow: 0 0 0 1px rgba(0,255,163,0.15), 0 4px 24px rgba(0,255,163,0.12);
-    animation: myGamePulse 2.5s ease-in-out infinite;
-    position: relative;
-}
-
-@keyframes myGamePulse {
-    0%, 100% {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 1px rgba(0,255,163,0.15), 0 4px 20px rgba(0,255,163,0.10);
-    }
-    50% {
-        border-color: rgba(0,255,163,0.7);
-        box-shadow: 0 0 0 3px rgba(0,255,163,0.12), 0 4px 32px rgba(0,255,163,0.22);
-    }
+    border-color: var(--border-accent);
+    background: linear-gradient(135deg, var(--surface), rgba(0,255,163,0.04));
+    box-shadow: 0 0 16px rgba(0,255,163,0.06);
 }
 
 .sl-match-label {
@@ -3959,13 +3946,11 @@ button:active,
 }
 
 .sl-you-badge {
-    color: #0a0a0f;
-    background: var(--accent);
+    color: var(--accent);
+    background: var(--accent-dim);
     border-radius: 4px;
-    padding: 2px 7px;
+    padding: 1px 5px;
     font-size: 0.5rem;
-    font-weight: 900;
-    letter-spacing: 0.08em;
 }
 
 .sl-match-teams {
@@ -4660,13 +4645,6 @@ button:active,
 
 .sl-match-card.sl-match-mine .sl-match-label {
     color: var(--accent);
-    letter-spacing: 3px;
-}
-
-/* Your team names bold-highlighted */
-.sl-match-card.sl-match-mine .sl-team {
-    color: #fff;
-    text-shadow: 0 0 12px rgba(0,255,163,0.3);
 }
 
 /* Pulse animation for on-deck status */
