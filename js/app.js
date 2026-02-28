@@ -211,9 +211,7 @@ function updateSideline() {
     const activeThisRound = new Set();
     currentMatches.forEach(m => m.teams.flat().forEach(n => activeThisRound.add(n)));
     const idle = squad.filter(p => p.active && !activeThisRound.has(p.name));
-    const restingEl = document.getElementById('restingList');
-    if (!restingEl) return;
-    restingEl.innerHTML = idle
+    document.getElementById('restingList').innerHTML = idle
         .map(p => `
             <div class="player-chip active sideline-chip" data-name="${escapeHTML(p.name)}">
                 ${Avatar.html(p.name)}
@@ -766,47 +764,139 @@ async function sharePlayerCard() {
 // ---------------------------------------------------------------------------
 
 async function shareAuraPoster(matchIdx) {
-    const m  = currentMatches[matchIdx];
+    const m = currentMatches[matchIdx];
     if (!m) return;
 
-    const tA = m.teams[0];
-    const tB = m.teams[1];
-
-    document.getElementById('auraPosterGame').textContent  = `GAME ${matchIdx + 1}`;
-    document.getElementById('auraPosterTeamA').textContent = tA.join(' & ');
-    document.getElementById('auraPosterTeamB').textContent = tB.join(' & ');
-    document.getElementById('auraPosterOddsA').textContent = `${m.odds[0]}%`;
-    document.getElementById('auraPosterOddsB').textContent = `${m.odds[1]}%`;
-
-    const poster = document.getElementById('auraPoster');
-    poster.style.left = '-9999px';
-    poster.style.top  = '0';
+    const tA = (m.teams[0] || []).join(' & ');
+    const tB = (m.teams[1] || []).join(' & ');
 
     try {
-        const canvas = await html2canvas(poster.querySelector('.aura-bg'), {
-            backgroundColor: null,
-            scale:  2,
-            width:  390,
-            height: 693,
-            useCORS: true,
-            logging: false,
-        });
+        const W = 1080, H = 1920;
+        const canvas = document.createElement('canvas');
+        canvas.width  = W;
+        canvas.height = H;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = '#08080e';
+        ctx.fillRect(0, 0, W, H);
+
+        const glow1 = ctx.createRadialGradient(W/2, 380, 0, W/2, 380, 680);
+        glow1.addColorStop(0,   'rgba(0,255,163,0.13)');
+        glow1.addColorStop(0.5, 'rgba(0,255,163,0.04)');
+        glow1.addColorStop(1,   'rgba(0,255,163,0)');
+        ctx.fillStyle = glow1;
+        ctx.fillRect(0, 0, W, H);
+
+        const glow2 = ctx.createRadialGradient(W/2, H-200, 0, W/2, H-200, 500);
+        glow2.addColorStop(0, 'rgba(0,200,120,0.10)');
+        glow2.addColorStop(1, 'rgba(0,200,120,0)');
+        ctx.fillStyle = glow2;
+        ctx.fillRect(0, 0, W, H);
+
+        if (typeof _drawGrain       === 'function') _drawGrain(ctx, W, H, 0.018);
+        if (typeof _drawCourtLines  === 'function') _drawCourtLines(ctx, W, H);
+        if (typeof _drawSilhouettes === 'function') _drawSilhouettes(ctx, W, H);
+
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,255,163,0.6)';
+        ctx.shadowBlur  = 28;
+        ctx.fillStyle   = '#00ffa3';
+        ctx.font        = 'bold 52px "Arial Narrow", Arial, sans-serif';
+        ctx.textAlign   = 'center';
+        ctx.fillText('THE COURTSIDE', W/2, 168);
+        ctx.restore();
+
+        const lineGrad = ctx.createLinearGradient(W/2-220, 0, W/2+220, 0);
+        lineGrad.addColorStop(0,   'rgba(0,255,163,0)');
+        lineGrad.addColorStop(0.5, 'rgba(0,255,163,0.5)');
+        lineGrad.addColorStop(1,   'rgba(0,255,163,0)');
+        ctx.strokeStyle = lineGrad;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(W/2-220, 188); ctx.lineTo(W/2+220, 188);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(W/2-52, 225, 8, 0, Math.PI*2);
+        ctx.fillStyle = '#00ffa3';
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.font = '500 26px Arial, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('LIVE NOW', W/2-30, 232);
+        ctx.textAlign = 'center';
+
+        const divGrad = ctx.createLinearGradient(80, 310, W-80, 310);
+        divGrad.addColorStop(0,   'rgba(0,255,163,0)');
+        divGrad.addColorStop(0.3, 'rgba(0,255,163,0.4)');
+        divGrad.addColorStop(0.7, 'rgba(0,255,163,0.4)');
+        divGrad.addColorStop(1,   'rgba(0,255,163,0)');
+        ctx.strokeStyle = divGrad;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(80, 310); ctx.lineTo(W-80, 310);
+        ctx.stroke();
+
+        const midY = H * 0.46;
+        if (typeof _drawTeamBlock === 'function') {
+            ctx.save(); ctx.textAlign = 'center';
+            _drawTeamBlock(ctx, W/2, midY - 260, tA, '#ffffff', W);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 88px "Arial Narrow", Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(tA, W/2, midY - 260);
+        }
+
+        ctx.beginPath();
+        ctx.arc(W/2, midY, 88, 0, Math.PI*2);
+        ctx.strokeStyle = 'rgba(0,255,163,0.15)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(W/2, midY, 72, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fill();
+        ctx.fillStyle = '#00ffa3';
+        ctx.font = 'bold 58px "Arial Narrow", Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('VS', W/2, midY + 20);
+
+        if (typeof _drawTeamBlock === 'function') {
+            ctx.save(); ctx.textAlign = 'center';
+            _drawTeamBlock(ctx, W/2, midY + 160, tB, '#ffffff', W);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 88px "Arial Narrow", Arial, sans-serif';
+            ctx.fillText(tB, W/2, midY + 220);
+        }
+
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.font = '500 28px Arial, sans-serif';
+        ctx.fillText('@thecourtsidepro', W/2, H - 80);
 
         canvas.toBlob(async (blob) => {
+            if (!blob) { showSessionToast('Could not generate poster'); return; }
             const file = new File([blob], 'courtside-aura.png', { type: 'image/png' });
-            if (navigator.share && navigator.canShare({ files: [file] })) {
-                await navigator.share({
-                    title: 'The Court Side Pro',
-                    text:  `${tA.join(' & ')} vs ${tB.join(' & ')} — who you got? 🏀`,
-                    files: [file],
-                });
-            } else {
-                const a = document.createElement('a');
-                a.href     = URL.createObjectURL(blob);
-                a.download = 'courtside-aura.png';
-                a.click();
+            try {
+                if (navigator.share && navigator.canShare({ files: [file] })) {
+                    await navigator.share({
+                        title: 'CourtSide Pro',
+                        text:  tA + ' vs ' + tB + ' - who you got?',
+                        files: [file],
+                    });
+                } else {
+                    const a = document.createElement('a');
+                    a.href     = URL.createObjectURL(blob);
+                    a.download = 'courtside-aura.png';
+                    a.click();
+                }
+                if (typeof Haptic !== 'undefined') Haptic.success();
+            } catch (shareErr) {
+                if (shareErr.name !== 'AbortError') showSessionToast('Could not share poster');
             }
-            Haptic.success();
         }, 'image/png');
 
     } catch (e) {

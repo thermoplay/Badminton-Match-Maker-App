@@ -519,10 +519,6 @@ function buildMatchCardHTML(idx, tA, tB, odds, startedAt = Date.now()) {
         <div class="match-card card-entering" id="match-${idx}" data-started="${startedAt}">
             <div class="match-header">
                 <span class="match-label">Court ${idx + 1}</span>
-                <div class="prob-container">
-                    <div class="prob-pill ${hA}">${odds[0]}%</div>
-                    <div class="prob-pill ${hB}">${odds[1]}%</div>
-                </div>
                 <button class="aura-share-btn" onclick="shareAuraPoster(${idx})" title="Share Aura Poster">✦ Share</button>
                 <button class="edit-teams-btn" onclick="openTeamBuilder(${idx})">✎ Edit</button>
             </div>
@@ -661,10 +657,7 @@ function renderTeamBuilder() {
         const hA = odds[0] > odds[1] ? 'highlight' : '';
         const hB = odds[1] > odds[0] ? 'highlight' : '';
         document.getElementById('builderOdds').innerHTML = `
-            <div class="prob-container">
-                <div class="prob-pill ${hA}">${odds[0]}%</div>
-                <div class="prob-pill ${hB}">${odds[1]}%</div>
-            </div>
+
         `;
     }
 }
