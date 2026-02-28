@@ -113,20 +113,79 @@ const SidelineView = {
         }
         const passport = Passport.get();
         const myName   = passport?.playerName?.toLowerCase() || '';
+
         container.innerHTML = matches.map((m, i) => {
             const tA      = m.teams[0] || [];
             const tB      = m.teams[1] || [];
             const playing = myName && [...tA, ...tB].map(n => n.toLowerCase()).includes(myName);
+            const odds    = m.odds || [50, 50];
+            const winIdx  = m.winnerTeamIndex;
+            const hasWinner = winIdx !== null && winIdx !== undefined;
+
+            // Timer
+            let timerHTML = '';
+            if (m.startedAt) {
+                const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
+                const mins = Math.floor(elapsed / 60);
+                const secs = elapsed % 60;
+                const timeStr = `${mins}:${String(secs).padStart(2, '0')}`;
+                const warnClass = elapsed > 15 * 60 ? 'sl-timer-alert' : elapsed > 10 * 60 ? 'sl-timer-warn' : '';
+                timerHTML = `<span class="sl-court-timer ${warnClass}">⏱ ${timeStr}</span>`;
+            }
+
+            // Winner banner
+            const winnerBanner = hasWinner
+                ? `<div class="sl-winner-banner">🏆 ${(m.teams[winIdx] || []).join(' & ')} won</div>`
+                : '';
+
+            // Team styling
+            const aClass = hasWinner ? (winIdx === 0 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
+            const bClass = hasWinner ? (winIdx === 1 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
+
             return `
-                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''}">
-                    <div class="sl-match-label">GAME ${i + 1}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
-                    <div class="sl-match-teams">
-                        <span class="sl-team">${tA.join(' &amp; ')}</span>
-                        <span class="sl-vs">VS</span>
-                        <span class="sl-team">${tB.join(' &amp; ')}</span>
+                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}">
+                    <div class="sl-match-header">
+                        <div class="sl-match-label">COURT ${i + 1}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
+                        ${timerHTML}
                     </div>
+                    <div class="sl-match-teams">
+                        <div class="sl-team-col">
+                            <span class="${aClass}">${tA.join(' &amp; ')}</span>
+                            <span class="sl-odds-pill ${odds[0] > odds[1] ? 'sl-odds-fav' : ''}">${odds[0]}%</span>
+                        </div>
+                        <span class="sl-vs">VS</span>
+                        <div class="sl-team-col">
+                            <span class="${bClass}">${tB.join(' &amp; ')}</span>
+                            <span class="sl-odds-pill ${odds[1] > odds[0] ? 'sl-odds-fav' : ''}">${odds[1]}%</span>
+                        </div>
+                    </div>
+                    ${winnerBanner}
                 </div>`;
         }).join('');
+
+        // Start live timer ticks
+        this._tickMatchTimers();
+    },
+
+    _tickMatchTimers() {
+        if (this._timerInterval) clearInterval(this._timerInterval);
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        this._timerInterval = setInterval(() => {
+            const matches = window.currentMatches || [];
+            matches.forEach((m, i) => {
+                if (!m.startedAt) return;
+                const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
+                const mins = Math.floor(elapsed / 60);
+                const secs = elapsed % 60;
+                const el = container.querySelector(`.sl-match-card:nth-child(${i + 1}) .sl-court-timer`);
+                if (el) {
+                    el.textContent = `⏱ ${mins}:${String(secs).padStart(2, '0')}`;
+                    el.classList.toggle('sl-timer-warn',  elapsed > 10 * 60);
+                    el.classList.toggle('sl-timer-alert', elapsed > 15 * 60);
+                }
+            });
+        }, 1000);
     },
 
     _renderNextUp() {
