@@ -228,9 +228,18 @@ function broadcastApproval(playerUUID, playerName, token) {
  */
 function broadcastGameState() {
     if (!isOperator || !isOnlineSession) return;
+    // Serialize matches with explicit teamA/teamB keys so the player view never
+    // has to infer team assignment from position or sort order.
+    const safeMatches = currentMatches.map(m => ({
+        ...m,
+        teams: [
+            Array.isArray(m.teams[0]) ? [...m.teams[0]] : [],
+            Array.isArray(m.teams[1]) ? [...m.teams[1]] : [],
+        ],
+    }));
     _broadcast('game_state', {
         squad,
-        current_matches: currentMatches,
+        current_matches: safeMatches,
         next_up: (document.getElementById('nextUpNames')?.textContent || '').trim(),
     });
 }
@@ -368,10 +377,13 @@ function _handleBroadcast(payload) {
         return;
     }
 
-    // BUG 2: Live game state — update player feed immediately
+    // BUG 2: Live game state — update player feed immediately.
+    // STRICT RULE: assign window.currentMatches directly from the payload.
+    // Never sort, re-order, or infer team assignment on the player side.
+    // teams[0] is always Team A, teams[1] is always Team B — exactly as
+    // the host stored them.
     if (type === 'game_state') {
         if (!isOperator) {
-            // Globals first, then render
             window.squad          = payload.squad           || window.squad          || [];
             window.currentMatches = payload.current_matches || window.currentMatches || [];
             if (typeof PlayerMode !== 'undefined') {

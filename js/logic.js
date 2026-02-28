@@ -90,9 +90,12 @@ function processCourtResult(mIdx) {
     const newMatch = buildMatchFromPlayers(next4);
     currentMatches[mIdx] = newMatch;
 
-    // Replace this card in the DOM
-    const tA    = next4.slice(0, 2);
-    const tB    = next4.slice(2, 4);
+    // Replace this card in the DOM.
+    // IMPORTANT: use newMatch.teams not next4.slice() — buildMatchFromPlayers
+    // re-sorts p4 and picks the best split, so stored team assignment may
+    // differ from raw queue order. The broadcast must match what is in state.
+    const tA    = newMatch.teams[0].map(n => findP(n)).filter(Boolean);
+    const tB    = newMatch.teams[1].map(n => findP(n)).filter(Boolean);
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
         cardEl.outerHTML = buildMatchCardHTML(mIdx, tA, tB, newMatch.odds, newMatch.startedAt);
@@ -772,6 +775,9 @@ function confirmTeamBuilder() {
     updateSideline();
     checkNextButtonState();
     saveToDisk();
+    // Broadcast the updated lineup immediately so players see the correct
+    // team assignment without waiting for the DB postgres_changes round-trip.
+    if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.success();
 }
 // =============================================================================
