@@ -95,7 +95,7 @@ function renderSavedMatches() {
         const tAObjects = m.teams[0].map(n => findP(n));
         const tBObjects = m.teams[1].map(n => findP(n));
         if (tAObjects.some(p => !p) || tBObjects.some(p => !p)) return;
-        renderMatchCard(i, tAObjects, tBObjects, m.odds, m.startedAt);
+        renderMatchCard(i, tAObjects, tBObjects, m.odds);
         if (m.winnerTeamIndex !== null) {
             const boxes = document.querySelectorAll(`#match-${i} .team-box`);
             if (boxes[m.winnerTeamIndex]) {
@@ -193,17 +193,21 @@ function toggleRestingState() {
 
 function renderSquad() {
     const container = document.getElementById('squadList');
-    const chips = squad.map((p, i) => `
-        <div class="player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''}"
+    const onCourt   = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    const chips = squad.map((p, i) => {
+        const waiting    = p.active && !onCourt.has(p.name) && (p.waitRounds || 0) >= 3;
+        const waitLabel  = waiting ? ` <span class="chip-wait">⏳${p.waitRounds}R</span>` : '';
+        return `
+        <div class="player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${waiting ? 'chip-long-wait' : ''}"
              onmousedown="startPress(${i})"
              onmouseup="endPress(${i})"
              ontouchstart="startPress(${i})"
              ontouchend="endPress(${i})"
              oncontextmenu="return false;">
             ${Avatar.html(p.name)}
-            <span class="chip-name">${escapeHTML(p.name)}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${escapeHTML(p.name)}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}${waitLabel}</span>
         </div>
-    `);
+    `});
     container.innerHTML = chips.join('');
 }
 
@@ -567,6 +571,93 @@ function undoLastRound() {
 // STATS OVERLAY — TABS
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// SESSION EXPORT
+// Generates a shareable plain-text + JSON summary of the session.
+// ---------------------------------------------------------------------------
+
+function exportSessionSummary() {
+    const date    = new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+    const sorted  = [...squad].sort((a, b) => b.rating - a.rating);
+    const winRate = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+
+    // MVP = highest win rate among players with 2+ games this session
+    const mvpCandidates = squad.filter(p => (p.sessionPlayCount || 0) >= 2);
+    const mvp = mvpCandidates.sort((a, b) => winRate(b) - winRate(a))[0] || null;
+
+    // Top streak
+    const topStreak = [...squad].sort((a, b) => b.streak - a.streak)[0];
+
+    // Total games played this session
+    const totalGames = Math.floor(roundHistory.reduce((sum, r) => sum + r.matches.length, 0));
+
+    // Chemistry highlights across all players
+    let topPartnership = null;
+    let maxGames = 0;
+    squad.forEach(p => {
+        Object.entries(p.teammateHistory || {}).forEach(([partner, count]) => {
+            if (count > maxGames && squad.find(s => s.name === partner)) {
+                maxGames = count;
+                topPartnership = [p.name, partner, count];
+            }
+        });
+    });
+    // Deduplicate (A+B and B+A are same pair)
+    if (topPartnership) {
+        const [a, b] = topPartnership;
+        if (a > b) topPartnership = [b, a, topPartnership[2]];
+    }
+
+    // Build text summary
+    const lines = [
+        `🏀 COURTSIDE PRO — SESSION SUMMARY`,
+        `${date}`,
+        ``,
+        `GAMES PLAYED: ${totalGames}`,
+        `PLAYERS: ${squad.length} (${squad.filter(p => p.active).length} active)`,
+        `COURTS: ${activeCourts}`,
+        ``,
+        `━━━ LEADERBOARD ━━━`,
+        ...sorted.slice(0, 10).map((p, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `  ${i+1}.`;
+            return `${medal} ${p.name} · ${p.wins}W ${p.games}G · ${winRate(p)}% WR · ELO ${p.rating}`;
+        }),
+        ``,
+        mvp ? `🏆 MVP: ${mvp.name} (${winRate(mvp)}% win rate, ${mvp.sessionPlayCount} games)` : '',
+        topStreak && topStreak.streak > 0 ? `🔥 Hot Hand: ${topStreak.name} (${topStreak.streak} game streak)` : '',
+        topPartnership ? `🤝 Dream Team: ${topPartnership[0]} & ${topPartnership[1]} (${topPartnership[2]} games together)` : '',
+        ``,
+        `━━━ ROUND HISTORY ━━━`,
+        ...roundHistory.slice().reverse().map((r, i) => {
+            const num = roundHistory.length - i;
+            return r.matches.map(m => {
+                if (m.winnerTeamIndex === null) return `Round ${num}: No result`;
+                const w = m.teams[m.winnerTeamIndex].join(' & ');
+                const l = m.teams[m.winnerTeamIndex === 0 ? 1 : 0].join(' & ');
+                return `Round ${num}: ${w} def. ${l}`;
+            }).join('\n');
+        }),
+    ].filter(l => l !== '').join('\n');
+
+    // Share or download
+    if (navigator.share) {
+        navigator.share({ title: 'CourtSide Session Summary', text: lines })
+            .catch(() => _downloadSummary(lines));
+    } else {
+        _downloadSummary(lines);
+    }
+    Haptic.success();
+    showSessionToast('📋 Session exported!');
+}
+
+function _downloadSummary(text) {
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = `courtside-session-${Date.now()}.txt`;
+    a.click();
+}
+
 function renderStatsTab(tab) {
     const content = document.getElementById('overlayContent');
 
@@ -578,6 +669,8 @@ function renderStatsTab(tab) {
                 onclick="renderStatsTab('history')">History</button>
             <button class="stats-tab"
                 onclick="renderLeaderboardTab()">Leaderboard</button>
+            <button class="stats-tab stats-tab-export"
+                onclick="exportSessionSummary()">↓ Export</button>
         </div>
     `;
 
@@ -670,6 +763,42 @@ function getPlayerTitle(p) {
     return { title: 'The Veteran', icon: '🏅' };
 }
 
+// ---------------------------------------------------------------------------
+// CHEMISTRY HELPERS
+// Returns best partner, worst partner, toughest rival from session history.
+// ---------------------------------------------------------------------------
+
+function getChemistry(p) {
+    const tm  = p.teammateHistory  || {};
+    const opp = p.opponentHistory  || {};
+
+    // Best partner — most games played alongside
+    const partners = Object.entries(tm).sort((a, b) => b[1] - a[1]);
+    const bestPartner = partners[0] || null;
+
+    // Toughest rival — most games faced as opponent
+    const rivals = Object.entries(opp).sort((a, b) => b[1] - a[1]);
+    const toughestRival = rivals[0] || null;
+
+    return { bestPartner, toughestRival };
+}
+
+// ---------------------------------------------------------------------------
+// REST TRACKING HELPERS
+// Returns how many rounds a sideline player has been waiting.
+// ---------------------------------------------------------------------------
+
+function getWaitInfo(p) {
+    if (!p.active) return null;
+    const onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    if (onCourt.has(p.name)) return null; // currently playing
+    const pos = playerQueue.indexOf(p.name);
+    if (pos === -1) return null;
+    // Approximate wait: position in queue divided by courts per round
+    const roundsWaiting = Math.floor(pos / Math.max(activeCourts, 1));
+    return { pos: pos + 1, roundsWaiting };
+}
+
 function openPlayerCard(idx) {
     const p  = squad[idx];
     if (!p) return;
@@ -678,6 +807,12 @@ function openPlayerCard(idx) {
     const wr  = p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
     const bg  = Avatar.color(p.name);
     const ini = Avatar.initials(p.name);
+
+    // Chemistry
+    const { bestPartner, toughestRival } = getChemistry(p);
+
+    // Rest / wait info
+    const waitInfo = getWaitInfo(p);
 
     document.getElementById('playerCardContent').innerHTML = `
         <div class="pc-avatar-wrap">
@@ -704,8 +839,36 @@ function openPlayerCard(idx) {
                 <div class="pc-stat-val">${wr}%</div>
                 <div class="pc-stat-label">Win Rate</div>
             </div>
+            <div class="pc-stat-divider"></div>
+            <div class="pc-stat">
+                <div class="pc-stat-val">${p.sessionPlayCount || 0}</div>
+                <div class="pc-stat-label">Session</div>
+            </div>
         </div>
         ${p.streak > 0 ? `<div class="pc-streak">🔥 ${p.streak} game win streak</div>` : ''}
+
+        ${waitInfo ? `
+        <div class="pc-info-row ${waitInfo.roundsWaiting >= 3 ? 'pc-info-warn' : ''}">
+            <span class="pc-info-icon">⏳</span>
+            <span>#${waitInfo.pos} in queue${waitInfo.roundsWaiting >= 2 ? ` · waiting ~${waitInfo.roundsWaiting} rounds` : ''}</span>
+            ${waitInfo.roundsWaiting >= 3 ? '<span class="pc-info-badge">Long wait</span>' : ''}
+        </div>` : ''}
+
+        ${bestPartner ? `
+        <div class="pc-chemistry-row">
+            <div class="pc-chem-block">
+                <div class="pc-chem-label">🤝 Best Partner</div>
+                <div class="pc-chem-name">${escapeHTML(bestPartner[0])}</div>
+                <div class="pc-chem-count">${bestPartner[1]} game${bestPartner[1] !== 1 ? 's' : ''} together</div>
+            </div>
+            ${toughestRival ? `
+            <div class="pc-chem-divider"></div>
+            <div class="pc-chem-block">
+                <div class="pc-chem-label">⚔️ Rival</div>
+                <div class="pc-chem-name">${escapeHTML(toughestRival[0])}</div>
+                <div class="pc-chem-count">faced ${toughestRival[1]} time${toughestRival[1] !== 1 ? 's' : ''}</div>
+            </div>` : ''}
+        </div>` : ''}
     `;
 
     document.getElementById('playerCardModal').style.display = 'flex';

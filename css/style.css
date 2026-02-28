@@ -2368,6 +2368,116 @@ header {
     margin-top: 20px;
 }
 
+/* ── Chemistry Row ───────────────────────────────────────────────────── */
+.pc-chemistry-row {
+    display: flex;
+    align-items: stretch;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    margin-top: 12px;
+    margin-bottom: 4px;
+}
+
+.pc-chem-block {
+    flex: 1;
+    padding: 12px 14px;
+    text-align: center;
+}
+
+.pc-chem-divider {
+    width: 1px;
+    background: var(--border);
+    flex-shrink: 0;
+}
+
+.pc-chem-label {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+}
+
+.pc-chem-name {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 900;
+    font-style: italic;
+    color: var(--accent);
+    line-height: 1.1;
+    margin-bottom: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pc-chem-count {
+    font-size: 0.62rem;
+    color: var(--text-muted);
+}
+
+/* ── Rest / Wait Info Row ────────────────────────────────────────────── */
+.pc-info-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-top: 10px;
+}
+
+.pc-info-row.pc-info-warn {
+    border-color: rgba(245,158,11,0.4);
+    color: #fde68a;
+}
+
+.pc-info-icon { font-size: 0.85rem; }
+
+.pc-info-badge {
+    margin-left: auto;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: rgba(245,158,11,0.15);
+    color: #f59e0b;
+    padding: 2px 8px;
+    border-radius: 20px;
+}
+
+/* ── Long-wait chip highlight ────────────────────────────────────────── */
+.player-chip.chip-long-wait {
+    border-color: rgba(245,158,11,0.5) !important;
+    box-shadow: 0 0 0 1px rgba(245,158,11,0.2);
+}
+
+.chip-wait {
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: #f59e0b;
+    background: rgba(245,158,11,0.12);
+    border-radius: 6px;
+    padding: 1px 5px;
+    margin-left: 3px;
+    vertical-align: middle;
+}
+
+/* ── Export tab button ───────────────────────────────────────────────── */
+.stats-tab-export {
+    color: var(--accent) !important;
+    border-left: 1px solid var(--border);
+    flex: 0 0 auto;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
 .player-card-share-btn {
     width: 100%;
     padding: 14px;

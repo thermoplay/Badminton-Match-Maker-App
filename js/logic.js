@@ -188,12 +188,27 @@ function rotateCourtPlayers(m) {
     // Remove from wherever they currently sit
     playerQueue = playerQueue.filter(n => !allNames.includes(n));
 
+    // Increment waitRounds for players NOT in this match who are active + in queue
+    const onCourtAll = new Set(currentMatches.flatMap(match => match.teams.flat()));
+    squad.forEach(p => {
+        if (p.active && !onCourtAll.has(p.name) && playerQueue.includes(p.name)) {
+            p.waitRounds = (p.waitRounds || 0) + 1;
+        }
+    });
+
     if (m.winnerTeamIndex === null) {
         playerQueue.push(...allNames);
         return;
     }
     const winIdx  = m.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
+
+    // Reset waitRounds for players rejoining from this court
+    allNames.forEach(name => {
+        const p = findP(name);
+        if (p) p.waitRounds = 0;
+    });
+
     // Losers back first (shorter wait), winners after (slight rest)
     playerQueue.push(...m.teams[loseIdx], ...m.teams[winIdx]);
 }
@@ -331,7 +346,7 @@ function buildMatchFromPlayers(p4) {
         teams:           [tA.map(p => p.name), tB.map(p => p.name)],
         winnerTeamIndex: null,
         odds,
-        startedAt: null,
+        startedAt: Date.now(),
     };
 }
 
@@ -489,17 +504,17 @@ function renderAllMatchCards(matchData) {
     });
 }
 
-function renderMatchCard(idx, tA, tB, odds, startedAt) {
+function renderMatchCard(idx, tA, tB, odds) {
     const container = document.getElementById('matchContainer');
-    container.insertAdjacentHTML('beforeend', buildMatchCardHTML(idx, tA, tB, odds, startedAt));
+    container.insertAdjacentHTML('beforeend', buildMatchCardHTML(idx, tA, tB, odds));
 }
 
-function buildMatchCardHTML(idx, tA, tB, odds, startedAt = null) {
+function buildMatchCardHTML(idx, tA, tB, odds, startedAt = Date.now()) {
     const hA = odds[0] > odds[1] ? 'highlight' : '';
     const hB = odds[1] > odds[0] ? 'highlight' : '';
 
     return `
-        <div class="match-card card-entering" id="match-${idx}" ${startedAt ? `data-started="${startedAt}"` : ''}>
+        <div class="match-card card-entering" id="match-${idx}" data-started="${startedAt}">
             <div class="match-header">
                 <span class="match-label">Court ${idx + 1}</span>
                 <div class="prob-container">
@@ -534,13 +549,6 @@ function setWinner(mIdx, tIdx) {
     const boxes = document.querySelectorAll(`#match-${mIdx} .team-box`);
     boxes.forEach((box, i) => box.classList.toggle('selected', i === tIdx));
     currentMatches[mIdx].winnerTeamIndex = tIdx;
-
-    // Start the timer on the very first click if it hasn't started yet
-    if (!currentMatches[mIdx].startedAt) {
-        currentMatches[mIdx].startedAt = Date.now();
-        const card = document.getElementById(`match-${mIdx}`);
-        if (card) card.dataset.started = currentMatches[mIdx].startedAt;
-    }
 
     Haptic.tap();
 
