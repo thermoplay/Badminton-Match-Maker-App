@@ -11,63 +11,6 @@
 // =============================================================================
 
 const PASSPORT_KEY = 'cs_player_passport';
-// =============================================================================
-// PLAYER STATS — localStorage-only, signal-driven
-// Written on every WIN/LOSS passport signal. Never reads window.squad.
-// Key: 'cs_player_stats'
-// Shape: { sessions: { [room_code]: { wins, losses, streak, entries: [{result,ts}] } } }
-// =============================================================================
-
-const PlayerStats = {
-    _KEY: 'cs_player_stats',
-
-    _load() {
-        try { return JSON.parse(localStorage.getItem(this._KEY) || '{"sessions":{}}'); }
-        catch { return { sessions: {} }; }
-    },
-
-    _save(data) {
-        try { localStorage.setItem(this._KEY, JSON.stringify(data)); } catch {}
-    },
-
-    /** Record a WIN or LOSS for a given room_code. Called from _pollSignal. */
-    record(roomCode, result) {
-        if (!roomCode || (result !== 'WIN' && result !== 'LOSS')) return;
-        const data    = this._load();
-        const session = data.sessions[roomCode] || { wins: 0, losses: 0, streak: 0, entries: [] };
-
-        session.entries.push({ result, ts: Date.now() });
-        if (result === 'WIN') {
-            session.wins++;
-            session.streak = (session.streak > 0 ? session.streak : 0) + 1;
-        } else {
-            session.losses++;
-            session.streak = 0;
-        }
-
-        data.sessions[roomCode] = session;
-        this._save(data);
-    },
-
-    /** Get stats for a room_code. Returns { wins, losses, streak, games, winRate }. */
-    get(roomCode) {
-        if (!roomCode) return null;
-        const data    = this._load();
-        const session = data.sessions[roomCode];
-        if (!session) return { wins: 0, losses: 0, streak: 0, games: 0, winRate: 0 };
-        const games   = session.wins + session.losses;
-        const winRate = games > 0 ? Math.round((session.wins / games) * 100) : 0;
-        return { wins: session.wins, losses: session.losses, streak: session.streak, games, winRate };
-    },
-
-    /** Clear stats for a room_code (called on session end / new join). */
-    clear(roomCode) {
-        if (!roomCode) return;
-        const data = this._load();
-        delete data.sessions[roomCode];
-        this._save(data);
-    },
-};
 
 // =============================================================================
 // PASSPORT — localStorage-only identity
@@ -133,12 +76,7 @@ const SidelineView = {
     show() {
         this._visible = true;
         const panel = document.getElementById('sidelinePanel');
-        if (panel) {
-            panel.style.display = 'flex';
-            this.refresh();
-            // Inject tab bar on first show — safe to call multiple times
-            _injectStatsTabs();
-        }
+        if (panel) { panel.style.display = 'flex'; this.refresh(); }
     },
 
     hide() {
@@ -683,14 +621,6 @@ const PlayerMode = {
         const isWinner   = myUUID && winnerUUIDs.includes(myUUID);
         const wasInMatch = myUUID && (winnerUUIDs.includes(myUUID) || loserUUIDs.includes(myUUID));
 
-        // Record stat locally the moment the broadcast arrives — this is the
-        // primary delivery path. _pollSignal is just a slow DB fallback.
-        if (wasInMatch) {
-            const roomCode = this._joinCode || window.currentRoomCode;
-            PlayerStats.record(roomCode, isWinner ? 'WIN' : 'LOSS');
-            _renderStatsTab(roomCode);
-        }
-
         window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
 
         SidelineView.show();
@@ -857,20 +787,6 @@ const PlayerMode = {
             );
             const d = await r.json();
             if (d.signal) {
-                // Record WIN/LOSS only if _onMatchResolved hasn't already done it
-                // via the faster broadcast path. We detect this by checking if the
-                // signal timestamp is recent — if the stat was already recorded in
-                // the last 10s for this room, skip to avoid double-counting.
-                if (d.signal.event === 'WIN' || d.signal.event === 'LOSS') {
-                    const existing = PlayerStats.get(joinCode);
-                    const lastEntry = PlayerStats._load().sessions?.[joinCode]?.entries?.slice(-1)[0];
-                    const alreadyRecorded = lastEntry && (Date.now() - lastEntry.ts) < 10000;
-                    if (!alreadyRecorded) {
-                        PlayerStats.record(joinCode, d.signal.event);
-                        _renderStatsTab(joinCode);
-                    }
-                }
-
                 SidelineView.show();
                 SidelineView.refresh();
                 await fetch('/api/passport-signal', {
@@ -1066,223 +982,6 @@ function _showYoureUpBanner() {
         banner.style.transform = 'translateY(-100%)';
         setTimeout(() => banner.remove(), 400);
     });
-}
-
-// =============================================================================
-// MY STATS TAB — injected into the sideline panel, driven by PlayerStats
-// =============================================================================
-
-/**
- * Injects the LIVE / MY STATS tab bar into the sideline panel once.
- * Safe to call multiple times — guards with _slTabsInjected flag.
- */
-let _slTabsInjected = false;
-
-function _injectStatsTabs() {
-    if (_slTabsInjected) return;
-    const inner = document.querySelector('#sidelinePanel .sl-inner');
-    if (!inner) return;
-
-    // ── Tab bar — insert after .sl-identity ────────────────────────────────
-    const identity = inner.querySelector('.sl-identity');
-    if (!identity) return;
-
-    const tabBar = document.createElement('div');
-    tabBar.id        = 'slTabBar';
-    tabBar.className = 'sl-tab-bar';
-    tabBar.innerHTML = `
-        <button class="sl-tab sl-tab-active" id="slTabLive" onclick="_slSwitchTab('live')">
-            <span class="sl-tab-live-dot"></span>LIVE
-        </button>
-        <button class="sl-tab" id="slTabStats" onclick="_slSwitchTab('stats')">
-            ✦ MY STATS
-        </button>`;
-    identity.insertAdjacentElement('afterend', tabBar);
-
-    // ── Stats panel — insert after tab bar ─────────────────────────────────
-    const statsPanel = document.createElement('div');
-    statsPanel.id        = 'slStatsPanel';
-    statsPanel.className = 'sl-stats-panel';
-    statsPanel.style.display = 'none';
-    tabBar.insertAdjacentElement('afterend', statsPanel);
-
-    // ── Wrap all existing live content so we can hide/show it as one unit ──
-    const liveWrapper = document.createElement('div');
-    liveWrapper.id = 'slLiveWrapper';
-    const liveEls = inner.querySelectorAll(
-        '.sl-section-label, #slCurrentMatches, #slNextUpRow, #slLastWinnerRow, .sl-invite-btn'
-    );
-    if (liveEls[0]) {
-        inner.insertBefore(liveWrapper, liveEls[0]);
-        liveEls.forEach(el => liveWrapper.appendChild(el));
-    }
-
-    // ── Inline styles — no separate CSS file needed ────────────────────────
-    if (!document.getElementById('slStatsStyles')) {
-        const style = document.createElement('style');
-        style.id = 'slStatsStyles';
-        style.textContent = `
-            .sl-tab-bar {
-                display: flex; gap: 8px;
-                margin: 14px 0 4px;
-                padding-bottom: 12px;
-                border-bottom: 1.5px solid rgba(255,255,255,0.07);
-            }
-            .sl-tab {
-                flex: 1; padding: 10px 0;
-                background: transparent;
-                border: 1.5px solid rgba(255,255,255,0.1);
-                border-radius: 10px;
-                color: rgba(255,255,255,0.4);
-                font-family: 'Arial Narrow', Arial, sans-serif;
-                font-size: 0.75rem; font-weight: 600; letter-spacing: 4px;
-                cursor: pointer; transition: all 0.2s;
-                display: flex; align-items: center; justify-content: center; gap: 6px;
-            }
-            .sl-tab-active {
-                background: rgba(0,255,163,0.1);
-                border-color: rgba(0,255,163,0.45);
-                color: #00ffa3;
-            }
-            .sl-tab-live-dot {
-                width: 7px; height: 7px;
-                background: #00ffa3; border-radius: 50%;
-                animation: slPulse 1.8s ease-in-out infinite;
-            }
-            @keyframes slPulse {
-                0%,100% { opacity:1; transform:scale(1); }
-                50%      { opacity:0.5; transform:scale(0.8); }
-            }
-            .sl-stats-panel { padding: 4px 0 20px; min-height: 160px; }
-            .sl-stats-empty {
-                display: flex; flex-direction: column; align-items: center;
-                justify-content: center; padding: 40px 24px; gap: 10px;
-                color: rgba(255,255,255,0.3);
-                font-family: 'Arial Narrow', Arial, sans-serif;
-                font-size: 0.85rem; letter-spacing: 2px; text-align: center;
-            }
-            .sl-stats-content { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
-            .sl-stats-record {
-                display: flex; align-items: center; gap: 18px;
-                background: rgba(255,255,255,0.04);
-                border: 1.5px solid rgba(255,255,255,0.07);
-                border-radius: 16px; padding: 16px 18px;
-            }
-            .sl-stats-ring-wrap { position: relative; width: 80px; height: 80px; flex-shrink: 0; }
-            .sl-ring-svg { width: 80px; height: 80px; transform: rotate(-90deg); }
-            .sl-ring-bg  { fill: none; stroke: rgba(255,255,255,0.07); stroke-width: 7; }
-            .sl-ring-fill {
-                fill: none; stroke-width: 7; stroke-linecap: round;
-                transition: stroke-dasharray 0.7s cubic-bezier(0.4,0,0.2,1);
-            }
-            .sl-ring-inner {
-                position: absolute; inset: 0;
-                display: flex; flex-direction: column;
-                align-items: center; justify-content: center;
-            }
-            .sl-ring-pct  { font-family: 'Arial Narrow', Arial, sans-serif; font-size: 1.05rem; font-weight: 700; color: #fff; line-height: 1; }
-            .sl-ring-lbl  { font-size: 0.42rem; letter-spacing: 2px; color: rgba(255,255,255,0.35); margin-top: 2px; }
-            .sl-stats-pills { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
-            .sl-stat-pill {
-                display: flex; flex-direction: column; align-items: center;
-                background: rgba(255,255,255,0.05); border-radius: 10px;
-                padding: 8px 12px; flex: 1; min-width: 48px;
-            }
-            .sl-stat-num  { font-family: 'Arial Narrow', Arial, sans-serif; font-size: 1.3rem; font-weight: 700; color: #fff; line-height: 1; }
-            .sl-stat-lbl  { font-size: 0.5rem; letter-spacing: 2px; color: rgba(255,255,255,0.3); margin-top: 3px; }
-            .sl-stat-win  { color: #00ffa3; }
-            .sl-stat-loss { color: rgba(255,255,255,0.45); }
-        `;
-        document.head.appendChild(style);
-    }
-
-    _slTabsInjected = true;
-}
-
-function _slSwitchTab(tab) {
-    const liveWrapper = document.getElementById('slLiveWrapper');
-    const statsPanel  = document.getElementById('slStatsPanel');
-    const tabLive     = document.getElementById('slTabLive');
-    const tabStats    = document.getElementById('slTabStats');
-    if (!liveWrapper || !statsPanel) return;
-
-    if (tab === 'live') {
-        liveWrapper.style.display = 'block';
-        statsPanel.style.display  = 'none';
-        tabLive?.classList.add('sl-tab-active');
-        tabStats?.classList.remove('sl-tab-active');
-    } else {
-        liveWrapper.style.display = 'none';
-        statsPanel.style.display  = 'block';
-        tabLive?.classList.remove('sl-tab-active');
-        tabStats?.classList.add('sl-tab-active');
-        // Always re-render when switching to stats so it's never stale
-        const roomCode = window.currentRoomCode ||
-            (typeof PlayerMode !== 'undefined' ? PlayerMode._joinCode : null);
-        _renderStatsTab(roomCode);
-    }
-    if (window.Haptic) Haptic.tap();
-}
-
-/**
- * Renders the stats panel from PlayerStats localStorage data.
- * Called on tab switch AND immediately after every WIN/LOSS signal.
- */
-function _renderStatsTab(roomCode) {
-    const panel = document.getElementById('slStatsPanel');
-    if (!panel) return;
-
-    // Inject tabs if not done yet (first signal may arrive before user taps)
-    _injectStatsTabs();
-
-    const stats = PlayerStats.get(roomCode);
-    if (!stats || stats.games === 0) {
-        panel.innerHTML = `
-            <div class="sl-stats-empty">
-                <div style="font-size:2rem;">🏸</div>
-                <div>Play a game to see your stats!</div>
-            </div>`;
-        return;
-    }
-
-    const { wins, losses, streak, games, winRate } = stats;
-    const ringColor = winRate >= 60 ? '#00ffa3' : winRate >= 40 ? '#ffd700' : '#ff6b6b';
-    const circumference = Math.round(2 * Math.PI * 34);
-    const filled        = Math.round(circumference * winRate / 100);
-
-    panel.innerHTML = `
-        <div class="sl-stats-content">
-
-            <div class="sl-stats-record">
-                <div class="sl-stats-ring-wrap">
-                    <svg class="sl-ring-svg" viewBox="0 0 80 80">
-                        <circle class="sl-ring-bg"   cx="40" cy="40" r="34"/>
-                        <circle class="sl-ring-fill" cx="40" cy="40" r="34"
-                            style="stroke:${ringColor};stroke-dasharray:${filled} ${circumference};"/>
-                    </svg>
-                    <div class="sl-ring-inner">
-                        <div class="sl-ring-pct">${winRate}%</div>
-                        <div class="sl-ring-lbl">WIN RATE</div>
-                    </div>
-                </div>
-
-                <div class="sl-stats-pills">
-                    <div class="sl-stat-pill">
-                        <span class="sl-stat-num sl-stat-win">${wins}</span>
-                        <span class="sl-stat-lbl">WINS</span>
-                    </div>
-                    <div class="sl-stat-pill">
-                        <span class="sl-stat-num sl-stat-loss">${losses}</span>
-                        <span class="sl-stat-lbl">LOSSES</span>
-                    </div>
-                    <div class="sl-stat-pill">
-                        <span class="sl-stat-num">${streak > 0 ? '🔥' : ''}${streak}</span>
-                        <span class="sl-stat-lbl">STREAK</span>
-                    </div>
-                </div>
-            </div>
-
-        </div>`;
 }
 
 // =============================================================================
