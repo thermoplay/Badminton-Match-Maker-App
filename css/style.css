@@ -1744,6 +1744,31 @@ body.spectator-mode::before {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
 }
+.session-player-count {
+    font-family: var(--font-display);
+    font-size: 0.55rem;
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: var(--accent);
+    background: rgba(0, 255, 163, 0.12);
+    border: 1px solid rgba(0, 255, 163, 0.25);
+    border-radius: 8px;
+    padding: 1px 5px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: color 0.3s ease, background 0.3s ease;
+}
+
+/* Pop animation when a player joins or leaves */
+.session-player-count.count-updated {
+    animation: countPop 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes countPop {
+    0%   { transform: scale(1);    background: rgba(0, 255, 163, 0.12); }
+    40%  { transform: scale(1.25); background: rgba(0, 255, 163, 0.35); }
+    100% { transform: scale(1);    background: rgba(0, 255, 163, 0.12); }
+}
 
 /* =============================================================================
    SPECTATOR MODE — complete UI lockdown via single body class

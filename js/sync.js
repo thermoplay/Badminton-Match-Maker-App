@@ -106,6 +106,7 @@ async function createOnlineSession() {
         closeOverlay();
         showSessionToast(`🌐 Live! Room: ${roomCode}`);
         Haptic.success();
+        _updatePlayerCount();
     } catch (e) {
         console.error('CourtSide: create failed', e);
         showSyncStatus('Failed to create session. Check your connection.', 'error');
@@ -595,6 +596,7 @@ function applyRemoteState(session) {
         if (typeof checkIWTPSmartRecognition === 'function') checkIWTPSmartRecognition();
     }
     if (currentMatches.length > 0 && currentMatches.length !== prevCount) Haptic.bump();
+    _updatePlayerCount();
 }
 
 // ---------------------------------------------------------------------------
@@ -630,6 +632,9 @@ function _handleMemberChange(record, oldRecord, eventType) {
         } else if (eventType === 'DELETE') {
             delete window._sessionMembers[uuid];
         }
+
+        // Refresh count after any host-side member change
+        _updatePlayerCount();
         return;
     }
 
@@ -645,6 +650,69 @@ function _handleMemberChange(record, oldRecord, eventType) {
         if (typeof PlayerMode !== 'undefined' && typeof PlayerMode._onRemovedFromSession === 'function') {
             PlayerMode._onRemovedFromSession();
         }
+    }
+
+    _updatePlayerCount();
+}
+
+// ---------------------------------------------------------------------------
+// PLAYER COUNT — live badge inside the session pill
+// ---------------------------------------------------------------------------
+
+/**
+ * Recomputes and displays the active player count in the session badge.
+ *
+ * Source of truth priority:
+ *   1. window._sessionMembers  — realtime DB cache, updated by _handleMemberChange()
+ *                                on every INSERT / UPDATE / DELETE to session_members.
+ *                                "Active" = status === 'active' (host-approved players only).
+ *   2. squad array             — local fallback when _sessionMembers is empty
+ *                                (offline / host-only mode before any realtime events).
+ *
+ * Badge layout after this runs:
+ *   [dot]  [ABCD-1234]  [3 🟢]  [HOST]
+ */
+function _updatePlayerCount() {
+    const badge = document.getElementById('sessionBadge');
+    if (!badge || !isOnlineSession) return;
+
+    const members       = window._sessionMembers || {};
+    const memberEntries = Object.values(members);
+
+    let count;
+    if (memberEntries.length > 0) {
+        // DB-driven: only count approved (active) members
+        count = memberEntries.filter(m => m.status === 'active').length;
+    } else {
+        // Fallback: use local squad length (always accurate on the host side)
+        count = (typeof squad !== 'undefined' ? squad : []).length;
+    }
+
+    let countEl = document.getElementById('sessionPlayerCount');
+    const prevCount = countEl ? parseInt(countEl.dataset.prevCount || '-1', 10) : -1;
+
+    if (!countEl) {
+        countEl = document.createElement('span');
+        countEl.id        = 'sessionPlayerCount';
+        countEl.className = 'session-player-count';
+        // Insert before the role label so layout is: dot · code · count · role
+        const roleEl = badge.querySelector('.session-role');
+        if (roleEl) badge.insertBefore(countEl, roleEl);
+        else badge.appendChild(countEl);
+    }
+
+    countEl.textContent       = `${count} 🟢`;
+    countEl.dataset.prevCount = count;
+    countEl.title             = `${count} active player${count !== 1 ? 's' : ''} in session`;
+
+    // Pop animation whenever the number changes (join or leave)
+    if (count !== prevCount && prevCount !== -1) {
+        countEl.classList.remove('count-updated');
+        void countEl.offsetWidth; // force reflow so re-adding class restarts animation
+        countEl.classList.add('count-updated');
+        countEl.addEventListener('animationend', () => {
+            countEl.classList.remove('count-updated');
+        }, { once: true });
     }
 }
 
@@ -710,6 +778,9 @@ function updateSessionUI() {
     `;
     if (!isOperator) document.body.classList.add('spectator-mode');
     else document.body.classList.remove('spectator-mode');
+
+    // Inject the count pill immediately after rebuilding badge innerHTML
+    _updatePlayerCount();
 }
 
 function lockUIForSpectator(lock) {
