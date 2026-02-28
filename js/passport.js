@@ -922,6 +922,6 @@ function _renderPlayCount(playerName) {
     const me    = squad.find(p => p.name?.toLowerCase() === playerName?.toLowerCase());
     const count = me?.sessionPlayCount ?? 0;
 
-    el.textContent   = `${count} game${count !== 1 ? 's' : ''} this session`;
+    el.textContent   = `${count} lifetime game${count !== 1 ? 's' : ''}`;
     el.style.display = 'inline-flex';
 }
