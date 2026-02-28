@@ -789,7 +789,6 @@ const PlayerMode = {
             if (d.signal) {
                 SidelineView.show();
                 SidelineView.refresh();
-                if (typeof MyStatsTab !== 'undefined') MyStatsTab.render();
                 await fetch('/api/passport-signal', {
                     method:  'DELETE',
                     headers: { 'Content-Type': 'application/json' },
