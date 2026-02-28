@@ -573,7 +573,8 @@ input:focus {
 .court-next-row {
     grid-column: 1 / -1;
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    justify-content: space-between;
     padding: 8px 12px 10px;
     border-top: 1px solid var(--border);
     background: var(--bg2);
@@ -4662,14 +4663,15 @@ button:active,
 
 .court-timer {
     font-family: var(--font-display);
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     font-weight: 900;
     letter-spacing: 1.5px;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
-    min-width: 2.8rem;
-    text-align: center;
+    min-width: 2.6rem;
+    text-align: left;
     transition: color 0.4s;
+    opacity: 0.7;
 }
 
 /* Amber warning — game running long (>10 min) */

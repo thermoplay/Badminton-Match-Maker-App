@@ -502,7 +502,6 @@ function buildMatchCardHTML(idx, tA, tB, odds, startedAt = Date.now()) {
         <div class="match-card card-entering" id="match-${idx}" data-started="${startedAt}">
             <div class="match-header">
                 <span class="match-label">Court ${idx + 1}</span>
-                <span class="court-timer" id="timer-${idx}">0:00</span>
                 <div class="prob-container">
                     <div class="prob-pill ${hA}">${odds[0]}%</div>
                     <div class="prob-pill ${hB}">${odds[1]}%</div>
@@ -518,6 +517,7 @@ function buildMatchCardHTML(idx, tA, tB, odds, startedAt = Date.now()) {
                 <b>${escapeHTML(tB[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tB[1].name)}</b>
             </div>
             <div class="court-next-row" id="court-next-${idx}">
+                <span class="court-timer" id="timer-${idx}">0:00</span>
                 <button class="court-next-btn" onclick="processCourtResult(${idx})" disabled>
                     Next Game →
                 </button>
