@@ -2139,18 +2139,6 @@ header {
     font-style: italic;
 }
 
-.history-duration {
-    margin-left: auto;
-    font-size: 0.62rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    background: rgba(255,255,255,0.06);
-    padding: 2px 7px;
-    border-radius: 20px;
-    flex-shrink: 0;
-    letter-spacing: 0.02em;
-}
-
 /* =============================================================================
    SPECTATOR COUNT BADGE
    ============================================================================= */
@@ -4544,6 +4532,89 @@ button:active,
     text-align: left;
 }
 .sl-invite-btn:active { transform: scale(0.97); background: rgba(0,255,163,0.12); }
+
+/* ── SIDELINE SUPPORT SECTIONS ──────────────────────────────────────────── */
+.sl-support-section {
+    margin: 0 0 4px;
+    padding: 18px 0 0;
+    border-top: 1px solid var(--border);
+}
+.sl-support-label {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.sl-support-sub {
+    font-size: 0.73rem;
+    color: var(--text-muted);
+    margin: 0 0 12px;
+    line-height: 1.4;
+}
+.sl-bug-textarea {
+    width: 100%;
+    background: var(--bg2);
+    border: 1.5px solid var(--border);
+    color: #fff;
+    padding: 12px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    outline: none;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    box-sizing: border-box;
+}
+.sl-support-btn {
+    width: 100%;
+    background: #334155;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    padding: 12px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    font-family: var(--font-display);
+    cursor: pointer;
+    letter-spacing: 0.04em;
+}
+.sl-support-btn:active { opacity: 0.8; }
+.sl-donate-row {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+.sl-donate-label {
+    font-size: 0.62rem;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.05em;
+    text-align: center;
+}
+.sl-donate-qr {
+    width: 130px;
+    height: 130px;
+    border-radius: 10px;
+    display: block;
+}
+.sl-kofi-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #FF5E5B;
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.82rem;
+    padding: 12px 20px;
+    border-radius: 12px;
+    text-decoration: none;
+    white-space: nowrap;
+}
 .sl-invite-icon { font-size: 1.15rem; }
 .sl-invite-hint-inline {
     margin-left: auto;
