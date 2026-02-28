@@ -107,6 +107,8 @@ async function createOnlineSession() {
         showSessionToast(`🌐 Live! Room: ${roomCode}`);
         Haptic.success();
         _updatePlayerCount();
+        // Clean up sessions inactive for >24hrs — fire and forget, no await
+        _cleanupStaleSessions().catch(() => {});
     } catch (e) {
         console.error('CourtSide: create failed', e);
         showSyncStatus('Failed to create session. Check your connection.', 'error');
@@ -176,7 +178,8 @@ function pushStateToSupabase() {
                     operator_key:     operatorKey,
                     squad,
                     current_matches:  currentMatches,
-                    round_history:    roundHistory,
+                    // round_history intentionally excluded — undo is local only,
+                    // removing this cuts DB payload size significantly
                     player_queue:     playerQueue,
                     uuid_map:         window._sessionUUIDMap  || {},
                     approved_players: window._approvedPlayers || {},
@@ -561,7 +564,8 @@ function applyRemoteState(session) {
     // Globals FIRST — no render reads stale data
     squad          = (session.squad           || []);
     currentMatches = session.current_matches  || [];
-    roundHistory   = session.round_history    || [];
+    // round_history is no longer synced to DB — keep local undo history intact
+    // roundHistory stays as-is on rejoin
     playerQueue    = (session.player_queue    || [])
         .filter(name => squad.find(p => p.name === name)); // drop stale names
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
@@ -748,10 +752,6 @@ function showReconnectingIndicator(show) {
 
 async function endAndDeleteSession() {
     if (!isOperator || !currentRoomCode) return;
-
-    // Show session summary before wiping state
-    if (typeof _showSessionSummary === 'function') _showSessionSummary();
-
     try {
         await apiCall('session-delete', {
             method: 'DELETE',
@@ -955,4 +955,19 @@ async function archiveRoundToSupabase(snapshot) {
             }),
         });
     } catch (e) { console.error('CourtSide: archive failed', e); }
+}
+// ---------------------------------------------------------------------------
+// STALE SESSION CLEANUP
+// Deletes sessions that haven't been active in >24 hours.
+// Called once when host creates a new session — fire and forget.
+// Keeps the sessions table lean so Postgres doesn't cache stale blobs.
+// ---------------------------------------------------------------------------
+async function _cleanupStaleSessions() {
+    try {
+        await fetch('/api/session-cleanup', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ max_age_hours: 24 }),
+        });
+    } catch { /* silent — cleanup is best-effort */ }
 }

@@ -27,7 +27,9 @@ let isLongPress = false;
 // ---------------------------------------------------------------------------
 
 function saveToDisk() {
-    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory, playerQueue, activeCourts }));
+    // Cap roundHistory to last 10 entries — enough for undo, keeps localStorage lean
+    const historySlice = roundHistory.slice(-10);
+    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory: historySlice, playerQueue, activeCourts }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,30 +1007,17 @@ function processNotifQueue() {
     const { name, id, uuid } = _notifQueue.shift();
     const notif  = document.getElementById('joinNotification');
     const nameEl = document.getElementById('joinNotifName');
-    const avatarEl = document.getElementById('joinNotifAvatar');
     if (!notif || !nameEl) return;
 
     nameEl.textContent  = name;
     notif.dataset.id    = id;
     notif.dataset.name  = name;
     notif.dataset.uuid  = uuid || '';
-
-    // Avatar — use Avatar from polish.js if available
-    if (avatarEl) {
-        avatarEl.textContent = (name || '?').charAt(0).toUpperCase();
-        if (window.Avatar) avatarEl.style.background = Avatar.color(name);
-    }
-
     notif.classList.add('show');
-
-    // Triple haptic burst so host definitely feels it
     Haptic.bump();
-    setTimeout(() => Haptic.bump(), 180);
-    setTimeout(() => Haptic.bump(), 360);
 
-    // NO auto-dismiss — host must explicitly approve or decline
-    clearTimeout(notif._timer);
-    notif._timer = null;
+    const timer = setTimeout(() => dismissJoinNotification(), 12000);
+    notif._timer = timer;
 }
 
 function dismissJoinNotification() {
@@ -1426,71 +1415,3 @@ window.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
-// =============================================================================
-// SESSION SUMMARY — shown to host when ending session
-// =============================================================================
-
-function _showSessionSummary() {
-    const totalGames  = roundHistory.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
-    const totalRounds = roundHistory.length;
-
-    const mvp = squad.filter(p => p.games > 0)
-        .sort((a, b) => (b.wins / b.games) - (a.wins / a.games))[0] || null;
-
-    const mostPlayed = squad.filter(p => p.sessionPlayCount > 0)
-        .sort((a, b) => b.sessionPlayCount - a.sessionPlayCount)[0] || null;
-
-    const overlay = document.createElement('div');
-    overlay.id = 'sessionSummaryOverlay';
-    overlay.innerHTML = `
-        <div class="ss-backdrop" onclick="document.getElementById('sessionSummaryOverlay').remove()"></div>
-        <div class="ss-card">
-            <div class="ss-header">
-                <div class="ss-title">SESSION OVER</div>
-                <div class="ss-sub">${totalRounds} round${totalRounds !== 1 ? 's' : ''} · ${totalGames} game${totalGames !== 1 ? 's' : ''} played</div>
-            </div>
-
-            <div class="ss-stats-row">
-                <div class="ss-stat">
-                    <div class="ss-stat-value">${totalGames}</div>
-                    <div class="ss-stat-label">GAMES</div>
-                </div>
-                <div class="ss-stat">
-                    <div class="ss-stat-value">${squad.filter(p => p.games > 0).length}</div>
-                    <div class="ss-stat-label">PLAYERS</div>
-                </div>
-                <div class="ss-stat">
-                    <div class="ss-stat-value">${totalRounds}</div>
-                    <div class="ss-stat-label">ROUNDS</div>
-                </div>
-            </div>
-
-            ${mvp ? `
-            <div class="ss-section-label">⭐ MVP</div>
-            <div class="ss-mvp-row">
-                <span class="ss-mvp-avatar" style="background:${Avatar.color(mvp.name)}">${Avatar.initials(mvp.name)}</span>
-                <div class="ss-mvp-info">
-                    <div class="ss-mvp-name">${escapeHTML(mvp.name)}</div>
-                    <div class="ss-mvp-record">${mvp.wins}W · ${mvp.games - mvp.wins}L · ${mvp.games > 0 ? Math.round(mvp.wins/mvp.games*100) : 0}% win rate</div>
-                </div>
-            </div>` : ''}
-
-            ${mostPlayed ? `
-            <div class="ss-section-label">🏃 IRON MAN</div>
-            <div class="ss-mvp-row">
-                <span class="ss-mvp-avatar" style="background:${Avatar.color(mostPlayed.name)}">${Avatar.initials(mostPlayed.name)}</span>
-                <div class="ss-mvp-info">
-                    <div class="ss-mvp-name">${escapeHTML(mostPlayed.name)}</div>
-                    <div class="ss-mvp-record">${mostPlayed.sessionPlayCount} game${mostPlayed.sessionPlayCount !== 1 ? 's' : ''} this session</div>
-                </div>
-            </div>` : ''}
-
-            <button class="ss-close-btn" onclick="document.getElementById('sessionSummaryOverlay').remove()">
-                Close Session
-            </button>
-        </div>
-    `;
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('ss-visible'));
-    Haptic.success();
-}
