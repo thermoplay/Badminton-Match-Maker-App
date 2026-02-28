@@ -331,7 +331,7 @@ function buildMatchFromPlayers(p4) {
         teams:           [tA.map(p => p.name), tB.map(p => p.name)],
         winnerTeamIndex: null,
         odds,
-        startedAt: Date.now(),
+        startedAt: null,
     };
 }
 
@@ -403,7 +403,7 @@ function generateMatches() {
         // tA/tB for rendering come from match.teams after buildMatchFromPlayers sorts them
         const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
-        matchData.push({ idx: i, tA, tB, odds: match.odds, startedAt: match.startedAt });
+        matchData.push({ idx: i, tA, tB, odds: match.odds });
     }
 
     renderAllMatchCards(matchData);
@@ -489,17 +489,17 @@ function renderAllMatchCards(matchData) {
     });
 }
 
-function renderMatchCard(idx, tA, tB, odds) {
+function renderMatchCard(idx, tA, tB, odds, startedAt) {
     const container = document.getElementById('matchContainer');
-    container.insertAdjacentHTML('beforeend', buildMatchCardHTML(idx, tA, tB, odds));
+    container.insertAdjacentHTML('beforeend', buildMatchCardHTML(idx, tA, tB, odds, startedAt));
 }
 
-function buildMatchCardHTML(idx, tA, tB, odds, startedAt = Date.now()) {
+function buildMatchCardHTML(idx, tA, tB, odds, startedAt = null) {
     const hA = odds[0] > odds[1] ? 'highlight' : '';
     const hB = odds[1] > odds[0] ? 'highlight' : '';
 
     return `
-        <div class="match-card card-entering" id="match-${idx}" data-started="${startedAt}">
+        <div class="match-card card-entering" id="match-${idx}" ${startedAt ? `data-started="${startedAt}"` : ''}>
             <div class="match-header">
                 <span class="match-label">Court ${idx + 1}</span>
                 <div class="prob-container">
@@ -534,6 +534,13 @@ function setWinner(mIdx, tIdx) {
     const boxes = document.querySelectorAll(`#match-${mIdx} .team-box`);
     boxes.forEach((box, i) => box.classList.toggle('selected', i === tIdx));
     currentMatches[mIdx].winnerTeamIndex = tIdx;
+
+    // Start the timer on the very first click if it hasn't started yet
+    if (!currentMatches[mIdx].startedAt) {
+        currentMatches[mIdx].startedAt = Date.now();
+        const card = document.getElementById(`match-${mIdx}`);
+        if (card) card.dataset.started = currentMatches[mIdx].startedAt;
+    }
 
     Haptic.tap();
 

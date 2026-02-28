@@ -95,7 +95,7 @@ function renderSavedMatches() {
         const tAObjects = m.teams[0].map(n => findP(n));
         const tBObjects = m.teams[1].map(n => findP(n));
         if (tAObjects.some(p => !p) || tBObjects.some(p => !p)) return;
-        renderMatchCard(i, tAObjects, tBObjects, m.odds);
+        renderMatchCard(i, tAObjects, tBObjects, m.odds, m.startedAt);
         if (m.winnerTeamIndex !== null) {
             const boxes = document.querySelectorAll(`#match-${i} .team-box`);
             if (boxes[m.winnerTeamIndex]) {
