@@ -4657,269 +4657,79 @@ button:active,
     50%       { border-color: rgba(250,204,21,0.7); background: rgba(250,204,21,0.10); }
 }
 /* =============================================================================
-   JOIN NOTIFICATION — upgraded with avatar + no auto-dismiss
+   COURT TIMER
    ============================================================================= */
 
-.join-notif-top {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    width: 100%;
-    margin-bottom: 4px;
-}
-
-.join-notif-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: var(--accent-dim);
-    border: 2px solid var(--accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-display);
-    font-size: 1.3rem;
-    font-weight: 900;
-    font-style: italic;
-    color: #fff;
-    flex-shrink: 0;
-    transition: background 0.2s;
-}
-
-.join-notif-text {
-    flex: 1;
-    min-width: 0;
-}
-
-/* Tighten label + name when inside the new top row */
-.join-notif-top .join-notif-label {
-    margin-bottom: 2px;
-}
-
-.join-notif-top .join-notif-name {
-    font-size: 1.4rem;
-}
-
-/* =============================================================================
-   NEXT UP — avatar chips
-   ============================================================================= */
-
-.sl-next-up {
-    flex-wrap: wrap;
-    gap: 6px;
-}
-
-.sl-next-avatar-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 20px;
-    padding: 3px 8px 3px 3px;
-}
-
-.sl-next-avatar {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-display);
-    font-size: 0.6rem;
-    font-weight: 900;
-    color: #fff;
-    flex-shrink: 0;
-}
-
-.sl-next-name {
+.court-timer {
     font-family: var(--font-display);
     font-size: 0.72rem;
     font-weight: 900;
-    font-style: italic;
-    color: var(--text);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 1.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 2.8rem;
+    text-align: center;
+    transition: color 0.4s;
 }
 
-.sl-next-sep {
-    color: var(--text-muted);
-    font-size: 0.7rem;
-    padding: 0 2px;
+/* Amber warning — game running long (>10 min) */
+.court-timer.timer-warn {
+    color: #facc15;
+    text-shadow: 0 0 8px rgba(250, 204, 21, 0.4);
+}
+
+/* Red alert — game very long (>15 min) */
+.court-timer.timer-alert {
+    color: #ef4444;
+    text-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+    animation: timerPulse 1s ease-in-out infinite;
+}
+
+@keyframes timerPulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.6; }
 }
 
 /* =============================================================================
-   SESSION SUMMARY OVERLAY
+   MATCH CARD — smooth entrance transitions
    ============================================================================= */
 
-#sessionSummaryOverlay {
-    position: fixed;
-    inset: 0;
-    z-index: 11000;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
+/* card-entering = initial hidden state before JS removes the class */
+.match-card.card-entering {
     opacity: 0;
-    transition: opacity 0.3s;
+    transform: translateY(20px) scale(0.98);
+    filter: blur(3px);
 }
 
-#sessionSummaryOverlay.ss-visible {
-    opacity: 1;
+/* Transition back to visible when card-entering is removed */
+.match-card {
+    transition: opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+                transform 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+                filter 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+                border-color 0.2s,
+                box-shadow 0.2s;
 }
 
-.ss-backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,0.75);
-    backdrop-filter: blur(4px);
+/* Single court replacement — flash effect */
+@keyframes cardReplace {
+    0%   { opacity: 0; transform: translateY(16px) scale(0.97); filter: blur(2px); }
+    100% { opacity: 1; transform: translateY(0)    scale(1);    filter: blur(0); }
 }
 
-.ss-card {
-    position: relative;
-    width: 100%;
-    max-width: 480px;
-    background: var(--surface);
-    border: 1px solid var(--border-accent);
-    border-radius: 24px 24px 0 0;
-    padding: 28px 24px 40px;
-    transform: translateY(100%);
-    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-    box-shadow: 0 -8px 48px rgba(0,255,163,0.12);
+.match-card.card-replace {
+    animation: cardReplace 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-#sessionSummaryOverlay.ss-visible .ss-card {
-    transform: translateY(0);
+/* Queue strip items animate in */
+.queue-item {
+    transition: opacity 0.25s, transform 0.25s;
 }
 
-.ss-header {
-    text-align: center;
-    margin-bottom: 24px;
+.queue-strip.animating .queue-item {
+    animation: queueItemIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.ss-title {
-    font-family: var(--font-display);
-    font-size: 1.8rem;
-    font-weight: 900;
-    font-style: italic;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--text);
-    line-height: 1;
-    margin-bottom: 6px;
+@keyframes queueItemIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to   { opacity: 1; transform: translateX(0); }
 }
-
-.ss-sub {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    letter-spacing: 0.05em;
-}
-
-.ss-stats-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-    margin-bottom: 24px;
-}
-
-.ss-stat {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 8px;
-    text-align: center;
-}
-
-.ss-stat-value {
-    font-family: var(--font-display);
-    font-size: 1.8rem;
-    font-weight: 900;
-    color: var(--accent);
-    line-height: 1;
-    margin-bottom: 4px;
-}
-
-.ss-stat-label {
-    font-size: 0.55rem;
-    font-weight: 700;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--text-muted);
-}
-
-.ss-section-label {
-    font-family: var(--font-display);
-    font-size: 0.55rem;
-    font-weight: 900;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    color: var(--accent);
-    margin-bottom: 10px;
-    opacity: 0.8;
-}
-
-.ss-mvp-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: rgba(0,255,163,0.04);
-    border: 1px solid rgba(0,255,163,0.12);
-    border-radius: 12px;
-    padding: 12px 14px;
-    margin-bottom: 16px;
-}
-
-.ss-mvp-avatar {
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-display);
-    font-size: 1rem;
-    font-weight: 900;
-    color: #fff;
-    flex-shrink: 0;
-}
-
-.ss-mvp-info {
-    flex: 1;
-    min-width: 0;
-}
-
-.ss-mvp-name {
-    font-family: var(--font-display);
-    font-size: 1.1rem;
-    font-weight: 900;
-    font-style: italic;
-    text-transform: uppercase;
-    color: var(--text);
-    line-height: 1;
-    margin-bottom: 3px;
-}
-
-.ss-mvp-record {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-}
-
-.ss-close-btn {
-    width: 100%;
-    margin-top: 8px;
-    padding: 16px;
-    border: none;
-    border-radius: 14px;
-    background: var(--accent);
-    color: #000;
-    font-family: var(--font-display);
-    font-size: 1rem;
-    font-weight: 900;
-    font-style: italic;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: opacity 0.15s, transform 0.1s;
-}
-
-.ss-close-btn:active { transform: scale(0.98); opacity: 0.9; }

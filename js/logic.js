@@ -91,7 +91,15 @@ function processCourtResult(mIdx) {
     const tA    = next4.slice(0, 2);
     const tB    = next4.slice(2, 4);
     const cardEl = document.getElementById(`match-${mIdx}`);
-    if (cardEl) cardEl.outerHTML = buildMatchCardHTML(mIdx, tA, tB, newMatch.odds);
+    if (cardEl) {
+        cardEl.outerHTML = buildMatchCardHTML(mIdx, tA, tB, newMatch.odds, newMatch.startedAt);
+        // Add replace animation class after swap
+        const newCardEl = document.getElementById(`match-${mIdx}`);
+        if (newCardEl) {
+            newCardEl.classList.add('card-replace');
+            newCardEl.classList.remove('card-entering');
+        }
+    }
 
     renderQueueStrip();
     checkNextButtonState();
@@ -323,6 +331,7 @@ function buildMatchFromPlayers(p4) {
         teams:           [tA.map(p => p.name), tB.map(p => p.name)],
         winnerTeamIndex: null,
         odds,
+        startedAt: Date.now(),
     };
 }
 
@@ -334,7 +343,7 @@ function rebuildMatchCardIndices() {
         const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
         if (tA.length === 2 && tB.length === 2) {
-            container.insertAdjacentHTML('beforeend', buildMatchCardHTML(i, tA, tB, m.odds));
+            container.insertAdjacentHTML('beforeend', buildMatchCardHTML(i, tA, tB, m.odds, m.startedAt));
             if (m.winnerTeamIndex !== null) {
                 const boxes = document.querySelectorAll(`#match-${i} .team-box`);
                 if (boxes[m.winnerTeamIndex]) boxes[m.winnerTeamIndex].classList.add('selected');
@@ -433,6 +442,7 @@ function renderQueueStrip() {
     }
 
     strip.style.display = 'block';
+    strip.classList.remove('animating');
 
     strip.innerHTML = `
         <div class="queue-strip-header">
@@ -451,6 +461,14 @@ function renderQueueStrip() {
         </div>
     `;
 
+    // Stagger queue items in
+    requestAnimationFrame(() => {
+        strip.classList.add('animating');
+        strip.querySelectorAll('.queue-item').forEach((el, i) => {
+            el.style.animationDelay = `${i * 40}ms`;
+        });
+    });
+
 }
 // ---------------------------------------------------------------------------
 // MATCH CARD RENDERING
@@ -458,9 +476,17 @@ function renderQueueStrip() {
 
 function renderAllMatchCards(matchData) {
     const container = document.getElementById('matchContainer');
-    container.innerHTML = matchData.map(({ idx, tA, tB, odds }) =>
-        buildMatchCardHTML(idx, tA, tB, odds)
+    // Stagger entrance animation per card
+    const html = matchData.map(({ idx, tA, tB, odds, startedAt }) =>
+        buildMatchCardHTML(idx, tA, tB, odds, startedAt)
     ).join('');
+    container.innerHTML = html;
+    // Trigger staggered entrance by removing card-entering class per card
+    requestAnimationFrame(() => {
+        container.querySelectorAll('.card-entering').forEach((el, i) => {
+            setTimeout(() => el.classList.remove('card-entering'), i * 80);
+        });
+    });
 }
 
 function renderMatchCard(idx, tA, tB, odds) {
@@ -468,14 +494,15 @@ function renderMatchCard(idx, tA, tB, odds) {
     container.insertAdjacentHTML('beforeend', buildMatchCardHTML(idx, tA, tB, odds));
 }
 
-function buildMatchCardHTML(idx, tA, tB, odds) {
+function buildMatchCardHTML(idx, tA, tB, odds, startedAt = Date.now()) {
     const hA = odds[0] > odds[1] ? 'highlight' : '';
     const hB = odds[1] > odds[0] ? 'highlight' : '';
 
     return `
-        <div class="match-card" id="match-${idx}">
+        <div class="match-card card-entering" id="match-${idx}" data-started="${startedAt}">
             <div class="match-header">
                 <span class="match-label">Court ${idx + 1}</span>
+                <span class="court-timer" id="timer-${idx}">0:00</span>
                 <div class="prob-container">
                     <div class="prob-pill ${hA}">${odds[0]}%</div>
                     <div class="prob-pill ${hB}">${odds[1]}%</div>
@@ -738,3 +765,38 @@ function confirmTeamBuilder() {
     saveToDisk();
     Haptic.success();
 }
+// =============================================================================
+// COURT TIMER ENGINE
+// Updates all visible court timers every second.
+// Reads data-started attribute set on each .match-card at render time.
+// =============================================================================
+
+(function initCourtTimers() {
+    function formatTime(ms) {
+        const totalSecs = Math.floor(ms / 1000);
+        const mins = Math.floor(totalSecs / 60);
+        const secs = totalSecs % 60;
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function tickTimers() {
+        const now = Date.now();
+        document.querySelectorAll('.match-card[data-started]').forEach(card => {
+            const started = parseInt(card.dataset.started, 10);
+            if (!started) return;
+            const elapsed = now - started;
+            const timerEl = card.querySelector('.court-timer');
+            if (!timerEl) return;
+
+            timerEl.textContent = formatTime(elapsed);
+
+            // Turn amber after 10 mins, red after 15 mins
+            timerEl.classList.toggle('timer-warn',  elapsed > 10 * 60 * 1000);
+            timerEl.classList.toggle('timer-alert', elapsed > 15 * 60 * 1000);
+        });
+    }
+
+    // Start ticking immediately and then every second
+    tickTimers();
+    setInterval(tickTimers, 1000);
+})();
