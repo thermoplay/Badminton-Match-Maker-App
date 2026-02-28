@@ -211,7 +211,9 @@ function updateSideline() {
     const activeThisRound = new Set();
     currentMatches.forEach(m => m.teams.flat().forEach(n => activeThisRound.add(n)));
     const idle = squad.filter(p => p.active && !activeThisRound.has(p.name));
-    document.getElementById('restingList').innerHTML = idle
+    const restingEl = document.getElementById('restingList');
+    if (!restingEl) return;
+    restingEl.innerHTML = idle
         .map(p => `
             <div class="player-chip active sideline-chip" data-name="${escapeHTML(p.name)}">
                 ${Avatar.html(p.name)}
