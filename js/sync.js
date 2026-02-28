@@ -839,15 +839,13 @@ function showSessionToast(msg) {
     toast._timer = setTimeout(() => toast.classList.remove('show'), 3000);
 }
 
-// Hook saveToDisk: push state to DB (debounced). Does NOT broadcast —
-// broadcastGameState() is called explicitly by processAndNext() and setWinner()
-// in logic.js AFTER the new round state is fully built, so players always
-// receive one clean broadcast with the correct final state, not intermediate ones.
+// Hook saveToDisk: push + broadcast game state on every host save
 const _originalSaveToDisk = saveToDisk;
 saveToDisk = function () {
     _originalSaveToDisk();
     if (isOnlineSession && isOperator) {
-        pushStateToSupabase();  // debounced 800ms — DB sync only
+        pushStateToSupabase();
+        broadcastGameState();   // instant, no debounce
     }
 };
 
