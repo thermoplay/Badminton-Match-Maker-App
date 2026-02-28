@@ -1,817 +1,1454 @@
 // =============================================================================
-// COURTSIDE PRO — logic.js
-// Responsibilities: Match generation, ELO calculation, match rendering,
-//                  winner selection, round processing, team builder.
-// Depends on: app.js (must be loaded before this file)
+// PASSPORT.JS — Private Player Identity System  v6
+// =============================================================================
+// PRIVACY CONTRACT:
+//   - playerUUID and playerName travel over the wire (handshake only)
+//
+// FEATURES:
+//   #3  Name sync:       editName → localStorage → broadcast NAME_UPDATE
+//   #NEW Invite QR:      show session QR so players can invite friends
+//   #TechVerify UUID:    UUID stored on squad member, survives name changes
 // =============================================================================
 
-// ---------------------------------------------------------------------------
-// LOOKUP HELPER
-// ---------------------------------------------------------------------------
+const PASSPORT_KEY = 'cs_player_passport';
 
-/** Finds a player object by name. Returns undefined if not found. */
-function findP(name) {
-    return squad.find(p => p.name === name);
-}
+// =============================================================================
+// PASSPORT — localStorage-only identity
+// =============================================================================
 
-// ---------------------------------------------------------------------------
-// ELO ENGINE
-// ---------------------------------------------------------------------------
+const Passport = {
 
-function calculateELOSift(winnerRating, loserRating) {
-    const K = 32;
-    const expectedWin = 1 / (1 + Math.pow(10, (loserRating - winnerRating) / 400));
-    return Math.round(K * (1 - expectedWin));
-}
+    get() {
+        try {
+            const raw = localStorage.getItem(PASSPORT_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch { return null; }
+    },
 
-function calculateOdds(teamA, teamB) {
-    // Null-safe: if a player object is missing (stale data), default rating to 1200
-    const r = p => (p && p.rating != null ? p.rating : 1200);
-    const rA = (r(teamA[0]) + r(teamA[1])) / 2;
-    const rB = (r(teamB[0]) + r(teamB[1])) / 2;
-    const expectedA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
-    const probA = Math.round(expectedA * 100);
-    return [probA, 100 - probA];
-}
+    save(data) {
+        try { localStorage.setItem(PASSPORT_KEY, JSON.stringify(data)); } catch { }
+    },
 
-// ---------------------------------------------------------------------------
-// ROUND PROCESSING
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// PER-COURT ADVANCEMENT — fires when host taps "Next Game" on one court
-// ---------------------------------------------------------------------------
-
-function processCourtResult(mIdx) {
-    const match = currentMatches[mIdx];
-    if (!match || match.winnerTeamIndex === null) {
-        alert('Select a winner first.');
-        return;
-    }
-
-    // Snapshot for undo
-    const snapshot = {
-        squadSnapshot: squad.map(p => ({ ...p })),
-        matches:       currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
-        queueSnapshot: [...playerQueue],
-        timestamp:     Date.now(),
-    };
-    roundHistory.push(snapshot);
-    if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
-
-    // Apply ELO for this court only
-    applyELOForMatch(match);
-
-    // Rotate just this court's players back into the queue
-    rotateCourtPlayers(match);
-
-    // Pull the next 4 from the queue for this court.
-    // Exclude players on OTHER courts only — the current court's players
-    // have already rotated back into the queue and are eligible again.
-    const onCourtNow = new Set(
-        currentMatches
-            .filter((_, i) => i !== mIdx)
-            .flatMap(m => m.teams.flat())
-    );
-    const next4 = pullNextFromQueue(onCourtNow);
-    if (next4.length < 4) {
-        // Not enough players — remove this court slot and collapse
-        currentMatches.splice(mIdx, 1);
-        rebuildMatchCardIndices();
-        renderQueueStrip();
-        checkNextButtonState();
-        updateUndoButton();
-        saveToDisk();
-        if (typeof broadcastGameState === 'function') broadcastGameState();
-        return;
-    }
-
-    // Build new match for this court
-    const newMatch = buildMatchFromPlayers(next4);
-    currentMatches[mIdx] = newMatch;
-
-    // Replace this card in the DOM.
-    // IMPORTANT: use newMatch.teams not next4.slice() — buildMatchFromPlayers
-    // re-sorts p4 and picks the best split, so stored team assignment may
-    // differ from raw queue order. The broadcast must match what is in state.
-    const tA    = newMatch.teams[0].map(n => findP(n)).filter(Boolean);
-    const tB    = newMatch.teams[1].map(n => findP(n)).filter(Boolean);
-    const cardEl = document.getElementById(`match-${mIdx}`);
-    if (cardEl) {
-        cardEl.outerHTML = buildMatchCardHTML(mIdx, tA, tB, newMatch.odds, newMatch.startedAt);
-        // Add replace animation class after swap
-        const newCardEl = document.getElementById(`match-${mIdx}`);
-        if (newCardEl) {
-            newCardEl.classList.add('card-replace');
-            newCardEl.classList.remove('card-entering');
+    init(name = null) {
+        let p = this.get();
+        if (!p) {
+            p = {
+                playerUUID: this._uuid(),
+                playerName: name || '',
+                createdAt:  Date.now(),
+            };
+            this.save(p);
         }
-    }
+        return p;
+    },
 
-    renderQueueStrip();
-    checkNextButtonState();
-    updateUndoButton();
+    publicProfile() {
+        const p = this.get();
+        if (!p) return null;
+        return { playerUUID: p.playerUUID, playerName: p.playerName };
+    },
 
-    // Dispatch win signals AFTER currentMatches is updated so broadcastGameState
-    // sends the new lineup, not the completed one.
-    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx, true);
+    /** Write localStorage FIRST, caller updates UI after */
+    rename(newName) {
+        const p = this.get();
+        if (!p) return null;
+        p.playerName = newName.trim();
+        this.save(p);
+        return p;
+    },
 
-    saveToDisk();
-    if (typeof broadcastGameState === 'function') broadcastGameState();
-    Haptic.bump();
-}
-
-// ---------------------------------------------------------------------------
-// FIRST START — fires the first time host presses "Start Session"
-// ---------------------------------------------------------------------------
-
-function processAndNext() {
-    // If courts are already live, this button is disabled — do nothing
-    if (currentMatches.length > 0) return;
-    generateMatches();
-}
-
-function applyELOForMatch(m) {
-    if (m.winnerTeamIndex === null) return;
-    const winIdx  = m.winnerTeamIndex;
-    const loseIdx = winIdx === 0 ? 1 : 0;
-
-    const winners = m.teams[winIdx].map(n => findP(n)).filter(Boolean);
-    const losers  = m.teams[loseIdx].map(n => findP(n)).filter(Boolean);
-    if (!winners.length || !losers.length) return;
-
-    const winAvg  = winners.reduce((s, p) => s + p.rating, 0) / winners.length;
-    const loseAvg = losers.reduce((s, p)  => s + p.rating, 0) / losers.length;
-    const sift    = calculateELOSift(winAvg, loseAvg);
-
-    winners.forEach(p => { p.rating += sift; p.wins++; p.games++; p.streak++; });
-    losers.forEach(p  => { p.rating = Math.max(800, p.rating - sift); p.games++; p.streak = 0; });
-}
-
-// Legacy alias — kept for undo path
-function applyELOResults() {
-    currentMatches.forEach(m => applyELOForMatch(m));
-}
-
-// ---------------------------------------------------------------------------
-// QUEUE ENGINE
-// ---------------------------------------------------------------------------
-//
-// playerQueue — ordered array of player NAMES representing the rotation.
-// The first N*4 names (enough for courtCount courts) play each round.
-// After results are entered, losers go to the back first, then winners,
-// ensuring winners wait slightly longer (a small earned rest).
-//
-// New players added mid-session are appended to the back of the queue.
-// Rested (inactive) players are silently skipped when pulling from the
-// front, but their queue position is preserved so they re-enter fairly.
-//
-// The queue persists to localStorage so it survives page reloads.
-
-// playerQueue is declared in app.js (global state) and persisted to disk.
-
-// ---------------------------------------------------------------------------
-// INITIALISE QUEUE — called once when first generating matches, or when
-// the squad changes in a way that requires a full rebuild.
-// ---------------------------------------------------------------------------
-
-function initQueue() {
-    const activeNames = squad.filter(p => p.active).map(p => p.name);
-
-    // Keep existing queue order for names already in it — only append newcomers
-    const inQueue  = new Set(playerQueue);
-    const newNames = activeNames.filter(n => !inQueue.has(n));
-
-    // Remove names no longer in the active squad
-    playerQueue = playerQueue.filter(n => squad.find(p => p.name === n && p.active));
-
-    // Append newcomers at the back
-    playerQueue.push(...newNames);
-}
-
-// ---------------------------------------------------------------------------
-// ROTATE QUEUE — called after every round with results.
-// Finished players leave the front of the queue and rejoin at the back:
-//   losers first (shorter wait), then winners (earned rest).
-// ---------------------------------------------------------------------------
-
-// Rotate a single court's players back into the queue
-function rotateCourtPlayers(m) {
-    const allNames = m.teams.flat();
-    // Remove from wherever they currently sit
-    playerQueue = playerQueue.filter(n => !allNames.includes(n));
-
-    if (m.winnerTeamIndex === null) {
-        playerQueue.push(...allNames);
-        return;
-    }
-    const winIdx  = m.winnerTeamIndex;
-    const loseIdx = winIdx === 0 ? 1 : 0;
-    // Losers back first (shorter wait), winners after (slight rest)
-    playerQueue.push(...m.teams[loseIdx], ...m.teams[winIdx]);
-}
-
-// ---------------------------------------------------------------------------
-// VARIETY ENGINE
-// ---------------------------------------------------------------------------
-//
-// The queue decides WHO IS ELIGIBLE to play next — the front half of the
-// waiting list. Within that candidate pool we pick the GROUP OF 4 and the
-// TEAM SPLIT that together minimise repeated pairings from session history.
-//
-// CANDIDATE POOL SIZE:
-//   We look at the first (4 × POOL_FACTOR) queue-eligible players.
-//   POOL_FACTOR = 2 → 8 candidates → C(8,4) = 70 group combinations.
-//   Each group has 3 possible team splits → 210 total evaluations per court.
-//   Fast enough to run synchronously on any device.
-//
-// FAIRNESS GUARANTEE:
-//   A player can only be a candidate if they're in the top half of the queue.
-//   Nobody outside the front pool can be chosen — so wait time is still
-//   respected. The variety scoring only operates within the eligible window.
-
-const POOL_FACTOR = 2; // candidate pool = 4 * POOL_FACTOR players
-
-// Score a single team split — lower = fresher matchup
-function scoreSplit(tA, tB) {
-    const tm  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
-    const opp = (a, b) => (a.opponentHistory  || {})[b.name] || 0;
-    return (
-        tm(tA[0], tA[1]) * 2 + tm(tB[0], tB[1]) * 2 +
-        opp(tA[0], tB[0]) + opp(tA[0], tB[1]) +
-        opp(tA[1], tB[0]) + opp(tA[1], tB[1])
-    );
-}
-
-// Score a group of 4 — best possible split score for this combination
-function scoreGroup(g) {
-    const splits = [
-        { tA: [g[0], g[3]], tB: [g[1], g[2]] },
-        { tA: [g[0], g[2]], tB: [g[1], g[3]] },
-        { tA: [g[0], g[1]], tB: [g[2], g[3]] },
-    ];
-    return Math.min(...splits.map(s => scoreSplit(s.tA, s.tB)));
-}
-
-// Generate all C(n, 4) combinations from an array
-function combinations4(arr) {
-    const out = [];
-    const n = arr.length;
-    for (let a = 0;     a < n - 3; a++)
-    for (let b = a + 1; b < n - 2; b++)
-    for (let c = b + 1; c < n - 1; c++)
-    for (let d = c + 1; d < n;     d++)
-        out.push([arr[a], arr[b], arr[c], arr[d]]);
-    return out;
-}
-
-// Get the candidate pool for one court — front of the queue, excluding
-// players already assigned to another court this round.
-function getCandidatePool(onCourt) {
-    initQueue();
-    const pool     = [];
-    const poolSet  = new Set();
-    const poolSize = 4 * POOL_FACTOR;
-
-    for (const name of playerQueue) {
-        if (pool.length >= poolSize) break;
-        if (onCourt.has(name)) continue;
-        if (poolSet.has(name))  continue;
-        const p = squad.find(s => s.name === name && s.active);
-        if (!p) continue;
-        pool.push(p);
-        poolSet.add(name);
-    }
-    return pool;
-}
-
-// Pick the best group of 4 from the candidate pool using the variety matrix.
-// Returns the 4 player objects, or fewer if the pool is too small.
-function pickBestGroup(pool) {
-    if (pool.length <= 4) return pool; // no choice to make
-
-    const combos = combinations4(pool);
-
-    // Add small random jitter so equal-score combos don't always resolve
-    // the same way (keeps things feeling fresh even with zero history)
-    combos.sort(() => Math.random() - 0.5);
-    combos.sort((a, b) => scoreGroup(a) - scoreGroup(b));
-
-    return combos[0];
-}
-
-// Pull the best 4 from the queue front for one court.
-// onCourt = Set of names already assigned this round (multi-court guard).
-function pullNextFromQueue(onCourt) {
-    if (!onCourt) onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
-    const pool = getCandidatePool(onCourt);
-    return pickBestGroup(pool);
-}
-
-// Build a match object from 4 player objects, applying best-split pairing.
-function buildMatchFromPlayers(p4) {
-    p4.forEach(p => p.sessionPlayCount++);
-
-    // ELO sort with shuffle for tie-breaking
-    p4.sort(() => Math.random() - 0.5);
-    p4.sort((a, b) => b.rating - a.rating);
-
-    // All 3 team splits — pick the freshest
-    const splits = [
-        { tA: [p4[0], p4[3]], tB: [p4[1], p4[2]] },
-        { tA: [p4[0], p4[2]], tB: [p4[1], p4[3]] },
-        { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
-    ];
-    splits.sort(() => Math.random() - 0.5);
-    splits.sort((a, b) => scoreSplit(a.tA, a.tB) - scoreSplit(b.tA, b.tB));
-
-    const { tA, tB } = splits[0];
-    const odds = calculateOdds(tA, tB);
-
-    // Record session history for all 4 players
-    const addHistory = (p, teammate, opponents) => {
-        p.teammateHistory = p.teammateHistory || {};
-        p.opponentHistory = p.opponentHistory || {};
-        p.teammateHistory[teammate.name] = (p.teammateHistory[teammate.name] || 0) + 1;
-        opponents.forEach(o => {
-            p.opponentHistory[o.name] = (p.opponentHistory[o.name] || 0) + 1;
+    _uuid() {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
         });
-    };
-    addHistory(tA[0], tA[1], tB); addHistory(tA[1], tA[0], tB);
-    addHistory(tB[0], tB[1], tA); addHistory(tB[1], tB[0], tA);
+    },
+};
 
-    return {
-        teams:           [tA.map(p => p.name), tB.map(p => p.name)],
-        winnerTeamIndex: null,
-        odds,
-        startedAt: Date.now(),
-    };
-}
+// =============================================================================
+// SIDELINE VIEW
+// =============================================================================
 
-// Rebuild DOM indices after a court is removed (so id="match-N" stays accurate)
-function rebuildMatchCardIndices() {
-    const container = document.getElementById('matchContainer');
-    container.innerHTML = '';
-    currentMatches.forEach((m, i) => {
-        const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
-        const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
-        if (tA.length === 2 && tB.length === 2) {
-            container.insertAdjacentHTML('beforeend', buildMatchCardHTML(i, tA, tB, m.odds, m.startedAt));
-            if (m.winnerTeamIndex !== null) {
-                const boxes = document.querySelectorAll(`#match-${i} .team-box`);
-                if (boxes[m.winnerTeamIndex]) boxes[m.winnerTeamIndex].classList.add('selected');
+const SidelineView = {
+    _visible: false,
+
+    show() {
+        this._visible = true;
+        const panel = document.getElementById('sidelinePanel');
+        if (panel) { panel.style.display = 'flex'; this.refresh(); }
+    },
+
+    hide() {
+        this._visible = false;
+        const panel = document.getElementById('sidelinePanel');
+        if (panel) panel.style.display = 'none';
+    },
+
+    refresh() {
+        if (!this._visible) return;
+        const passport = Passport.get();
+        if (!passport) return;
+
+        const nameEl = document.getElementById('slPassportName');
+        if (nameEl) nameEl.textContent = passport.playerName;
+
+        this._renderMatches();
+        this._renderNextUp();
+        this._renderLastWinner();
+    },
+
+    _renderMatches() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+
+        // Guard: don't overwrite queued-state or name-entry UI during join flow
+        if (container.querySelector('.sl-queued-state') ||
+            container.querySelector('.sl-name-entry')) return;
+
+        const matches = window.currentMatches || [];
+        if (matches.length === 0) {
+            container.innerHTML = `<div class="sl-empty">No active round yet</div>`;
+            return;
+        }
+        const passport = Passport.get();
+        const myName   = passport?.playerName?.toLowerCase() || '';
+
+        container.innerHTML = matches.map((m, i) => {
+            const tA      = m.teams[0] || [];
+            const tB      = m.teams[1] || [];
+            const playing = myName && [...tA, ...tB].map(n => n.toLowerCase()).includes(myName);
+            const odds    = m.odds || [50, 50];
+            const winIdx  = m.winnerTeamIndex;
+            const hasWinner = winIdx !== null && winIdx !== undefined;
+
+            // Timer
+            let timerHTML = '';
+            if (m.startedAt) {
+                const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
+                const mins = Math.floor(elapsed / 60);
+                const secs = elapsed % 60;
+                const timeStr = `${mins}:${String(secs).padStart(2, '0')}`;
+                const warnClass = elapsed > 15 * 60 ? 'sl-timer-alert' : elapsed > 10 * 60 ? 'sl-timer-warn' : '';
+                timerHTML = `<span class="sl-court-timer ${warnClass}">⏱ ${timeStr}</span>`;
+            }
+
+            // Winner banner
+            const winnerBanner = hasWinner
+                ? `<div class="sl-winner-banner">🏆 ${(m.teams[winIdx] || []).join(' & ')} won</div>`
+                : '';
+
+            // Team styling
+            const aClass = hasWinner ? (winIdx === 0 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
+            const bClass = hasWinner ? (winIdx === 1 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
+
+            return `
+                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}">
+                    <div class="sl-match-header">
+                        <div class="sl-match-label">COURT ${i + 1}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
+                        ${timerHTML}
+                    </div>
+                    <div class="sl-match-teams">
+                        <div class="sl-team-col">
+                            <span class="${aClass}">${tA.join(' &amp; ')}</span>
+                        </div>
+                        <span class="sl-vs">VS</span>
+                        <div class="sl-team-col">
+                            <span class="${bClass}">${tB.join(' &amp; ')}</span>
+                        </div>
+                    </div>
+                    ${winnerBanner}
+                    ${playing && !hasWinner ? `
+                    <button class="sl-share-match-btn" onclick="slShareMatch(${i})">
+                        📲 Share this matchup
+                    </button>` : ''}
+                </div>`;
+        }).join('');
+
+        // Start live timer ticks
+        this._tickMatchTimers();
+    },
+
+    _tickMatchTimers() {
+        if (this._timerInterval) clearInterval(this._timerInterval);
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        this._timerInterval = setInterval(() => {
+            const matches = window.currentMatches || [];
+            matches.forEach((m, i) => {
+                if (!m.startedAt) return;
+                const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
+                const mins = Math.floor(elapsed / 60);
+                const secs = elapsed % 60;
+                const el = container.querySelector(`.sl-match-card:nth-child(${i + 1}) .sl-court-timer`);
+                if (el) {
+                    el.textContent = `⏱ ${mins}:${String(secs).padStart(2, '0')}`;
+                    el.classList.toggle('sl-timer-warn',  elapsed > 10 * 60);
+                    el.classList.toggle('sl-timer-alert', elapsed > 15 * 60);
+                }
+            });
+        }, 1000);
+    },
+
+    _renderNextUp() {
+        const el    = document.getElementById('slNextUp');
+        const rowEl = document.getElementById('slNextUpRow');
+        if (!el || !rowEl) return;
+        const text = window._lastNextUp || (document.getElementById('nextUpNames')?.textContent?.trim() || '');
+        if (!text) { rowEl.style.display = 'none'; return; }
+
+        // Parse names and render with avatars if Avatar is available
+        if (window.Avatar) {
+            const names = text.split(/\s*[,&]\s*/).map(n => n.trim()).filter(Boolean);
+            el.innerHTML = names.map(name =>
+                `<span class="sl-next-avatar-chip">
+                    <span class="sl-next-avatar" style="background:${Avatar.color(name)}">${Avatar.initials(name)}</span>
+                    <span class="sl-next-name">${escapeHTML ? escapeHTML(name) : name}</span>
+                </span>`
+            ).join('<span class="sl-next-sep">·</span>');
+        } else {
+            el.textContent = text;
+        }
+        rowEl.style.display = 'flex';
+    },
+
+    _renderLastWinner() {
+        const el    = document.getElementById('slLastWinner');
+        const rowEl = document.getElementById('slLastWinnerRow');
+        if (!el || !rowEl) return;
+        if (window._lastMatchWinner) {
+            el.textContent      = window._lastMatchWinner;
+            rowEl.style.display = 'flex';
+        } else {
+            rowEl.style.display = 'none';
+        }
+    },
+};
+
+// =============================================================================
+// VICTORY CARD — stubbed out
+// =============================================================================
+
+const VictoryCard = { show() {}, hide() {}, share() {} };
+
+// =============================================================================
+// INVITE QR — shows session join QR on player's phone
+// =============================================================================
+
+const InviteQR = {
+    _overlay: null,
+
+    show(roomCode) {
+        if (!roomCode) { alert('No active session to share.'); return; }
+
+        if (this._overlay) this._overlay.remove();
+
+        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${roomCode}&role=player`;
+
+        this._overlay = document.createElement('div');
+        this._overlay.className = 'sl-invite-overlay';
+        this._overlay.innerHTML = `
+            <div class="sl-invite-card">
+                <div class="sl-invite-header">
+                    <div class="sl-invite-title">INVITE TO COURT</div>
+                    <button class="sl-invite-close" onclick="InviteQR.hide()">✕</button>
+                </div>
+                <div class="sl-invite-sub">Scan to join this session</div>
+                <canvas id="inviteQrCanvas" class="sl-invite-canvas"></canvas>
+                <div class="sl-invite-code">${roomCode}</div>
+                <div class="sl-invite-hint">Players who scan will see the player view</div>
+            </div>
+        `;
+        document.body.appendChild(this._overlay);
+        requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
+
+        this._overlay.addEventListener('click', e => {
+            if (e.target === this._overlay) this.hide();
+        });
+
+        if (window.QRCode) {
+            QRCode.toCanvas(document.getElementById('inviteQrCanvas'), joinUrl, {
+                width:  220,
+                margin: 2,
+                color: { dark: '#0a0a0f', light: '#ffffff' },
+            }, err => { if (err) console.error('InviteQR: QR gen failed', err); });
+        } else {
+            const canvas = document.getElementById('inviteQrCanvas');
+            if (canvas) {
+                canvas.style.display = 'none';
+                const txt = document.createElement('div');
+                txt.className = 'sl-invite-url';
+                txt.textContent = joinUrl;
+                canvas.parentNode.insertBefore(txt, canvas.nextSibling);
             }
         }
-    });
-}
+    },
 
-// Legacy alias for undo — rotates ALL courts at once
-function rotateQueue() {
-    currentMatches.forEach(m => rotateCourtPlayers(m));
-}
+    hide() {
+        if (!this._overlay) return;
+        this._overlay.classList.remove('sl-invite-open');
+        setTimeout(() => { this._overlay?.remove(); this._overlay = null; }, 300);
+    },
+};
 
-// ---------------------------------------------------------------------------
-// GENERATE MATCHES — queue-based rotation
-// ---------------------------------------------------------------------------
-//
-// 1. Initialise / sync the queue with the current active squad.
-// 2. Pull the first courtCount*4 active players from the front of the queue.
-// 3. For each group of 4, choose the team split that minimises repeat
-//    teammates and opponents (full session history, weighted scoring).
-// 4. Render match cards and the queue strip below them.
+// =============================================================================
+// PLAYER MODE — boot controller for ?role=player  v6
+// =============================================================================
 
-function generateMatches() {
-    const activePool = squad.filter(p => p.active);
-    if (activePool.length < 4) {
-        alert('Requires at least 4 active players.');
-        return;
-    }
+const LS_TOKENS   = 'cs_session_tokens';
+const SS_APPROVED = 'cs_approved';
 
-    initQueue();
+const PlayerMode = {
 
-    currentMatches = [];
-    document.getElementById('matchContainer').innerHTML = '';
+    _joinCode:  null,
+    _pollTimer: null,
 
-    // Cap courts to what the active pool can support (need 4 players per court)
-    const maxCourts  = Math.floor(activePool.length / 4);
-    const courtCount = Math.min(activeCourts, maxCourts);
+    // ─────────────────────────────────────────────────────────────────────────
+    // BOOT
+    // ─────────────────────────────────────────────────────────────────────────
 
-    if (activeCourts > maxCourts && typeof showSessionToast === 'function') {
-        showSessionToast(
-            `⚠️ Need ${activeCourts * 4} players for ${activeCourts} courts — only ${maxCourts} court${maxCourts !== 1 ? 's' : ''} generated with ${activePool.length} active players`
-        );
-    }
+    async boot(passport, joinCode) {
+        if (!joinCode) {
+            try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
+        }
 
-    const matchData = [];
-    // Track who's already assigned this session start (multi-court uniqueness)
-    const assignedThisRound = new Set();
+        this._joinCode = joinCode;
 
-    for (let i = 0; i < courtCount; i++) {
-        const p4 = pullNextFromQueue(assignedThisRound);
-        if (p4.length < 4) break;
-        // Mark these 4 as assigned so next court's candidate pool excludes them
-        p4.forEach(p => assignedThisRound.add(p.name));
-        const match = buildMatchFromPlayers(p4);
-        currentMatches.push(match);
-        // tA/tB for rendering come from match.teams after buildMatchFromPlayers sorts them
-        const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
-        const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
-        matchData.push({ idx: i, tA, tB, odds: match.odds });
-    }
+        if (joinCode) {
+            try { localStorage.setItem('cs_player_room_code', joinCode); } catch {}
+        }
 
-    renderAllMatchCards(matchData);
-    renderQueueStrip();
-    checkNextButtonState();
-    renderSquad();
-    saveToDisk();
-    Haptic.bump();
-}
+        const panel = document.getElementById('sidelinePanel');
+        if (panel) panel.classList.add('sl-booting');
 
-// ---------------------------------------------------------------------------
-// QUEUE STRIP — visible list of who's waiting and in what order
-// ---------------------------------------------------------------------------
+        this._renderIdentity(passport);
 
-function renderQueueStrip() {
-    let strip = document.getElementById('queueStrip');
-    if (!strip) {
-        strip = document.createElement('div');
-        strip.id = 'queueStrip';
-        strip.className = 'queue-strip';
-        const container = document.getElementById('matchContainer');
-        container.insertAdjacentElement('afterend', strip);
-    }
+        const codeEl = document.getElementById('slSessionCode');
+        if (codeEl && joinCode) codeEl.textContent = joinCode;
 
-    // Players currently on a court
-    const onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
+        if (!joinCode) {
+            if (panel) panel.classList.remove('sl-booting');
+            this._promptForCode();
+            return;
+        }
 
-    // Queue: active players not on court, in queue order
-    const waiting = playerQueue
-        .map(name => squad.find(p => p.name === name))
-        .filter(p => p && p.active && !onCourt.has(p.name));
+        const hasName = !!(passport.playerName && passport.playerName.trim());
+        if (hasName) {
+            this._showWelcomeBack(passport.playerName, joinCode);
+            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
+        } else {
+            this.setStatus('pending', 'Almost there…', 'Enter your name to join');
+            this._showNameEntry();
+            const name = await this._promptName();
+            if (!name) {
+                if (panel) panel.classList.remove('sl-booting');
+                return;
+            }
+            Passport.rename(name);
+            this._renderIdentity(Passport.get());
+            this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
+        }
 
-    if (waiting.length === 0) {
-        strip.style.display = 'none';
-        return;
-    }
+        if (this._isApprovedInSession(joinCode)) {
+            if (panel) panel.classList.remove('sl-booting');
+            this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
+            this._subscribeAndPoll(joinCode, passport);
+            return;
+        }
 
-    strip.style.display = 'block';
-    strip.classList.remove('animating');
+        this._subscribeAndPoll(joinCode, passport);
+        this._showSearchingSpinner();
 
-    strip.innerHTML = `
-        <div class="queue-strip-header">
-            <span class="queue-strip-title">⏳ Queue</span>
-            <span class="queue-strip-count">${waiting.length} waiting</span>
-        </div>
-        <div class="queue-strip-list">
-            ${waiting.map((p, idx) => `
-                <div class="queue-item">
-                    <span class="queue-pos">${idx + 1}</span>
-                    ${Avatar.html(p.name)}
-                    <span class="queue-name">${escapeHTML(p.name)}</span>
-                    ${idx < activeCourts * 4 ? '<span class="queue-next-badge">NEXT</span>' : ''}
+        let upsertResult = null;
+        try {
+            upsertResult = await this._memberUpsert(Passport.get(), joinCode);
+        } catch (err) {
+            console.error('[PlayerMode.boot] member-upsert threw:', err);
+        }
+
+        if (panel) panel.classList.remove('sl-booting');
+        this._clearSearchingSpinner();
+
+        if (!upsertResult) {
+            this.setStatus('pending',
+                'Court not found',
+                'The session may have ended. Check the room code.');
+            console.error('[CourtSide] Session lookup failed for room:', joinCode);
+            this._promptForCode();
+            return;
+        }
+
+        if (upsertResult.status === 'active') {
+            this._markApprovedInSession(joinCode);
+            this._hydrateFromUpsert(upsertResult);
+            const p = Passport.get();
+            this.setStatus('approved', `Welcome back, ${p.playerName}!`, "You're in the squad ✅");
+            SidelineView.refresh();
+            setTimeout(() => this._updateStatus(p), 800);
+            return;
+        }
+
+        const savedToken = this._loadToken(joinCode);
+        if (savedToken) {
+            const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
+            if (valid) {
+                this._markApprovedInSession(joinCode);
+                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, "You're in the squad");
+                return;
+            } else {
+                this._clearToken(joinCode);
+            }
+        }
+
+        await this._submitJoinRequest(Passport.get(), joinCode);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // QUEUED STATE
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _showQueuedState(playerName) {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="sl-queued-state" id="slQueuedBlock">
+                <div class="sl-queued-icon">🏀</div>
+                <div class="sl-queued-title">REQUEST SENT</div>
+                <div class="sl-queued-sub">
+                    Waiting for the host to approve you.<br>
+                    You'll be added to the rotation automatically.
                 </div>
-            `).join('')}
-        </div>
-    `;
-
-    // Stagger queue items in
-    requestAnimationFrame(() => {
-        strip.classList.add('animating');
-        strip.querySelectorAll('.queue-item').forEach((el, i) => {
-            el.style.animationDelay = `${i * 40}ms`;
-        });
-    });
-
-}
-// ---------------------------------------------------------------------------
-// MATCH CARD RENDERING
-// ---------------------------------------------------------------------------
-
-function renderAllMatchCards(matchData) {
-    const container = document.getElementById('matchContainer');
-    // Stagger entrance animation per card
-    const html = matchData.map(({ idx, tA, tB, odds, startedAt }) =>
-        buildMatchCardHTML(idx, tA, tB, odds, startedAt)
-    ).join('');
-    container.innerHTML = html;
-    // Trigger staggered entrance by removing card-entering class per card
-    requestAnimationFrame(() => {
-        container.querySelectorAll('.card-entering').forEach((el, i) => {
-            setTimeout(() => el.classList.remove('card-entering'), i * 80);
-        });
-    });
-}
-
-function renderMatchCard(idx, tA, tB, odds) {
-    const container = document.getElementById('matchContainer');
-    container.insertAdjacentHTML('beforeend', buildMatchCardHTML(idx, tA, tB, odds));
-}
-
-function buildMatchCardHTML(idx, tA, tB, odds, startedAt = Date.now()) {
-    const hA = odds[0] > odds[1] ? 'highlight' : '';
-    const hB = odds[1] > odds[0] ? 'highlight' : '';
-
-    return `
-        <div class="match-card card-entering" id="match-${idx}" data-started="${startedAt}">
-            <div class="match-header">
-                <span class="match-label">Court ${idx + 1}</span>
-                <div class="prob-container">
-                    <div class="prob-pill ${hA}">${odds[0]}%</div>
-                    <div class="prob-pill ${hB}">${odds[1]}%</div>
+                <button class="sl-queued-resend" id="slResendBtn">Resend Request</button>
+                <div class="sl-queued-note">
+                    Already approved?
+                    <span class="sl-queued-check" id="slCheckBtn">Check now →</span>
                 </div>
-                <button class="aura-share-btn" onclick="shareAuraPoster(${idx})" title="Share Aura Poster">✦ Share</button>
-                <button class="edit-teams-btn" onclick="openTeamBuilder(${idx})">✎ Edit</button>
-            </div>
-            <div class="team-box" onclick="setWinner(${idx}, 0)">
-                <b>${escapeHTML(tA[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tA[1].name)}</b>
-            </div>
-            <div class="vs-badge">VS</div>
-            <div class="team-box" onclick="setWinner(${idx}, 1)">
-                <b>${escapeHTML(tB[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tB[1].name)}</b>
-            </div>
-            <div class="court-next-row" id="court-next-${idx}">
-                <span class="court-timer" id="timer-${idx}">0:00</span>
-                <button class="court-next-btn" onclick="processCourtResult(${idx})" disabled>
-                    Next Game →
+            </div>`;
+
+        document.getElementById('slResendBtn')?.addEventListener('click', () => PlayerMode._resendRequest());
+        document.getElementById('slCheckBtn')?.addEventListener('click',  () => PlayerMode._checkApprovalNow());
+    },
+
+    _clearQueuedState() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        if (container.querySelector('.sl-queued-state')) {
+            container.innerHTML = '<div class="sl-empty">No active round yet</div>';
+        }
+    },
+
+    async _resendRequest() {
+        const passport = Passport.get();
+        if (!passport || !this._joinCode) return;
+        const btn = document.getElementById('slResendBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+        try {
+            const res = await fetch('/api/play-request', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    room_code:   this._joinCode,
+                    name:        passport.playerName,
+                    player_uuid: passport.playerUUID,
+                }),
+            });
+            if (res.ok) {
+                if (btn) {
+                    btn.textContent = '✓ Sent!';
+                    setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = 'Resend Request'; } }, 5000);
+                }
+            } else { throw new Error('non-ok'); }
+        } catch {
+            if (btn) { btn.disabled = false; btn.textContent = 'Resend Request'; }
+        }
+    },
+
+    async _checkApprovalNow() {
+        const passport = Passport.get();
+        if (!passport || !this._joinCode) return;
+        const checkEl = document.getElementById('slCheckBtn');
+        if (checkEl) { checkEl.textContent = 'Checking…'; checkEl.style.pointerEvents = 'none'; }
+        try {
+            const result = await this._memberUpsert(passport, this._joinCode);
+            if (result && result.status === 'active') {
+                this._markApprovedInSession(this._joinCode);
+                this._hydrateFromUpsert(result);
+                const p = Passport.get();
+                this.setStatus('approved', `You're in, ${p.playerName}!`, "You've been approved ✅");
+                this._clearQueuedState();
+                SidelineView.show();
+                if (window.Haptic) Haptic.success();
+                setTimeout(() => this._updateStatus(p), 800);
+            } else {
+                if (checkEl) {
+                    checkEl.textContent = 'Still pending…';
+                    setTimeout(() => {
+                        if (checkEl) { checkEl.textContent = 'Check now →'; checkEl.style.pointerEvents = 'auto'; }
+                    }, 3000);
+                }
+            }
+        } catch {
+            if (checkEl) { checkEl.textContent = 'Check now →'; checkEl.style.pointerEvents = 'auto'; }
+        }
+    },
+
+    _showWelcomeBack(playerName, roomCode) {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="sl-welcome-back">
+                <div class="sl-welcome-back-icon">🏀</div>
+                <div class="sl-welcome-back-text">
+                    <div class="sl-welcome-back-name">Welcome back, ${playerName.toUpperCase()}</div>
+                    <div class="sl-welcome-back-sub">Joining court ${roomCode}…</div>
+                </div>
+            </div>`;
+    },
+
+    _showNameEntry() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="sl-name-entry" id="slNameEntryForm">
+                <div class="sl-name-entry-title">ENTER YOUR NAME</div>
+                <div class="sl-name-entry-sub">
+                    The host will approve your request to join the court.
+                </div>
+                <input
+                    type="text"
+                    id="slNameEntryInput"
+                    class="sl-name-input"
+                    placeholder="Your name..."
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="words"
+                    maxlength="30"
+                    inputmode="text"
+                >
+                <button class="sl-name-submit" id="slNameEntrySubmit">
+                    JOIN COURT →
                 </button>
-            </div>
-        </div>
+            </div>`;
+        setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 120);
+    },
+
+    _showSearchingSpinner() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        if (container.querySelector('.sl-name-entry')) return;
+        container.innerHTML = `
+            <div class="sl-searching">
+                <div class="sl-searching-spinner"></div>
+                <div class="sl-searching-text">SEARCHING FOR COURT…</div>
+            </div>`;
+    },
+
+    _clearSearchingSpinner() {
+        const container = document.getElementById('slCurrentMatches');
+        if (!container) return;
+        if (container.querySelector('.sl-searching')) {
+            container.innerHTML = '<div class="sl-empty">No active round yet</div>';
+        }
+    },
+
+    async _memberUpsert(passport, joinCode) {
+        if (typeof memberUpsert !== 'function') return null;
+        return await memberUpsert(passport.playerUUID, passport.playerName, joinCode);
+    },
+
+    _hydrateFromUpsert(upsertResult) {
+        if (upsertResult?.member?.player_name) {
+            const serverName = upsertResult.member.player_name;
+            const passport   = Passport.get();
+            if (passport && passport.playerName !== serverName) {
+                Passport.rename(serverName);
+                this._renderIdentity(Passport.get());
+            }
+        }
+    },
+
+    _onApprovalReceived(payload) {
+        const passport = Passport.get();
+        if (!passport) return;
+        if (payload.playerUUID !== passport.playerUUID) return;
+
+        this._markApprovedInSession(this._joinCode);
+        if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
+
+        if (payload.squad)           window.squad          = payload.squad;
+        if (payload.current_matches) window.currentMatches = payload.current_matches;
+
+        this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
+        this._subscribeAndPoll(this._joinCode, passport);
+        setTimeout(() => this._updateStatus(passport), 1500);
+    },
+
+    _onGameStateUpdate(payload) {
+        const passport = Passport.get();
+        if (!passport) return;
+        if (payload.next_up) window._lastNextUp = payload.next_up;
+        SidelineView.refresh();
+        this._updateStatus(passport);
+    },
+
+    _onSessionUpdate(session) {
+        const passport = Passport.get();
+        if (!passport) return;
+        const approved = session.approved_players || {};
+        const myEntry  = approved[passport.playerUUID] || approved[passport.playerName];
+        if (myEntry && !this._isApprovedInSession(this._joinCode)) {
+            this._markApprovedInSession(this._joinCode);
+            if (myEntry.token) this._saveToken(this._joinCode, myEntry.token, passport.playerName, passport.playerUUID);
+            this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
+            setTimeout(() => this._updateLiveFeed(session, passport), 1500);
+            return;
+        }
+        this._updateLiveFeed(session, passport);
+    },
+
+    _updateLiveFeed(session, passport) {
+        SidelineView.refresh();
+        this._updateStatus(passport);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MATCH RESOLVED — shows winner banner + haptic only. No stat recording.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _onMatchResolved(payload) {
+        const { winnerNames, winnerUUIDs = [], loserUUIDs = [] } = payload;
+        const myUUID     = Passport.get()?.playerUUID;
+        const isWinner   = myUUID && winnerUUIDs.includes(myUUID);
+        const wasInMatch = myUUID && (winnerUUIDs.includes(myUUID) || loserUUIDs.includes(myUUID));
+
+        window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
+
+        SidelineView.show();
+        SidelineView.refresh();
+
+        if (wasInMatch && window.Haptic) {
+            isWinner ? Haptic.success() : Haptic.bump();
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MATCH RESULT — DB poll fallback. Refreshes live feed only.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _onMatchResult(payload) {
+        SidelineView.show();
+        SidelineView.refresh();
+    },
+
+    _prevStatus: null,
+
+    _updateStatus(passport) {
+        const name    = passport.playerName?.toLowerCase();
+        const squad   = window.squad          || [];
+        const matches = window.currentMatches || [];
+
+        const playing = matches.some(m =>
+            [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n => n.toLowerCase()).includes(name)
+        );
+        const inSquad = squad.some(p => p.name?.toLowerCase() === name);
+
+        const playingNames = new Set(
+            matches.flatMap(m => [...(m.teams[0]||[]), ...(m.teams[1]||[])])
+                   .map(n => n.toLowerCase())
+        );
+        const bench = squad.filter(p => p.active && !playingNames.has(p.name?.toLowerCase()));
+        const qPos  = bench.findIndex(p => p.name?.toLowerCase() === name);
+
+        const nextUpRaw = window._lastNextUp || '';
+        const isNextUp  = name && nextUpRaw.toLowerCase().includes(name);
+
+        // Determine new status key before setting UI
+        let newStatus = null;
+        if (playing)                   newStatus = 'playing';
+        else if (isNextUp)             newStatus = 'on-deck';
+        else if (inSquad && qPos >= 0) newStatus = 'resting';
+        else if (inSquad)              newStatus = 'squad';
+
+        // Fire haptic + banner ONLY on transition INTO 'playing'
+        if (newStatus === 'playing' && this._prevStatus !== 'playing') {
+            if (window.Haptic) Haptic.success();
+            _showYoureUpBanner();
+        }
+
+        // Fire haptic ONLY on transition INTO 'on-deck'
+        if (newStatus === 'on-deck' && this._prevStatus !== 'on-deck') {
+            if (window.Haptic) Haptic.bump();
+        }
+
+        this._prevStatus = newStatus;
+
+        // Update the profile play count badge whenever status refreshes
+        _renderPlayCount(passport.playerName);
+
+        if (playing) {
+            this.setStatus('playing', "You're on court!", 'Give it everything 🏀');
+        } else if (isNextUp) {
+            this.setStatus('on-deck', "You're on deck!", "Get ready — you're up next 🟡");
+        } else if (inSquad && qPos >= 0) {
+            const pos = qPos + 1;
+            const sfx = pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th';
+            this.setStatus('resting', `#${pos}${sfx} in line`, `${bench.length} player${bench.length !== 1 ? 's' : ''} on bench`);
+        } else if (inSquad) {
+            this.setStatus('resting', 'In the squad', 'Waiting for next rotation');
+        }
+    },
+
+    _onMemberActivated(memberRecord) {
+        const passport = Passport.get();
+        if (!passport) return;
+        if (memberRecord.player_uuid !== passport.playerUUID) return;
+
+        this._markApprovedInSession(this._joinCode);
+
+        if (memberRecord.player_name && memberRecord.player_name !== passport.playerName) {
+            Passport.rename(memberRecord.player_name);
+            this._renderIdentity(Passport.get());
+        }
+
+        this._clearQueuedState();
+
+        const p = Passport.get();
+        this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
+
+        // Haptic feedback on host approval
+        if (window.Haptic) Haptic.success();
+
+        SidelineView.show();
+        setTimeout(() => this._updateStatus(p), 1200);
+
+        if (window.Haptic) Haptic.success();
+        if (typeof showSessionToast === 'function') {
+            showSessionToast("🏀 You're approved! Welcome to the court.");
+        }
+    },
+
+    async _submitJoinRequest(passport, joinCode) {
+        this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
+        try {
+            const res = await fetch('/api/play-request', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    room_code:   joinCode,
+                    name:        passport.playerName,
+                    player_uuid: passport.playerUUID,
+                }),
+            });
+
+            if (!res.ok) {
+                this.setStatus('pending', 'Could not join', 'Check the room code and try again');
+                return;
+            }
+
+            const data = await res.json();
+
+            if (data.alreadyActive) {
+                this._markApprovedInSession(joinCode);
+                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "You're in the squad ✅");
+                SidelineView.refresh();
+                setTimeout(() => this._updateStatus(passport), 800);
+                return;
+            }
+
+            this._showQueuedState(passport.playerName);
+
+        } catch(e) {
+            this.setStatus('pending', 'Connection failed', 'Check your internet');
+            console.error('[PlayerMode] join request failed:', e);
+        }
+    },
+
+    async _joinSession(passport, joinCode) {
+        return this._submitJoinRequest(passport, joinCode);
+    },
+
+    _subscribeAndPoll(joinCode, passport) {
+        if (joinCode) window.currentRoomCode = joinCode;
+        if (typeof joinOnlineSession === 'function') {
+            joinOnlineSession(joinCode).catch(() => {});
+        }
+        this._startSignalPoll(joinCode, passport);
+    },
+
+    _startSignalPoll(joinCode, passport) {
+        clearInterval(this._pollTimer);
+        this._pollTimer = setInterval(() => this._pollSignal(joinCode, passport), 3000);
+    },
+
+    async _pollSignal(joinCode, passport) {
+        try {
+            const r = await fetch(
+                `/api/passport-signal?player_uuid=${encodeURIComponent(passport.playerUUID)}&room_code=${encodeURIComponent(joinCode)}`
+            );
+            const d = await r.json();
+            if (d.signal) {
+                SidelineView.show();
+                SidelineView.refresh();
+                await fetch('/api/passport-signal', {
+                    method:  'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ player_uuid: passport.playerUUID, room_code: joinCode }),
+                }).catch(() => {});
+            }
+        } catch { /* silent */ }
+    },
+
+    _isApprovedInSession(roomCode) {
+        try { return !!JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}')[roomCode]; }
+        catch { return false; }
+    },
+
+    _markApprovedInSession(roomCode) {
+        try {
+            const m = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
+            m[roomCode] = true;
+            sessionStorage.setItem(SS_APPROVED, JSON.stringify(m));
+        } catch { }
+    },
+
+    _loadToken(roomCode) {
+        try { return JSON.parse(localStorage.getItem(LS_TOKENS) || '{}')[roomCode] || null; }
+        catch { return null; }
+    },
+
+    _saveToken(roomCode, token, name, uuid) {
+        try {
+            const m = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
+            m[roomCode] = { token, name, uuid, savedAt: Date.now() };
+            localStorage.setItem(LS_TOKENS, JSON.stringify(m));
+        } catch { }
+    },
+
+    _clearToken(roomCode) {
+        try {
+            const m = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
+            delete m[roomCode];
+            localStorage.setItem(LS_TOKENS, JSON.stringify(m));
+        } catch { }
+    },
+
+    async _verifyToken(roomCode, savedToken, passport) {
+        try {
+            const res  = await fetch(`/api/session-get?code=${encodeURIComponent(roomCode)}`);
+            if (!res.ok) return false;
+            const data = await res.json();
+            const approved = data?.session?.approved_players || {};
+            const entry    = approved[passport.playerUUID] || approved[passport.playerName];
+            if (!entry || entry.token !== savedToken.token) return false;
+            if (data.session) {
+                window.squad            = data.session.squad            || [];
+                window.currentMatches   = data.session.current_matches  || [];
+                window._sessionUUIDMap  = data.session.uuid_map         || {};
+                window._approvedPlayers = data.session.approved_players || {};
+            }
+            return true;
+        } catch { return false; }
+    },
+
+    setStatus(state, text, sub) {
+        const card   = document.getElementById('slStatusCard');
+        const icon   = document.getElementById('slStatusIcon');
+        const textEl = document.getElementById('slStatusText');
+        const subEl  = document.getElementById('slStatusSub');
+        const icons  = { pending:'⏳', 'on-deck':'🟡', playing:'🟢', resting:'🔵', approved:'✅' };
+        if (card)   card.dataset.state = state;
+        if (icon)   icon.textContent   = icons[state] || '⏳';
+        if (textEl) textEl.textContent = text;
+        if (subEl)  subEl.textContent  = sub || '';
+    },
+
+    _renderIdentity(passport) {
+        const nameEl   = document.getElementById('slPassportName');
+        const avatarEl = document.getElementById('slPassportAvatar');
+        if (nameEl)   nameEl.textContent   = passport.playerName || 'Tap to set name';
+        if (avatarEl) {
+            avatarEl.textContent = (passport.playerName || '?').charAt(0).toUpperCase();
+            // Apply deterministic avatar color from polish.js if available
+            if (passport.playerName && window.Avatar) {
+                avatarEl.style.background = Avatar.color(passport.playerName);
+            }
+        }
+        // Render play count badge (will be 0 until squad data arrives)
+        _renderPlayCount(passport.playerName);
+    },
+
+    _promptForCode() {
+        this.setStatus('pending', 'No room code', 'Ask the host for the QR code');
+        const el = document.getElementById('slCurrentMatches');
+        if (el) el.innerHTML = `
+            <div class="sl-code-entry">
+                <div class="sl-code-label">Enter Room Code</div>
+                <input id="slCodeInput" class="sl-code-input" placeholder="XXXX-XXXX"
+                    autocomplete="off" autocapitalize="characters" maxlength="9"
+                    onkeydown="if(event.key==='Enter') PlayerMode._manualJoin()">
+                <button class="sl-code-btn" onclick="PlayerMode._manualJoin()">Join →</button>
+            </div>`;
+    },
+
+    async _manualJoin() {
+        const input = document.getElementById('slCodeInput');
+        const code  = (input?.value || '').trim().toUpperCase();
+        if (!code) return;
+        this._joinCode = code;
+        const codeEl = document.getElementById('slSessionCode');
+        if (codeEl) codeEl.textContent = code;
+        const el = document.getElementById('slCurrentMatches');
+        if (el) el.innerHTML = '<div class="sl-empty">Connecting…</div>';
+        await this._joinSession(Passport.get(), code);
+    },
+
+    _promptName() {
+        return new Promise(resolve => {
+            let input = document.getElementById('slNameEntryInput');
+            let btn   = document.getElementById('slNameEntrySubmit');
+
+            if (!input || !btn) {
+                const container = document.getElementById('slCurrentMatches');
+                if (!container) {
+                    const n = window.prompt('Enter your name to join:');
+                    return resolve(n ? n.trim() : null);
+                }
+                this._showNameEntry();
+                input = document.getElementById('slNameEntryInput');
+                btn   = document.getElementById('slNameEntrySubmit');
+            }
+
+            const submit = () => {
+                const val = (input?.value || '').trim();
+                if (!val) { input?.focus(); return; }
+                if (btn) { btn.disabled = true; btn.textContent = 'JOINING…'; }
+                resolve(val);
+            };
+
+            btn?.addEventListener('click', submit);
+            input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+            setTimeout(() => input?.focus(), 80);
+        });
+    },
+};
+// =============================================================================
+// "YOU'RE UP!" BANNER — fires once on transition into playing state
+// =============================================================================
+
+function _showYoureUpBanner() {
+    // Remove any existing banner first
+    document.getElementById('_csYoureUpBanner')?.remove();
+
+    const banner = document.createElement('div');
+    banner.id = '_csYoureUpBanner';
+    Object.assign(banner.style, {
+        position:        'fixed',
+        top:             '0',
+        left:            '0',
+        right:           '0',
+        zIndex:          '10000',
+        background:      'linear-gradient(135deg, #00ffa3, #00cc80)',
+        color:           '#0a0a0f',
+        fontFamily:      '"Inter", sans-serif',
+        fontWeight:      '800',
+        fontSize:        '1.1rem',
+        letterSpacing:   '0.08em',
+        textAlign:       'center',
+        padding:         '18px 24px 16px',
+        boxShadow:       '0 4px 24px rgba(0,255,163,0.5)',
+        transform:       'translateY(-100%)',
+        transition:      'transform 0.35s cubic-bezier(0.22,1,0.36,1)',
+        borderRadius:    '0 0 16px 16px',
+    });
+    banner.innerHTML = `
+        <div style="font-size:1.5rem;margin-bottom:4px;">🏀</div>
+        <div>YOU'RE UP — GET ON COURT!</div>
     `;
+    document.body.appendChild(banner);
+
+    // Slide in
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => { banner.style.transform = 'translateY(0)'; });
+    });
+
+    // Slide out after 4s
+    setTimeout(() => {
+        banner.style.transform = 'translateY(-100%)';
+        setTimeout(() => banner.remove(), 400);
+    }, 4000);
+
+    // Tap to dismiss
+    banner.addEventListener('click', () => {
+        banner.style.transform = 'translateY(-100%)';
+        setTimeout(() => banner.remove(), 400);
+    });
 }
 
-// ---------------------------------------------------------------------------
-// WINNER SELECTION
-// ---------------------------------------------------------------------------
-
-function setWinner(mIdx, tIdx) {
-    const boxes = document.querySelectorAll(`#match-${mIdx} .team-box`);
-    boxes.forEach((box, i) => box.classList.toggle('selected', i === tIdx));
-    currentMatches[mIdx].winnerTeamIndex = tIdx;
-
-    Haptic.tap();
-
-    // Confetti burst from the winning team-box
-    const winBox = boxes[tIdx];
-    if (winBox) {
-        const rect = winBox.getBoundingClientRect();
-        Confetti.burst(rect.left + rect.width / 2, rect.top + rect.height / 2, 55);
-    }
-
-    // Enable this court's Next Game button now that a winner is selected
-    const nextBtn = document.querySelector(`#court-next-${mIdx} .court-next-btn`);
-    if (nextBtn) nextBtn.disabled = false;
-
-    checkNextButtonState();
-    saveToDisk();
-}
-
-// ---------------------------------------------------------------------------
-// TEAM BUILDER
-// ---------------------------------------------------------------------------
-
-// Working state for the builder — separate from currentMatches until confirmed
-let builderMatchIdx  = null;  // which game we're editing
-let builderTeams     = null;  // [teamA_names[], teamB_names[]]
-let builderSelected  = null;  // { team: 0|1, name: string } — player being swapped
-
-/**
- * Opens the team builder modal for a given match.
- * Deep-copies team names so edits don't touch currentMatches until confirmed.
- */
-function openTeamBuilder(mIdx) {
-    builderMatchIdx = mIdx;
-    builderTeams    = currentMatches[mIdx].teams.map(t => [...t]); // deep copy
-    builderSelected = null;
-    renderTeamBuilder();
-    document.getElementById('teamBuilderModal').style.display = 'flex';
-}
-
-function closeTeamBuilder() {
-    document.getElementById('teamBuilderModal').style.display = 'none';
-    builderMatchIdx  = null;
-    builderTeams     = null;
-    builderSelected  = null;
-}
-
-/**
- * Re-renders the team builder UI based on current builderTeams state.
- * Called after every swap or shuffle.
- */
-function renderTeamBuilder() {
-    const m = currentMatches[builderMatchIdx];
-
-    // All names currently in this game
-    const inGame = new Set([...builderTeams[0], ...builderTeams[1]]);
-
-    // Sideline = active players NOT in any game at all
-    const allInGames = new Set(currentMatches.flatMap(match => match.teams.flat()));
-    const sideline = squad.filter(p =>
-        (p.active && !allInGames.has(p.name)) ||
-        // also allow swapping players already in THIS game (they're shown in teams, not sideline)
-        (p.active && inGame.has(p.name) && !builderTeams[0].includes(p.name) && !builderTeams[1].includes(p.name))
-    ).filter(p => !inGame.has(p.name)); // sideline = truly not in this game
-
-    document.getElementById('builderGameLabel').innerText = `Game ${builderMatchIdx + 1}`;
-
-    // Render Team A
-    document.getElementById('builderTeamA').innerHTML = builderTeams[0].map(name => {
-        const isSelected = builderSelected && builderSelected.name === name;
-        return `<div class="builder-chip ${isSelected ? 'builder-selected' : ''}"
-                     onclick="builderSelectPlayer(0, '${escapeHTML(name)}')">
-                    ${escapeHTML(name)}
-                </div>`;
-    }).join('');
-
-    // Render Team B
-    document.getElementById('builderTeamB').innerHTML = builderTeams[1].map(name => {
-        const isSelected = builderSelected && builderSelected.name === name;
-        return `<div class="builder-chip ${isSelected ? 'builder-selected' : ''}"
-                     onclick="builderSelectPlayer(1, '${escapeHTML(name)}')">
-                    ${escapeHTML(name)}
-                </div>`;
-    }).join('');
-
-    // Render sideline bench
-    const sidelineEl = document.getElementById('builderSideline');
-    if (sideline.length > 0) {
-        sidelineEl.innerHTML = `
-            <div class="builder-section-label">Sideline — tap to swap in</div>
-            <div class="builder-bench">
-                ${sideline.map(p => `
-                    <div class="builder-chip bench ${builderSelected ? 'bench-ready' : ''}"
-                         onclick="builderSwapFromSideline('${escapeHTML(p.name)}')">
-                        ${escapeHTML(p.name)}
-                    </div>
-                `).join('')}
-            </div>
-        `;
-    } else {
-        sidelineEl.innerHTML = '<div class="builder-section-label" style="opacity:0.4;">No players on sideline</div>';
-    }
-
-    // Update odds preview
-    const tAObjs = builderTeams[0].map(n => findP(n)).filter(Boolean);
-    const tBObjs = builderTeams[1].map(n => findP(n)).filter(Boolean);
-    if (tAObjs.length === 2 && tBObjs.length === 2) {
-        const odds = calculateOdds(tAObjs, tBObjs);
-        const hA = odds[0] > odds[1] ? 'highlight' : '';
-        const hB = odds[1] > odds[0] ? 'highlight' : '';
-        document.getElementById('builderOdds').innerHTML = `
-            <div class="prob-container">
-                <div class="prob-pill ${hA}">${odds[0]}%</div>
-                <div class="prob-pill ${hB}">${odds[1]}%</div>
-            </div>
-        `;
-    }
-}
-
-/**
- * Selects a player from a team for swapping.
- * If a player from the OTHER team is already selected → swap them.
- * If same team → deselect (toggle).
- * If sideline player was selected first, this clears that and selects in-game player.
- */
-function builderSelectPlayer(teamIdx, name) {
-    if (builderSelected && builderSelected.name === name) {
-        // Toggle off — deselect
-        builderSelected = null;
-    } else if (builderSelected && builderSelected.team !== teamIdx) {
-        // Selected player from opposite team → swap positions
-        const otherName = builderSelected.name;
-        const otherTeam = builderSelected.team;
-
-        // Swap: remove name from teamIdx, add otherName. Remove otherName from otherTeam, add name.
-        builderTeams[teamIdx]  = builderTeams[teamIdx].map(n => n === name ? otherName : n);
-        builderTeams[otherTeam] = builderTeams[otherTeam].map(n => n === otherName ? name : n);
-        builderSelected = null;
-    } else {
-        // Select this player
-        builderSelected = { team: teamIdx, name };
-    }
-    renderTeamBuilder();
-}
-
-/**
- * Swaps a sideline player into the game, replacing the currently selected in-game player.
- * If no in-game player is selected yet, shows a subtle prompt.
- */
-function builderSwapFromSideline(sidelineName) {
-    if (!builderSelected) {
-        // No in-game player chosen yet — flash all in-game chips to signal "pick one first"
-        document.querySelectorAll('.builder-chip:not(.bench)').forEach(el => {
-            el.classList.add('builder-pulse');
-            setTimeout(() => el.classList.remove('builder-pulse'), 600);
-        });
-        return;
-    }
-
-    const { team, name: outName } = builderSelected;
-
-    // The outgoing player goes to sideline — they need their sessionPlayCount decremented
-    // since they won't actually be playing this game
-    const outPlayer = findP(outName);
-    if (outPlayer) outPlayer.sessionPlayCount = Math.max(0, outPlayer.sessionPlayCount - 1);
-
-    // The incoming player gets a sessionPlayCount increment
-    const inPlayer = findP(sidelineName);
-    if (inPlayer) inPlayer.sessionPlayCount++;
-
-    // Swap in the team array
-    builderTeams[team] = builderTeams[team].map(n => n === outName ? sidelineName : n);
-    builderSelected = null;
-    renderTeamBuilder();
-}
-
-/**
- * Shuffles only this game's 4 players into new balanced teams.
- * Keeps the same 4 players, re-runs the snake-draft logic.
- */
-function builderShuffle() {
-    const allFour = [...builderTeams[0], ...builderTeams[1]]
-        .map(n => findP(n))
-        .filter(Boolean);
-
-    // Shuffle randomly first, then sort by rating for snake draft
-    allFour.sort(() => Math.random() - 0.5);
-    allFour.sort((a, b) => b.rating - a.rating);
-
-    builderTeams = [
-        [allFour[0].name, allFour[3].name],
-        [allFour[1].name, allFour[2].name]
-    ];
-    builderSelected = null;
-    renderTeamBuilder();
-}
-
-/**
- * Confirms the team builder changes, updates currentMatches,
- * recalculates odds, and re-renders the affected match card.
- */
-function confirmTeamBuilder() {
-    const mIdx = builderMatchIdx;
-    const tAObjs = builderTeams[0].map(n => findP(n)).filter(Boolean);
-    const tBObjs = builderTeams[1].map(n => findP(n)).filter(Boolean);
-
-    if (tAObjs.length !== 2 || tBObjs.length !== 2) {
-        alert('Each team needs exactly 2 players.');
-        return;
-    }
-
-    // Update the match in state
-    const newOdds = calculateOdds(tAObjs, tBObjs);
-    currentMatches[mIdx].teams = [
-        builderTeams[0],
-        builderTeams[1]
-    ];
-    currentMatches[mIdx].odds = newOdds;
-    currentMatches[mIdx].winnerTeamIndex = null; // Reset winner since teams changed
-
-    // Re-render just this card by replacing it in the DOM
-    const cardEl = document.getElementById(`match-${mIdx}`);
-    if (cardEl) {
-        cardEl.outerHTML = buildMatchCardHTML(mIdx, tAObjs, tBObjs, newOdds);
-    }
-
-    closeTeamBuilder();
-    updateSideline();
-    checkNextButtonState();
-    saveToDisk();
-    // Broadcast the updated lineup immediately so players see the correct
-    // team assignment without waiting for the DB postgres_changes round-trip.
-    if (typeof broadcastGameState === 'function') broadcastGameState();
-    Haptic.success();
-}
 // =============================================================================
-// COURT TIMER ENGINE
-// Updates all visible court timers every second.
-// Reads data-started attribute set on each .match-card at render time.
+// PLAY COUNT BADGE — renders session play count on player profile
 // =============================================================================
 
-(function initCourtTimers() {
-    function formatTime(ms) {
-        const totalSecs = Math.floor(ms / 1000);
-        const mins = Math.floor(totalSecs / 60);
-        const secs = totalSecs % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
+function _renderPlayCount(playerName) {
+    const el = document.getElementById('slPlayCount');
+    if (!el) return;
+
+    const squad = window.squad || [];
+    const me    = squad.find(p => p.name?.toLowerCase() === playerName?.toLowerCase());
+    const count = me?.sessionPlayCount ?? 0;
+
+    el.textContent   = `${count} lifetime game${count !== 1 ? 's' : ''}`;
+    el.style.display = 'inline-flex';
+}
+
+// =============================================================================
+// PLAYER MATCH SHARE
+// =============================================================================
+
+// =============================================================================
+// PLAYER MATCH SHARE — Canvas Story Card
+// Generates a 9:16 Instagram-ready image using pure Canvas.
+// No html2canvas, no DOM dependencies.
+// =============================================================================
+
+async function slShareMatch(matchIdx) {
+    const m = (window.currentMatches || [])[matchIdx];
+    if (!m) return;
+
+    const tA = (m.teams[0] || []).join(' & ');
+    const tB = (m.teams[1] || []).join(' & ');
+
+    const W = 1080, H = 1920;
+    const canvas = document.createElement('canvas');
+    canvas.width  = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    // ── Background ────────────────────────────────────────────────────────────
+    // Deep dark base
+    ctx.fillStyle = '#08080e';
+    ctx.fillRect(0, 0, W, H);
+
+    // Subtle radial glow — top centre
+    const glow1 = ctx.createRadialGradient(W/2, 380, 0, W/2, 380, 680);
+    glow1.addColorStop(0,   'rgba(0,255,163,0.13)');
+    glow1.addColorStop(0.5, 'rgba(0,255,163,0.04)');
+    glow1.addColorStop(1,   'rgba(0,255,163,0)');
+    ctx.fillStyle = glow1;
+    ctx.fillRect(0, 0, W, H);
+
+    // Bottom accent glow
+    const glow2 = ctx.createRadialGradient(W/2, H-200, 0, W/2, H-200, 500);
+    glow2.addColorStop(0,   'rgba(0,200,120,0.10)');
+    glow2.addColorStop(1,   'rgba(0,200,120,0)');
+    ctx.fillStyle = glow2;
+    ctx.fillRect(0, 0, W, H);
+
+    // Noise grain overlay (procedural dots)
+    _drawGrain(ctx, W, H, 0.018);
+
+    // ── Court line art (subtle background) ───────────────────────────────────
+    _drawCourtLines(ctx, W, H);
+
+    // ── Sport silhouettes ────────────────────────────────────────────────────
+    _drawSilhouettes(ctx, W, H);
+
+    // ── Top branding ─────────────────────────────────────────────────────────
+    // Logo — no box, just text with a glow
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,255,163,0.6)';
+    ctx.shadowBlur  = 28;
+    ctx.fillStyle   = '#00ffa3';
+    ctx.font        = 'bold 52px "Arial Narrow", Arial, sans-serif';
+    ctx.letterSpacing = '10px';
+    ctx.textAlign   = 'center';
+    ctx.fillText('THE COURTSIDE', W/2, 168);
+    ctx.restore();
+
+    // Thin accent line under logo
+    const lineGrad = ctx.createLinearGradient(W/2 - 220, 0, W/2 + 220, 0);
+    lineGrad.addColorStop(0,   'rgba(0,255,163,0)');
+    lineGrad.addColorStop(0.5, 'rgba(0,255,163,0.5)');
+    lineGrad.addColorStop(1,   'rgba(0,255,163,0)');
+    ctx.strokeStyle = lineGrad;
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(W/2 - 220, 188); ctx.lineTo(W/2 + 220, 188);
+    ctx.stroke();
+
+    // Live dot + label — centred together
+    const liveDotX = W/2 - 52;
+    const liveTextX = W/2 + 14;
+    const liveY = 232;
+    ctx.beginPath();
+    ctx.arc(liveDotX, liveY - 7, 8, 0, Math.PI*2);
+    ctx.fillStyle = '#00ffa3';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(liveDotX, liveY - 7, 15, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(0,255,163,0.25)';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+    ctx.fillStyle   = 'rgba(255,255,255,0.45)';
+    ctx.font        = '500 26px Arial, sans-serif';
+    ctx.letterSpacing = '4px';
+    ctx.textAlign   = 'left';
+    ctx.fillText('LIVE NOW', liveTextX, liveY);
+    ctx.textAlign   = 'center';
+
+    // ── Divider ───────────────────────────────────────────────────────────────
+    const divY = 310;
+    const divGrad = ctx.createLinearGradient(80, divY, W-80, divY);
+    divGrad.addColorStop(0,   'rgba(0,255,163,0)');
+    divGrad.addColorStop(0.3, 'rgba(0,255,163,0.4)');
+    divGrad.addColorStop(0.7, 'rgba(0,255,163,0.4)');
+    divGrad.addColorStop(1,   'rgba(0,255,163,0)');
+    ctx.strokeStyle = divGrad;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(80, divY); ctx.lineTo(W-80, divY);
+    ctx.stroke();
+
+    // ── VERSUS layout ────────────────────────────────────────────────────────
+    const midY = H * 0.46;
+
+    // Team A
+    ctx.save();
+    ctx.textAlign = 'center';
+    _drawTeamBlock(ctx, W/2, midY - 260, tA, '#ffffff', W);
+    ctx.restore();
+
+    // VS badge
+    const vsCX = W/2, vsCY = midY;
+    // outer ring
+    ctx.beginPath();
+    ctx.arc(vsCX, vsCY, 88, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(0,255,163,0.15)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // inner fill
+    ctx.beginPath();
+    ctx.arc(vsCX, vsCY, 72, 0, Math.PI*2);
+    const vsGrad = ctx.createRadialGradient(vsCX, vsCY, 0, vsCX, vsCY, 72);
+    vsGrad.addColorStop(0, 'rgba(0,255,163,0.18)');
+    vsGrad.addColorStop(1, 'rgba(0,255,163,0.04)');
+    ctx.fillStyle = vsGrad;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,255,163,0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // VS text
+    ctx.fillStyle = '#00ffa3';
+    ctx.font = 'bold 56px "Arial Narrow", Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.letterSpacing = '4px';
+    ctx.fillText('VS', vsCX, vsCY + 20);
+
+    // horizontal lines through VS
+    ctx.strokeStyle = 'rgba(0,255,163,0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(80, vsCY); ctx.lineTo(vsCX-95, vsCY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(vsCX+95, vsCY); ctx.lineTo(W-80, vsCY); ctx.stroke();
+
+    // Team B
+    ctx.save();
+    ctx.textAlign = 'center';
+    _drawTeamBlock(ctx, W/2, midY + 170, tB, '#ffffff', W);
+    ctx.restore();
+
+    // ── "Who you got?" CTA ───────────────────────────────────────────────────
+    const ctaY = H * 0.76;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    _roundRect(ctx, 120, ctaY - 52, W - 240, 80, 16);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.font = '500 32px Arial, sans-serif';
+    ctx.letterSpacing = '3px';
+    ctx.textAlign = 'center';
+    ctx.fillText('WHO YOU GOT? 🏸', W/2, ctaY + 8);
+
+    // ── Bottom branding strip ─────────────────────────────────────────────────
+    const botY = H - 180;
+    const stripGrad = ctx.createLinearGradient(0, botY, 0, H);
+    stripGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    stripGrad.addColorStop(1, 'rgba(0,255,163,0.07)');
+    ctx.fillStyle = stripGrad;
+    ctx.fillRect(0, botY, W, H - botY);
+
+    ctx.fillStyle = 'rgba(0,255,163,0.7)';
+    ctx.font = 'bold 30px "Arial Narrow", Arial, sans-serif';
+    ctx.letterSpacing = '6px';
+    ctx.textAlign = 'center';
+    ctx.fillText('THECOURTSIDEPRO.VERCEL.APP', W/2, H - 100);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '22px Arial, sans-serif';
+    ctx.letterSpacing = '2px';
+    ctx.fillText('thecourtsidepro.vercel.app', W/2, H - 58);
+
+    // ── Share ────────────────────────────────────────────────────────────────
+    canvas.toBlob(async (blob) => {
+        const file = new File([blob], 'courtside-matchup.png', { type: 'image/png' });
+        const shareText = `🏸 ${tA} vs ${tB} — who you got? #CourtSide`;
+
+        if (navigator.share && navigator.canShare({ files: [file] })) {
+            await navigator.share({ title: 'CourtSide Live', text: shareText, files: [file] })
+                .catch(() => _downloadShareImage(blob));
+        } else {
+            _downloadShareImage(blob);
+        }
+    }, 'image/png');
+}
+
+function _downloadShareImage(blob) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'courtside-matchup.png';
+    a.click();
+    if (typeof showSessionToast === 'function') showSessionToast('📥 Image saved!');
+}
+
+// ── Canvas helpers ────────────────────────────────────────────────────────────
+
+function _roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+function _drawTeamBlock(ctx, cx, y, names, color, W) {
+    // Split "Player A & Player B" into two lines
+    const parts = names.split(/\s*&\s*/);
+    if (parts.length >= 2) {
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.font = 'bold 72px "Arial Narrow", Arial, sans-serif';
+        ctx.letterSpacing = '2px';
+        ctx.textAlign = 'center';
+        ctx.fillText(parts[0].toUpperCase(), cx, y);
+        ctx.fillStyle = 'rgba(0,255,163,0.6)';
+        ctx.font = '500 34px Arial, sans-serif';
+        ctx.letterSpacing = '4px';
+        ctx.fillText('&', cx, y + 54);
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.font = 'bold 72px "Arial Narrow", Arial, sans-serif';
+        ctx.letterSpacing = '2px';
+        ctx.fillText(parts[1].toUpperCase(), cx, y + 108);
+    } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.font = 'bold 72px "Arial Narrow", Arial, sans-serif';
+        ctx.letterSpacing = '2px';
+        ctx.textAlign = 'center';
+        ctx.fillText(names.toUpperCase(), cx, y + 54);
+    }
+}
+
+function _drawGrain(ctx, W, H, density) {
+    // Lightweight procedural grain — sparse random dots
+    const count = Math.floor(W * H * density);
+    ctx.save();
+    for (let i = 0; i < count; i++) {
+        const x = Math.random() * W;
+        const y = Math.random() * H;
+        const a = Math.random() * 0.06 + 0.01;
+        ctx.fillStyle = `rgba(255,255,255,${a})`;
+        ctx.fillRect(x, y, 1, 1);
+    }
+    ctx.restore();
+}
+
+function _drawCourtLines(ctx, W, H) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,255,163,0.04)';
+    ctx.lineWidth = 2;
+
+    // Outer court boundary
+    const m = 80;
+    ctx.strokeRect(m, H*0.22, W - m*2, H*0.56);
+
+    // Centre line
+    ctx.beginPath();
+    ctx.moveTo(m, H*0.5); ctx.lineTo(W-m, H*0.5);
+    ctx.stroke();
+
+    // Service boxes
+    ctx.beginPath();
+    ctx.moveTo(W/2, H*0.22); ctx.lineTo(W/2, H*0.78);
+    ctx.stroke();
+
+    // Short service line
+    const ssl = H * 0.12;
+    ctx.beginPath();
+    ctx.moveTo(m, H*0.5 - ssl); ctx.lineTo(W-m, H*0.5 - ssl);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(m, H*0.5 + ssl); ctx.lineTo(W-m, H*0.5 + ssl);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+function _drawSilhouettes(ctx, W, H) {
+    ctx.save();
+    ctx.globalAlpha = 0.055;
+    ctx.fillStyle = '#00ffa3';
+
+    // ── Badminton racket (top-left, large, rotated) ───────────────────────────
+    _drawRacket(ctx, 130, 520, 200, -0.5);
+
+    // ── Badminton racket (bottom-right, mirrored) ─────────────────────────────
+    _drawRacket(ctx, W - 130, H - 460, 180, 2.8);
+
+    // ── Shuttlecock (top-right) ───────────────────────────────────────────────
+    _drawShuttle(ctx, W - 160, 480, 80);
+
+    // ── Shuttlecock (bottom-left, smaller) ───────────────────────────────────
+    _drawShuttle(ctx, 180, H - 420, 55);
+
+    // ── Small racket accent (centre-left) ────────────────────────────────────
+    _drawRacket(ctx, 90, H*0.5, 100, 0.3);
+
+    ctx.restore();
+}
+
+function _drawRacket(ctx, cx, cy, size, angle) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+
+    const headR = size * 0.38;
+    const handleL = size * 0.55;
+    const handleW = size * 0.06;
+    const throatH = size * 0.15;
+
+    // Head (oval)
+    ctx.beginPath();
+    ctx.ellipse(0, -size*0.18, headR * 0.72, headR, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // Knock out string area (negative space effect — slightly transparent)
+    ctx.save();
+    ctx.globalAlpha = 0.0;
+    ctx.beginPath();
+    ctx.ellipse(0, -size*0.18, headR * 0.58, headR * 0.84, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    // String lines (horizontal)
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = '#00ffa3';
+    ctx.lineWidth = size * 0.018;
+    ctx.beginPath();
+    ctx.ellipse(0, -size*0.18, headR * 0.72, headR, 0, 0, Math.PI*2);
+    ctx.clip();
+    for (let i = -5; i <= 5; i++) {
+        const yy = -size*0.18 + i * (headR * 2 / 6);
+        ctx.beginPath();
+        ctx.moveTo(-headR * 0.72, yy); ctx.lineTo(headR * 0.72, yy);
+        ctx.stroke();
+        const xx = i * (headR * 1.44 / 6);
+        ctx.beginPath();
+        ctx.moveTo(xx, -size*0.18 - headR); ctx.lineTo(xx, -size*0.18 + headR);
+        ctx.stroke();
+    }
+    ctx.restore();
+
+    // Throat (tapered triangle connecting head to handle)
+    const throatTop = -size*0.18 + headR;
+    ctx.beginPath();
+    ctx.moveTo(-handleW*1.8, throatTop);
+    ctx.lineTo( handleW*1.8, throatTop);
+    ctx.lineTo( handleW,     throatTop + throatH);
+    ctx.lineTo(-handleW,     throatTop + throatH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Handle
+    _roundRectFill(ctx, -handleW, throatTop + throatH, handleW*2, handleL, handleW);
+
+    // Grip wrap lines
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.strokeStyle = '#08080e';
+    ctx.lineWidth = size * 0.022;
+    const gripStart = throatTop + throatH + handleL * 0.35;
+    for (let i = 0; i < 5; i++) {
+        const gy = gripStart + i * (handleL * 0.12);
+        ctx.beginPath();
+        ctx.moveTo(-handleW - 2, gy); ctx.lineTo(handleW + 2, gy);
+        ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.restore();
+}
+
+function _drawShuttle(ctx, cx, cy, size) {
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // Cork base (rounded bottom)
+    ctx.beginPath();
+    ctx.ellipse(0, 0, size*0.22, size*0.18, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // Feather fan (8 feathers radiating upward)
+    const numFeathers = 8;
+    const fanSpread = 0.55; // radians total spread
+    for (let i = 0; i < numFeathers; i++) {
+        const t = i / (numFeathers - 1);
+        const angle = -Math.PI/2 + (t - 0.5) * fanSpread * 2;
+        const tipX = Math.cos(angle) * size * 0.95;
+        const tipY = Math.sin(angle) * size * 0.95 - size * 0.1;
+        const baseX = Math.cos(angle) * size * 0.22;
+        const baseY = Math.sin(angle) * size * 0.15;
+
+        ctx.beginPath();
+        ctx.moveTo(baseX, baseY);
+        ctx.quadraticCurveTo(
+            tipX * 0.5 + (i - numFeathers/2) * size * 0.04,
+            tipY * 0.6,
+            tipX, tipY
+        );
+        ctx.lineWidth = size * 0.04;
+        ctx.strokeStyle = '#00ffa3';
+        ctx.globalAlpha = 0.055;
+        ctx.stroke();
     }
 
-    function tickTimers() {
-        const now = Date.now();
-        document.querySelectorAll('.match-card[data-started]').forEach(card => {
-            const started = parseInt(card.dataset.started, 10);
-            if (!started) return;
-            const elapsed = now - started;
-            const timerEl = card.querySelector('.court-timer');
-            if (!timerEl) return;
+    // Rim circle connecting feather tips
+    ctx.beginPath();
+    ctx.ellipse(0, -size * 0.52, size * 0.48, size * 0.18, 0, 0, Math.PI*2);
+    ctx.lineWidth = size * 0.04;
+    ctx.strokeStyle = '#00ffa3';
+    ctx.globalAlpha = 0.055;
+    ctx.stroke();
 
-            timerEl.textContent = formatTime(elapsed);
+    ctx.restore();
+}
 
-            // Turn amber after 10 mins, red after 15 mins
-            timerEl.classList.toggle('timer-warn',  elapsed > 10 * 60 * 1000);
-            timerEl.classList.toggle('timer-alert', elapsed > 15 * 60 * 1000);
-        });
-    }
-
-    // Start ticking immediately and then every second
-    tickTimers();
-    setInterval(tickTimers, 1000);
-})();
+function _roundRectFill(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+}
