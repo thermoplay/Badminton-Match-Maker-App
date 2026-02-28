@@ -617,6 +617,16 @@ function renderStatsTab(tab) {
             return;
         }
 
+        const fmtDuration = (ms) => {
+            if (!ms || ms <= 0) return null;
+            const totalSec = Math.round(ms / 1000);
+            const m = Math.floor(totalSec / 60);
+            const s = totalSec % 60;
+            return m > 0
+                ? `${m}m ${s.toString().padStart(2, '0')}s`
+                : `${s}s`;
+        };
+
         const rounds = [...roundHistory].reverse().map((round, i) => {
             const roundNum = roundHistory.length - i;
             const games = round.matches.map((m, gi) => {
@@ -624,6 +634,9 @@ function renderStatsTab(tab) {
                 const loseIdx = winIdx === 0 ? 1 : 0;
                 const winners = m.teams[winIdx]?.join(' & ') || '?';
                 const losers  = m.teams[loseIdx]?.join(' & ') || '?';
+                const duration = (m.startedAt && m.endedAt)
+                    ? fmtDuration(m.endedAt - m.startedAt)
+                    : null;
                 return `
                     <div class="history-game">
                         <div class="history-game-label">Game ${gi + 1}</div>
@@ -631,6 +644,7 @@ function renderStatsTab(tab) {
                             <span class="history-winner">${escapeHTML(winners)}</span>
                             <span class="history-vs">def.</span>
                             <span class="history-loser">${escapeHTML(losers)}</span>
+                            ${duration ? `<span class="history-duration">${duration}</span>` : ''}
                         </div>
                     </div>
                 `;

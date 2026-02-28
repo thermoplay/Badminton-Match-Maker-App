@@ -49,6 +49,9 @@ function processCourtResult(mIdx) {
         return;
     }
 
+    // Stamp the finished time on this match before snapshotting
+    match.endedAt = Date.now();
+
     // Snapshot for undo
     const snapshot = {
         squadSnapshot: squad.map(p => ({ ...p })),

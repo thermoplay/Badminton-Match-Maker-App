@@ -2139,6 +2139,18 @@ header {
     font-style: italic;
 }
 
+.history-duration {
+    margin-left: auto;
+    font-size: 0.62rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.06);
+    padding: 2px 7px;
+    border-radius: 20px;
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+}
+
 /* =============================================================================
    SPECTATOR COUNT BADGE
    ============================================================================= */
