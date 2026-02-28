@@ -9,35 +9,23 @@
     <meta name="apple-mobile-web-app-title" content="CourtSide">
     <meta name="mobile-web-app-capable" content="yes">
 
-    <!-- iOS homescreen icons — place these in an /icons/ folder -->
     <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png">
     <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png">
     <link rel="apple-touch-icon" sizes="120x120" href="icons/icon-120.png">
 
-    <!-- iOS splash screens (add more sizes as needed) -->
     <link rel="apple-touch-startup-image" href="icons/splash-2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2)">
     <link rel="apple-touch-startup-image" href="icons/splash-1125.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)">
 
-    <!-- Web app manifest (Android PWA + modern iOS) -->
     <link rel="manifest" href="manifest.json">
     <title>Court Side Pro | Operations</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="css/style.css">
-    <!-- QRCode libraries loaded before app scripts so they're available when needed.
-         Load order matters:
-           1. qrcodejs  → defines window.QRCode as a constructor (new QRCode(div, url))
-           2. Inline shim → saves that constructor as window.QRCodeConstructor before step 3 overwrites it
-           3. qrcode@1.5.1 → overwrites window.QRCode with the toCanvas/toDataURL object API
-         After load: window.QRCode.toCanvas() works (qrcode@1.5.1),
-                     window.QRCodeConstructor(div,url) works (qrcodejs).
-    -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script>window.QRCodeConstructor = window.QRCode;</script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-    </head>
+</head>
 <body>
-    <!-- #hostRoot: hidden when ?role=player is in URL -->
     <div id="hostRoot">
     <div class="app-container">
         <header>
@@ -63,12 +51,9 @@
 
         <div id="matchContainer"></div>
 
-        <!-- Spacer so fixed nav doesn't cover content -->
         <div style="height: 40px;"></div>
     </div>
-
-    </div><!-- /.app-container -->
-    </div><!-- /#hostRoot -->
+    </div>
 
     <nav class="nav-bar" id="hostNav">
         <button class="btn-icon" onclick="showOverlay('sync')" aria-label="Sync">📲</button>
@@ -95,7 +80,6 @@
         <button class="btn-icon" onclick="showOverlay('stats')" aria-label="Stats">🏆</button>
     </nav>
 
-    <!-- Stats / Sync Overlay -->
     <div id="overlay" role="dialog" aria-modal="true">
         <div class="overlay-header">
             <h2 id="overlayTitle"></h2>
@@ -104,7 +88,6 @@
         <div id="overlayContent"></div>
     </div>
 
-    <!-- Player Action Menu -->
     <div id="actionMenu" style="display:none;" role="dialog" aria-modal="true">
         <div class="menu-card">
             <h2 id="menuPlayerName"></h2>
@@ -117,19 +100,14 @@
         </div>
     </div>
 
-    <!-- Team Builder Modal -->
     <div id="teamBuilderModal" style="display:none;" role="dialog" aria-modal="true">
         <div class="builder-sheet">
-
             <div class="builder-top-bar">
                 <span class="builder-title">Edit Teams</span>
                 <span id="builderGameLabel" class="builder-game-tag"></span>
             </div>
-
             <div id="builderOdds" style="display:flex; justify-content:center; margin-bottom:18px;"></div>
-
             <div class="builder-hint">Tap a player to select, then tap another to swap</div>
-
             <div class="builder-teams">
                 <div class="builder-team-col">
                     <div class="builder-team-label">Team A</div>
@@ -141,19 +119,15 @@
                     <div id="builderTeamB"></div>
                 </div>
             </div>
-
             <div id="builderSideline" style="margin-top:20px;"></div>
-
             <div class="builder-actions">
                 <button class="builder-btn-shuffle" onclick="builderShuffle()">⟳ Shuffle</button>
                 <button class="builder-btn-confirm" onclick="confirmTeamBuilder()">Confirm</button>
             </div>
-
             <button class="btn-cancel" onclick="closeTeamBuilder()" style="width:100%; margin-top:8px;">Cancel</button>
         </div>
     </div>
 
-    <!-- Player Card Modal -->
     <div id="playerCardModal" style="display:none;" role="dialog" aria-modal="true">
         <div class="player-card-backdrop" onclick="closePlayerCard()"></div>
         <div class="player-card">
@@ -167,7 +141,6 @@
         </div>
     </div>
 
-    <!-- Aura Match Poster (hidden, captured by html2canvas) -->
     <div id="auraPoster" style="position:fixed; left:-9999px; top:0; width:390px; height:693px; z-index:-1; overflow:hidden;">
         <div class="aura-bg">
             <div class="aura-top-label">THE COURT SIDE PRO</div>
@@ -186,7 +159,6 @@
         </div>
     </div>
 
-    <!-- Host: High-visibility join notification banner -->
     <div id="joinNotification" class="join-notif">
         <div class="join-notif-inner">
             <div class="join-notif-label">🏀 WANTS TO PLAY</div>
@@ -198,11 +170,8 @@
         </div>
     </div>
 
-    <!-- Spectator Decision Sheet — shown only to non-operators in online sessions -->
     <div id="iwantToPlaySheet" style="display:none;" class="iwtp-sheet">
         <div class="iwtp-inner">
-
-            <!-- STEP 1: Choice — always shown first -->
             <div id="iwtpChoiceView">
                 <div class="iwtp-title">👋 Welcome</div>
                 <div class="iwtp-subtitle">How are you joining today?</div>
@@ -223,8 +192,6 @@
                     <span class="iwtp-choice-arrow">→</span>
                 </button>
             </div>
-
-            <!-- STEP 2A: New player name form -->
             <div id="iwtpNewPlayerView" style="display:none;">
                 <button class="iwtp-back-btn" onclick="showIWTPChoice()">← Back</button>
                 <div class="iwtp-title">Enter Your Name</div>
@@ -238,32 +205,25 @@
                     onkeydown="if(event.key==='Enter') submitIWantToPlay()">
                 <button class="iwtp-btn" id="iwtpSendBtn" onclick="submitIWantToPlay()">Send Request</button>
             </div>
-
-            <!-- STEP 2B: Existing player name picker -->
             <div id="iwtpExistingView" style="display:none;">
                 <button class="iwtp-back-btn" onclick="showIWTPChoice()">← Back</button>
                 <div class="iwtp-title">Who Are You?</div>
                 <div class="iwtp-subtitle">Tap your name to enter live view</div>
                 <div id="iwtpPlayerList" class="iwtp-player-list"></div>
             </div>
-
-            <!-- STEP 3: Confirmed (replaces everything else) -->
             <div id="iwtpSpectatorView" style="display:none;">
                 <div class="iwtp-confirmed-icon">👁</div>
                 <div class="iwtp-title" id="iwtpSpectatorName"></div>
                 <div class="iwtp-subtitle" id="iwtpSpectatorSubtitle">Watching live — read only</div>
                 <button class="iwtp-btn" onclick="collapseIWTPSheet()">Enter Live View ↑</button>
             </div>
-
         </div>
     </div>
 
-    <!-- Host: Pending play requests badge -->
     <div id="playRequestsBadge" style="display:none;" class="play-requests-badge" onclick="showPlayRequests()">
         🏀 <span id="playRequestsCount">0</span> want to play
     </div>
 
-    <!-- Host: Play Requests Modal -->
     <div id="playRequestsModal" style="display:none;" class="play-requests-modal">
         <div class="play-requests-card">
             <div class="play-requests-title">🏀 Play Requests</div>
@@ -273,11 +233,6 @@
     </div>
 
     <!-- ═══ PLAYER SIDELINE VIEW ═══════════════════════════════════════════════ -->
-    <!-- ═══════════════════════════════════════════════════════════════════════
-         PLAYER SIDELINE VIEW
-         Rendered when: URL contains ?role=player  OR  SidelineView.show()
-         #hostRoot + #hostNav are hidden when this view is active.
-         ═══════════════════════════════════════════════════════════════════════ -->
     <div id="sidelinePanel" style="display:none;" class="sl-panel">
         <div class="sl-inner">
 
@@ -290,8 +245,7 @@
                 </div>
             </div>
 
-            <!-- ── ON DECK STATUS ────────────────────────────────────────── -->
-            <!-- States: pending | on-deck | playing | resting              -->
+            <!-- ── STATUS ────────────────────────────────────────────────── -->
             <div class="sl-status-card" id="slStatusCard" data-state="pending">
                 <div class="sl-status-lhs">
                     <div class="sl-status-icon" id="slStatusIcon">⏳</div>
@@ -326,42 +280,10 @@
                 <span class="sl-next-up-names" id="slNextUp"></span>
             </div>
 
-            <!-- ── PRIVATE STATS ──────────────────────────────────────────── -->
-            <div class="sl-section-label sl-section-private">
-                <span class="sl-dot-lock">🔒</span>PRIVATE STATS
-                <span class="sl-private-badge">Only you can see this</span>
-            </div>
-            <div class="sl-stats-grid">
-                <div class="sl-stat-card">
-                    <div class="sl-stat-val" id="slPrivateWins">0</div>
-                    <div class="sl-stat-label">Wins</div>
-                </div>
-                <div class="sl-stat-card">
-                    <div class="sl-stat-val" id="slPrivateGames">0</div>
-                    <div class="sl-stat-label">Games</div>
-                </div>
-                <div class="sl-stat-card">
-                    <div class="sl-stat-val" id="slPrivateWR">—</div>
-                    <div class="sl-stat-label">Win Rate</div>
-                </div>
-            </div>
-            <div class="sl-privacy-note">
-                Stored on this device only. Never sent to host or other players.
-            </div>
-
             <!-- ── LAST MATCH WINNER ──────────────────────────────────────── -->
             <div class="sl-last-winner-row" id="slLastWinnerRow" style="display:none;">
                 <span class="sl-last-winner-label">LAST MATCH</span>
                 <span class="sl-last-winner-name" id="slLastWinner"></span>
-            </div>
-
-            <!-- ── PERFORMANCE LAB ────────────────────────────────────────── -->
-            <div class="sl-section-label sl-section-lab">
-                <span class="sl-dot-lab">⚡</span>PERFORMANCE LAB
-                <span class="sl-lab-badge">Last 5</span>
-            </div>
-            <div class="sl-lab-history" id="slLabHistory">
-                <div class="sl-lab-empty">No matches recorded yet.<br>Play a game to start your history.</div>
             </div>
 
             <!-- ── INVITE TO COURT ────────────────────────────────────────── -->
@@ -374,38 +296,15 @@
         </div><!-- /.sl-inner -->
     </div><!-- /#sidelinePanel -->
 
-    <!--
-        LOAD ORDER:
-        1. polish.js  — Haptic, Confetti, Avatar utilities (no deps)
-        2. app.js     — State, UI, persistence (uses polish.js)
-        3. logic.js   — Match logic (uses app.js + polish.js)
-        4. sync.js    — Supabase multiplayer (uses all of the above)
-    -->
     <script src="js/polish.js"></script>
     <script src="js/passport.js"></script>
     <script src="js/app.js"></script>
     <script src="js/logic.js"></script>
     <script src="js/sync.js"></script>
-    <!-- ═══ ERROR BANNER (BUG 4) ═══════════════════════════════════════════ -->
-    <!-- Visible only when a JS error is caught. Surfaced in the UI so     -->
-    <!-- errors are visible on mobile without DevTools.                    -->
+
     <div id="sl-error-banner" aria-live="assertive"></div>
 
     <script>
-        // ══════════════════════════════════════════════════════════════════════
-        // COURTSIDE PRO — Boot Script  (Part 1 Render Fixes)
-        //
-        // FIX SUMMARY:
-        //   BUG 1 — DOMContentLoaded renders the frame BEFORE scripts load
-        //   BUG 2 — null-guard on missing session / slow DB
-        //   BUG 3 — inline name form replaces blocking prompt()
-        //   BUG 4 — CSS auto-show + global error handler
-        // ══════════════════════════════════════════════════════════════════════
-
-        // ── BUG 4: Global error catch-all ────────────────────────────────────
-        // Catches any thrown error or unhandled promise rejection and surfaces
-        // it in the UI error banner so it's visible on mobile without DevTools.
-
         function _csShowError(msg, source) {
             const banner = document.getElementById('sl-error-banner');
             if (!banner) return;
@@ -415,7 +314,6 @@
                 ${String(msg).slice(0, 200)}
                 ${source ? '<br><span style="opacity:0.6;">' + String(source).slice(0, 120) + '</span>' : ''}`;
             banner.classList.add('visible');
-            // Auto-dismiss after 12s
             clearTimeout(banner._timer);
             banner._timer = setTimeout(() => banner.classList.remove('visible'), 12000);
         }
@@ -431,70 +329,45 @@
             _csShowError(msg);
         });
 
-        // ── BUG 1 + BUG 4: DOMContentLoaded instant render ───────────────────
-        // Fires as soon as the HTML is parsed — BEFORE external scripts load.
-        // This guarantees the player sees the UI frame within ~50ms of opening
-        // the QR link, regardless of network speed or script parse time.
-
         document.addEventListener('DOMContentLoaded', function () {
             try {
                 const params   = new URLSearchParams(window.location.search);
                 const role     = params.get('role');
-                // On refresh, ?join= is gone (stripped by tryAutoRejoin). Read from
-                // localStorage cs_player_room_code as final fallback for the code pill.
                 const joinCode = params.get('room') || params.get('join')
                     || (function(){ try{ return localStorage.getItem('cs_player_room_code'); }catch(e){ return null; } })()
                     || null;
 
-                if (role !== 'player') return;  // Host mode — skip
+                if (role !== 'player') return;
 
-                // ── Step 1: Mark body immediately (CSS safety net fires here) ──
-                // body.player-mode #sidelinePanel { display: flex !important }
-                // This rule in style.css makes the panel visible via CSS alone —
-                // no JS objects needed, no async wait, no blank screen.
                 document.body.classList.add('player-mode');
 
-                // ── Step 2: Make sidelinePanel visible RIGHT NOW ──────────────
-                // Belt + suspenders: also set inline style so it works even if
-                // the stylesheet hasn't finished parsing on very slow connections.
                 const panel = document.getElementById('sidelinePanel');
                 if (panel) {
                     panel.style.display = 'flex';
-                    panel.classList.add('sl-booting');  // Pulse animation while loading
+                    panel.classList.add('sl-booting');
                 }
 
-                // ── Step 3: Stamp the room code immediately ───────────────────
-                // The slSessionCode pill shows the room code from the URL at once
-                // — the player sees it before the DB call completes.
                 if (joinCode) {
                     const codeEl = document.getElementById('slSessionCode');
                     if (codeEl) codeEl.textContent = joinCode;
                 }
 
-                // ── Step 4: BUG 3 — Passport check from localStorage ─────────
-                // This is a SYNCHRONOUS read — zero network wait.
-                // Show personalised welcome or name-entry form immediately.
                 try {
                     const raw      = localStorage.getItem('cs_player_passport');
                     const passport = raw ? JSON.parse(raw) : null;
 
-                    const nameEl   = document.getElementById('slPassportName');
-                    const avatarEl = document.getElementById('slPassportAvatar');
+                    const nameEl       = document.getElementById('slPassportName');
+                    const avatarEl     = document.getElementById('slPassportAvatar');
                     const statusTextEl = document.getElementById('slStatusText');
                     const statusSubEl  = document.getElementById('slStatusSub');
                     const matchesEl    = document.getElementById('slCurrentMatches');
 
                     if (passport && passport.playerName) {
-                        // ── RETURNING PLAYER — welcome back immediately ────────
-                        // This text appears on screen before any JS objects init.
                         if (nameEl)   nameEl.textContent   = passport.playerName;
                         if (avatarEl) avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
-
-                        if (statusTextEl) statusTextEl.textContent =
-                            'Welcome back, ' + passport.playerName;
+                        if (statusTextEl) statusTextEl.textContent = 'Welcome back, ' + passport.playerName;
                         if (statusSubEl)  statusSubEl.textContent  = 'Joining court…';
 
-                        // Show welcome card in the matches area
                         if (matchesEl && joinCode) {
                             matchesEl.innerHTML =
                                 '<div class="sl-welcome-back">' +
@@ -508,21 +381,8 @@
                                 '</div>';
                         }
                     } else {
-                        // ── NEW PLAYER — show loading state only ──────────────
-                        // We intentionally do NOT render the name entry form here.
-                        //
-                        // Reason: this DOMContentLoaded block runs before any
-                        // <script> tags have been parsed, so the form nodes would
-                        // be live HTML with no JavaScript event listeners attached.
-                        // Tapping "JOIN COURT →" on such a form does nothing.
-                        //
-                        // Instead, we show a status message so the screen isn't
-                        // blank. Once all scripts load and initApp() → bootApp() →
-                        // PlayerMode.boot() runs, _showNameEntry() renders the form
-                        // AND wires the button listener in one atomic step.
                         if (statusTextEl) statusTextEl.textContent = 'Almost there…';
                         if (statusSubEl)  statusSubEl.textContent  = 'Enter your name to join the court';
-
                         if (matchesEl) {
                             matchesEl.innerHTML =
                                 '<div class="sl-loading-state">' +
@@ -531,24 +391,8 @@
                                 '</div>';
                         }
                     }
-
-                    // ── Step 5: Private stats from localStorage ───────────────
-                    if (passport) {
-                        const wEl = document.getElementById('slPrivateWins');
-                        const gEl = document.getElementById('slPrivateGames');
-                        const rEl = document.getElementById('slPrivateWR');
-                        if (wEl) wEl.textContent = passport.privateLifetimeWins || 0;
-                        if (gEl) gEl.textContent = passport.privateTotalGames   || 0;
-                        if (rEl && passport.privateTotalGames > 0) {
-                            rEl.textContent = Math.round(
-                                (passport.privateLifetimeWins / passport.privateTotalGames) * 100
-                            ) + '%';
-                        }
-                    }
-
                 } catch (lsErr) {
                     console.error('[CourtSide] localStorage read failed:', lsErr);
-                    // Still show the panel — don't let a storage error blank the screen
                 }
 
             } catch (domErr) {
@@ -556,11 +400,6 @@
                 _csShowError('Boot failed: ' + domErr.message);
             }
         });
-
-        // ── FULL BOOT — runs after all scripts have loaded ────────────────────
-        // The frame is already visible from DOMContentLoaded above.
-        // This phase does the async work: DB handshake, realtime subscription,
-        // approval check. Errors here don't blank the screen.
 
         const _originalLoad = window.onload;
         window.onload = async function () {
@@ -573,45 +412,28 @@
             try {
                 const params   = new URLSearchParams(window.location.search);
                 const role     = params.get('role');
-                // Read joinCode from URL first; fall back to window._pendingJoinCode
-                // (saved by tryAutoRejoin before stripping ?join=), then finally
-                // localStorage cs_player_room_code so a full browser refresh reconnects.
                 const joinCode = params.get('room') || params.get('join')
                     || window._pendingJoinCode
                     || (function(){ try{ return localStorage.getItem('cs_player_room_code'); }catch(e){ return null; } })()
                     || null;
 
                 if (role === 'player') {
-                    // ── PLAYER MODE ─────────────────────────────────────────
-                    // Frame is already on screen from DOMContentLoaded above.
-
-                    // 1. Init passport (creates UUID if new, returns existing if not)
                     const passport = Passport.init();
 
-                    // 2. Ensure host shell is hidden (CSS already hides it, this
-                    //    is the explicit JS belt + suspenders)
                     const hostRoot = document.getElementById('hostRoot');
                     const hostNav  = document.getElementById('hostNav');
                     if (hostRoot) hostRoot.style.display = 'none';
                     if (hostNav)  hostNav.style.display  = 'none';
 
-                    // 3. Run SidelineView.show() — panel is already visible but
-                    //    this populates the SidelineView._visible flag and runs
-                    //    a full refresh to populate match data if available.
                     SidelineView.show();
-
-                    // 4. Boot PlayerMode — the async DB handshake.
-                    //    The panel is already rendered; boot() only updates content.
                     await PlayerMode.boot(passport, joinCode);
 
                 } else {
-                    // ── HOST / SPECTATOR MODE ────────────────────────────────
                     await tryAutoRejoin();
                 }
             } catch (bootErr) {
                 console.error('[CourtSide] window.onload boot failed:', bootErr);
                 _csShowError('Session boot failed: ' + bootErr.message);
-                // Remove pulsing state — show static error
                 const panel = document.getElementById('sidelinePanel');
                 if (panel) panel.classList.remove('sl-booting');
             }
