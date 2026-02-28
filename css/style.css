@@ -4043,6 +4043,30 @@ button:active,
     letter-spacing: 0.03em;
 }
 
+.sl-share-match-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 10px;
+    padding: 9px 14px;
+    background: rgba(0,255,163,0.06);
+    border: 1px solid var(--border-accent);
+    border-radius: 10px;
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+}
+
+.sl-share-match-btn:hover  { background: rgba(0,255,163,0.12); }
+.sl-share-match-btn:active { transform: scale(0.97); }
+
 /* ── Next up ────────────────────────────────────────────────────────────────── */
 .sl-next-up {
     display: flex;

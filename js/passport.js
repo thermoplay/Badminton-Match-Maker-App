@@ -151,15 +151,17 @@ const SidelineView = {
                     <div class="sl-match-teams">
                         <div class="sl-team-col">
                             <span class="${aClass}">${tA.join(' &amp; ')}</span>
-                            <span class="sl-odds-pill ${odds[0] > odds[1] ? 'sl-odds-fav' : ''}">${odds[0]}%</span>
                         </div>
                         <span class="sl-vs">VS</span>
                         <div class="sl-team-col">
                             <span class="${bClass}">${tB.join(' &amp; ')}</span>
-                            <span class="sl-odds-pill ${odds[1] > odds[0] ? 'sl-odds-fav' : ''}">${odds[1]}%</span>
                         </div>
                     </div>
                     ${winnerBanner}
+                    ${playing && !hasWinner ? `
+                    <button class="sl-share-match-btn" onclick="slShareMatch(${i})">
+                        📲 Share this matchup
+                    </button>` : ''}
                 </div>`;
         }).join('');
 
@@ -996,4 +998,24 @@ function _renderPlayCount(playerName) {
 
     el.textContent   = `${count} lifetime game${count !== 1 ? 's' : ''}`;
     el.style.display = 'inline-flex';
+}
+
+// =============================================================================
+// PLAYER MATCH SHARE
+// =============================================================================
+
+function slShareMatch(matchIdx) {
+    const m = (window.currentMatches || [])[matchIdx];
+    if (!m) return;
+    const tA = (m.teams[0] || []).join(' & ');
+    const tB = (m.teams[1] || []).join(' & ');
+    const text = `🏀 ${tA} vs ${tB} — who you got? #CourtSide`;
+    const url  = window.location.href;
+    if (navigator.share) {
+        navigator.share({ title: 'CourtSide Live', text, url }).catch(() => {});
+    } else {
+        navigator.clipboard?.writeText(`${text}\n${url}`)
+            .then(() => { if (typeof showSessionToast === 'function') showSessionToast('📋 Copied to clipboard!'); })
+            .catch(() => {});
+    }
 }
