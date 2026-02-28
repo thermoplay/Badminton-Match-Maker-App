@@ -403,7 +403,7 @@ function generateMatches() {
         // tA/tB for rendering come from match.teams after buildMatchFromPlayers sorts them
         const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
-        matchData.push({ idx: i, tA, tB, odds: match.odds });
+        matchData.push({ idx: i, tA, tB, odds: match.odds, startedAt: match.startedAt });
     }
 
     renderAllMatchCards(matchData);
