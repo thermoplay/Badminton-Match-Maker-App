@@ -683,6 +683,14 @@ const PlayerMode = {
         const isWinner   = myUUID && winnerUUIDs.includes(myUUID);
         const wasInMatch = myUUID && (winnerUUIDs.includes(myUUID) || loserUUIDs.includes(myUUID));
 
+        // Record stat locally the moment the broadcast arrives — this is the
+        // primary delivery path. _pollSignal is just a slow DB fallback.
+        if (wasInMatch) {
+            const roomCode = this._joinCode || window.currentRoomCode;
+            PlayerStats.record(roomCode, isWinner ? 'WIN' : 'LOSS');
+            _renderStatsTab(roomCode);
+        }
+
         window._lastMatchWinner = winnerNames ? `🏆 ${winnerNames}` : null;
 
         SidelineView.show();
@@ -849,11 +857,18 @@ const PlayerMode = {
             );
             const d = await r.json();
             if (d.signal) {
-                // Record WIN/LOSS locally before anything else so the stats
-                // tab is always up to date by the time the UI refreshes.
+                // Record WIN/LOSS only if _onMatchResolved hasn't already done it
+                // via the faster broadcast path. We detect this by checking if the
+                // signal timestamp is recent — if the stat was already recorded in
+                // the last 10s for this room, skip to avoid double-counting.
                 if (d.signal.event === 'WIN' || d.signal.event === 'LOSS') {
-                    PlayerStats.record(joinCode, d.signal.event);
-                    _renderStatsTab(joinCode);
+                    const existing = PlayerStats.get(joinCode);
+                    const lastEntry = PlayerStats._load().sessions?.[joinCode]?.entries?.slice(-1)[0];
+                    const alreadyRecorded = lastEntry && (Date.now() - lastEntry.ts) < 10000;
+                    if (!alreadyRecorded) {
+                        PlayerStats.record(joinCode, d.signal.event);
+                        _renderStatsTab(joinCode);
+                    }
                 }
 
                 SidelineView.show();
