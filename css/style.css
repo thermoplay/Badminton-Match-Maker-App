@@ -3722,7 +3722,13 @@ button:active,
 .sl-status-card[data-state="playing"] {
     border-color: var(--accent);
     background: var(--accent-dim);
-    box-shadow: 0 0 24px rgba(0,255,163,0.1);
+    box-shadow: 0 0 24px rgba(0,255,163,0.15);
+    animation: playingPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes playingPulse {
+    0%, 100% { box-shadow: 0 0 16px rgba(0,255,163,0.1); border-color: var(--accent); }
+    50%       { box-shadow: 0 0 32px rgba(0,255,163,0.25); border-color: rgba(0,255,163,0.8); }
 }
 .sl-status-card[data-state="resting"] {
     border-color: #60a5fa;
@@ -3783,8 +3789,8 @@ button:active,
 }
 
 .sl-avatar {
-    width: 50px;
-    height: 50px;
+    width: 54px;
+    height: 54px;
     border-radius: 50%;
     background: var(--accent-dim);
     border: 2px solid var(--border-accent);
@@ -3792,12 +3798,14 @@ button:active,
     align-items: center;
     justify-content: center;
     font-family: var(--font-display);
-    font-size: 1.4rem;
+    font-size: 1.5rem;
     font-weight: 900;
     font-style: italic;
-    color: var(--accent);
+    color: #fff;
     flex-shrink: 0;
     text-transform: uppercase;
+    transition: background 0.3s;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
 }
 
 .sl-identity-text { flex: 1; min-width: 0; }
@@ -3817,6 +3825,14 @@ button:active,
     white-space: nowrap;
 }
 
+/* Meta row: edit button + play count pill side by side */
+.sl-identity-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 .sl-rename-btn {
     background: none;
     border: none;
@@ -3833,6 +3849,22 @@ button:active,
 }
 .sl-rename-btn:hover { color: var(--accent); }
 .sl-rename-btn:active { transform: scale(0.96); }
+
+/* Session play count pill */
+.sl-play-count {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(0,255,163,0.08);
+    color: var(--accent);
+    font-family: var(--font-body);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 20px;
+    border: 1px solid rgba(0,255,163,0.18);
+    white-space: nowrap;
+}
 
 /* ── Section labels ─────────────────────────────────────────────────────────── */
 .sl-section-label {
@@ -4597,3 +4629,30 @@ button:active,
 }
 
 .sl-queued-check:hover { opacity: 0.75; }
+
+/* =============================================================================
+   YOU'RE UP BANNER — _showYoureUpBanner() in passport.js
+   ============================================================================= */
+
+#_csYoureUpBanner {
+    /* Styles applied inline by JS for speed — these are fallback overrides */
+    font-family: var(--font-display, 'Inter', sans-serif) !important;
+}
+
+/* =============================================================================
+   MATCH CARD — winner highlight on player view
+   ============================================================================= */
+
+.sl-match-card.sl-match-mine .sl-match-label {
+    color: var(--accent);
+}
+
+/* Pulse animation for on-deck status */
+.sl-status-card[data-state="on-deck"] {
+    animation: onDeckPulse 2s ease-in-out infinite;
+}
+
+@keyframes onDeckPulse {
+    0%, 100% { border-color: #facc15; background: rgba(250,204,21,0.06); }
+    50%       { border-color: rgba(250,204,21,0.7); background: rgba(250,204,21,0.10); }
+}

@@ -262,7 +262,10 @@
                 <div class="sl-avatar" id="slPassportAvatar">?</div>
                 <div class="sl-identity-text">
                     <div class="sl-passport-name" id="slPassportName">—</div>
-                    <button class="sl-rename-btn" onclick="passportRename()">✏️ Edit name</button>
+                    <div class="sl-identity-meta">
+                        <button class="sl-rename-btn" onclick="passportRename()">✏️ Edit name</button>
+                        <span class="sl-play-count" id="slPlayCount" style="display:none;"></span>
+                    </div>
                 </div>
             </div>
 
@@ -364,7 +367,13 @@
 
                     if (passport && passport.playerName) {
                         if (nameEl)   nameEl.textContent   = passport.playerName;
-                        if (avatarEl) avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
+                        if (avatarEl) {
+                            avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
+                            // Avatar color applied after polish.js loads (deferred)
+                            requestAnimationFrame(() => {
+                                if (window.Avatar) avatarEl.style.background = Avatar.color(passport.playerName);
+                            });
+                        }
                         if (statusTextEl) statusTextEl.textContent = 'Welcome back, ' + passport.playerName;
                         if (statusSubEl)  statusSubEl.textContent  = 'Joining court…';
 

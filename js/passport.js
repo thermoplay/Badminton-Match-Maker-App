@@ -566,6 +566,8 @@ const PlayerMode = {
         SidelineView.refresh();
     },
 
+    _prevStatus: null,
+
     _updateStatus(passport) {
         const name    = passport.playerName?.toLowerCase();
         const squad   = window.squad          || [];
@@ -586,10 +588,33 @@ const PlayerMode = {
         const nextUpRaw = window._lastNextUp || '';
         const isNextUp  = name && nextUpRaw.toLowerCase().includes(name);
 
+        // Determine new status key before setting UI
+        let newStatus = null;
+        if (playing)                   newStatus = 'playing';
+        else if (isNextUp)             newStatus = 'on-deck';
+        else if (inSquad && qPos >= 0) newStatus = 'resting';
+        else if (inSquad)              newStatus = 'squad';
+
+        // Fire haptic + banner ONLY on transition INTO 'playing'
+        if (newStatus === 'playing' && this._prevStatus !== 'playing') {
+            if (window.Haptic) Haptic.success();
+            _showYoureUpBanner();
+        }
+
+        // Fire haptic ONLY on transition INTO 'on-deck'
+        if (newStatus === 'on-deck' && this._prevStatus !== 'on-deck') {
+            if (window.Haptic) Haptic.bump();
+        }
+
+        this._prevStatus = newStatus;
+
+        // Update the profile play count badge whenever status refreshes
+        _renderPlayCount(passport.playerName);
+
         if (playing) {
-            this.setStatus('playing', 'You\'re on court!', 'Give it everything 🏀');
+            this.setStatus('playing', "You're on court!", 'Give it everything 🏀');
         } else if (isNextUp) {
-            this.setStatus('on-deck', 'You\'re on deck!', 'Get ready — you\'re up next 🟡');
+            this.setStatus('on-deck', "You're on deck!", "Get ready — you're up next 🟡");
         } else if (inSquad && qPos >= 0) {
             const pos = qPos + 1;
             const sfx = pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th';
@@ -615,6 +640,9 @@ const PlayerMode = {
 
         const p = Passport.get();
         this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
+
+        // Haptic feedback on host approval
+        if (window.Haptic) Haptic.success();
 
         SidelineView.show();
         setTimeout(() => this._updateStatus(p), 1200);
@@ -675,7 +703,7 @@ const PlayerMode = {
 
     _startSignalPoll(joinCode, passport) {
         clearInterval(this._pollTimer);
-        this._pollTimer = setInterval(() => this._pollSignal(joinCode, passport), 8000);
+        this._pollTimer = setInterval(() => this._pollSignal(joinCode, passport), 3000);
     },
 
     async _pollSignal(joinCode, passport) {
@@ -764,7 +792,15 @@ const PlayerMode = {
         const nameEl   = document.getElementById('slPassportName');
         const avatarEl = document.getElementById('slPassportAvatar');
         if (nameEl)   nameEl.textContent   = passport.playerName || 'Tap to set name';
-        if (avatarEl) avatarEl.textContent = (passport.playerName || '?').charAt(0).toUpperCase();
+        if (avatarEl) {
+            avatarEl.textContent = (passport.playerName || '?').charAt(0).toUpperCase();
+            // Apply deterministic avatar color from polish.js if available
+            if (passport.playerName && window.Avatar) {
+                avatarEl.style.background = Avatar.color(passport.playerName);
+            }
+        }
+        // Render play count badge (will be 0 until squad data arrives)
+        _renderPlayCount(passport.playerName);
     },
 
     _promptForCode() {
@@ -821,3 +857,71 @@ const PlayerMode = {
         });
     },
 };
+// =============================================================================
+// "YOU'RE UP!" BANNER — fires once on transition into playing state
+// =============================================================================
+
+function _showYoureUpBanner() {
+    // Remove any existing banner first
+    document.getElementById('_csYoureUpBanner')?.remove();
+
+    const banner = document.createElement('div');
+    banner.id = '_csYoureUpBanner';
+    Object.assign(banner.style, {
+        position:        'fixed',
+        top:             '0',
+        left:            '0',
+        right:           '0',
+        zIndex:          '10000',
+        background:      'linear-gradient(135deg, #00ffa3, #00cc80)',
+        color:           '#0a0a0f',
+        fontFamily:      '"Inter", sans-serif',
+        fontWeight:      '800',
+        fontSize:        '1.1rem',
+        letterSpacing:   '0.08em',
+        textAlign:       'center',
+        padding:         '18px 24px 16px',
+        boxShadow:       '0 4px 24px rgba(0,255,163,0.5)',
+        transform:       'translateY(-100%)',
+        transition:      'transform 0.35s cubic-bezier(0.22,1,0.36,1)',
+        borderRadius:    '0 0 16px 16px',
+    });
+    banner.innerHTML = `
+        <div style="font-size:1.5rem;margin-bottom:4px;">🏀</div>
+        <div>YOU'RE UP — GET ON COURT!</div>
+    `;
+    document.body.appendChild(banner);
+
+    // Slide in
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => { banner.style.transform = 'translateY(0)'; });
+    });
+
+    // Slide out after 4s
+    setTimeout(() => {
+        banner.style.transform = 'translateY(-100%)';
+        setTimeout(() => banner.remove(), 400);
+    }, 4000);
+
+    // Tap to dismiss
+    banner.addEventListener('click', () => {
+        banner.style.transform = 'translateY(-100%)';
+        setTimeout(() => banner.remove(), 400);
+    });
+}
+
+// =============================================================================
+// PLAY COUNT BADGE — renders session play count on player profile
+// =============================================================================
+
+function _renderPlayCount(playerName) {
+    const el = document.getElementById('slPlayCount');
+    if (!el) return;
+
+    const squad = window.squad || [];
+    const me    = squad.find(p => p.name?.toLowerCase() === playerName?.toLowerCase());
+    const count = me?.sessionPlayCount ?? 0;
+
+    el.textContent   = `${count} game${count !== 1 ? 's' : ''} this session`;
+    el.style.display = 'inline-flex';
+}
