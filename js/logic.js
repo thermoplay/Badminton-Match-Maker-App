@@ -62,9 +62,6 @@ function processCourtResult(mIdx) {
     // Apply ELO for this court only
     applyELOForMatch(match);
 
-    // Dispatch win signals
-    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx);
-
     // Rotate just this court's players back into the queue
     rotateCourtPlayers(match);
 
@@ -85,6 +82,7 @@ function processCourtResult(mIdx) {
         checkNextButtonState();
         updateUndoButton();
         saveToDisk();
+        if (typeof broadcastGameState === 'function') broadcastGameState();
         return;
     }
 
@@ -109,7 +107,13 @@ function processCourtResult(mIdx) {
     renderQueueStrip();
     checkNextButtonState();
     updateUndoButton();
+
+    // Dispatch win signals AFTER currentMatches is updated so broadcastGameState
+    // sends the new lineup, not the completed one.
+    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx, true);
+
     saveToDisk();
+    if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.bump();
 }
 
