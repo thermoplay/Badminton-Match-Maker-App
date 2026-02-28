@@ -25,6 +25,7 @@ let operatorKey       = null;
 let operatorKeyHash   = null;
 let realtimeChannel   = null;
 let syncDebounceTimer = null;
+let _isBootingSession = false; // true only during initial rejoin hydration
 
 // ---------------------------------------------------------------------------
 // STATE MIRROR — keeps window.X in sync with module-level `let` vars.
@@ -148,7 +149,9 @@ async function joinOnlineSession(roomCode) {
             showSessionToast(`👁 Joined session`);
         }
         _syncState();
+        _isBootingSession = true;
         applyRemoteState(session);
+        _isBootingSession = false;
         subscribeRealtime(code);
         updateSessionUI();
         closeOverlay();
@@ -551,6 +554,15 @@ function subscribeRealtime(roomCode) {
 let _lastRemoteUpdate = 0;
 
 function applyRemoteState(session) {
+    // The host is the source of truth during an active session. When their own
+    // DB write bounces back via postgres_changes, applying it wipes and
+    // re-renders the match container mid-game, causing the "Start Session" flash.
+    // Only allow host to apply remote state during initial boot/rejoin hydration.
+    if (isOperator && !_isBootingSession) {
+        _updatePlayerCount();
+        return;
+    }
+
     const ts = session.last_active ? new Date(session.last_active).getTime() : 0;
     if (ts > 0 && ts < _lastRemoteUpdate) {
         console.log('CourtSide: ignoring stale remote update');
@@ -589,6 +601,7 @@ function applyRemoteState(session) {
             SidelineView.refresh();
         }
     } else {
+        // Host boot/rejoin hydration — restore full UI from DB state
         renderSquad();
         document.getElementById('matchContainer').innerHTML = '';
         renderSavedMatches();
@@ -878,7 +891,9 @@ async function tryAutoRejoin() {
             isOperator = false;
         }
         _syncState();
+        _isBootingSession = true;
         applyRemoteState(session);
+        _isBootingSession = false;
         subscribeRealtime(savedCode);
         updateSessionUI();
         showSessionToast(isOperator ? `✅ Reconnected as host` : `👁 Rejoined session`);
