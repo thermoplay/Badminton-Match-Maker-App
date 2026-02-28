@@ -107,8 +107,6 @@ async function createOnlineSession() {
         showSessionToast(`🌐 Live! Room: ${roomCode}`);
         Haptic.success();
         _updatePlayerCount();
-        // Clean up sessions inactive for >24hrs — fire and forget, no await
-        _cleanupStaleSessions().catch(() => {});
     } catch (e) {
         console.error('CourtSide: create failed', e);
         showSyncStatus('Failed to create session. Check your connection.', 'error');
@@ -955,19 +953,4 @@ async function archiveRoundToSupabase(snapshot) {
             }),
         });
     } catch (e) { console.error('CourtSide: archive failed', e); }
-}
-// ---------------------------------------------------------------------------
-// STALE SESSION CLEANUP
-// Deletes sessions that haven't been active in >24 hours.
-// Called once when host creates a new session — fire and forget.
-// Keeps the sessions table lean so Postgres doesn't cache stale blobs.
-// ---------------------------------------------------------------------------
-async function _cleanupStaleSessions() {
-    try {
-        await fetch('/api/session-cleanup', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ max_age_hours: 24 }),
-        });
-    } catch { /* silent — cleanup is best-effort */ }
 }
