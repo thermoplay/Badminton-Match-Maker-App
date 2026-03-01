@@ -302,10 +302,16 @@
             </button>
 
             <!-- ── REPORT A BUG ───────────────────────────────────────────── -->
-            <button class="sl-invite-btn" onclick="slOpenBugModal()" style="background:rgba(255,80,80,0.13); border-color:rgba(255,80,80,0.35);">
-                <span class="sl-invite-icon">🐛</span>
-                Report a Bug
-            </button>
+            <div class="sl-support-section">
+                <div class="sl-support-label">🐛 Report a Bug</div>
+                <p class="sl-support-sub">Something broken? Let the dev know.</p>
+                <textarea id="slBugReportText"
+                    placeholder="Describe what happened…"
+                    rows="3"
+                    class="sl-bug-textarea"
+                ></textarea>
+                <button class="sl-support-btn" onclick="slSubmitBugReport()">📨 Send Report</button>
+            </div>
 
             <!-- ── SUPPORT THE DEV ────────────────────────────────────────── -->
             <div class="sl-support-section">
@@ -332,40 +338,9 @@
     <script src="js/sync.js"></script>
 
 
-    <!-- ── BUG REPORT MODAL ─────────────────────────────────────────────── -->
-    <div id="bugReportModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.6); align-items:center; justify-content:center;">
-        <div style="background:#1e2330; border:1px solid rgba(255,255,255,0.12); border-radius:14px; padding:24px; width:min(90vw,400px); display:flex; flex-direction:column; gap:14px;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-weight:700; font-size:1.1rem; color:#fff;">🐛 Report a Bug</span>
-                <button onclick="slCloseBugModal()" style="background:none; border:none; color:rgba(255,255,255,0.5); font-size:1.4rem; cursor:pointer; line-height:1;">×</button>
-            </div>
-            <p style="margin:0; color:rgba(255,255,255,0.6); font-size:0.85rem;">Something broken? Let the dev know.</p>
-            <textarea id="slBugReportText" placeholder="Describe what happened…" rows="4"
-                style="background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:#fff; padding:10px; font-size:0.9rem; resize:vertical; outline:none;"></textarea>
-            <button onclick="slSubmitBugReport()"
-                style="background:rgba(255,80,80,0.2); border:1px solid rgba(255,80,80,0.5); color:#fff; border-radius:8px; padding:10px; font-size:0.9rem; cursor:pointer; font-weight:600;">
-                📨 Send Report
-            </button>
-        </div>
-    </div>
-
     <div id="sl-error-banner" aria-live="assertive"></div>
 
     <script>
-        function slOpenBugModal() {
-            const m = document.getElementById('bugReportModal');
-            m.style.display = 'flex';
-        }
-        function slCloseBugModal() {
-            const m = document.getElementById('bugReportModal');
-            m.style.display = 'none';
-            document.getElementById('slBugReportText').value = '';
-        }
-        // Close on backdrop click
-        document.getElementById('bugReportModal').addEventListener('click', function(e) {
-            if (e.target === this) slCloseBugModal();
-        });
-
         function _csShowError(msg, source) {
             const banner = document.getElementById('sl-error-banner');
             if (!banner) return;
@@ -389,7 +364,6 @@
                 '\nView: Player/Sideline'
             );
             window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
-            slCloseBugModal();
         }
 
         window.addEventListener('error', (e) => {

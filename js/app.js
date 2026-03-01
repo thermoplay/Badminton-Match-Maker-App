@@ -211,9 +211,7 @@ function updateSideline() {
     const activeThisRound = new Set();
     currentMatches.forEach(m => m.teams.flat().forEach(n => activeThisRound.add(n)));
     const idle = squad.filter(p => p.active && !activeThisRound.has(p.name));
-    const el = document.getElementById('restingList');
-    if (!el) return;
-    el.innerHTML = idle
+    document.getElementById('restingList').innerHTML = idle
         .map(p => `
             <div class="player-chip active sideline-chip" data-name="${escapeHTML(p.name)}">
                 ${Avatar.html(p.name)}
@@ -493,17 +491,9 @@ function _supportSectionHTML() {
             <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
                 Something broken? Let the dev know.
             </p>
-            <textarea id="bugReportText"
-                placeholder="Describe what happened…"
-                rows="4"
-                style="width:100%; background:var(--bg2); border:1.5px solid var(--border);
-                       color:#fff; padding:14px; border-radius:12px; margin-bottom:10px;
-                       outline:none; font-size:14px; font-family:inherit;
-                       resize:vertical; box-sizing:border-box;"
-            ></textarea>
             <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
-                onclick="submitBugReport()">
-                📨 Send Report
+                onclick="openBugReportModal()">
+                🐛 Report a Bug
             </button>
         </div>
 
@@ -532,8 +522,62 @@ function _supportSectionHTML() {
     `;
 }
 
+function openBugReportModal() {
+    let modal = document.getElementById('bugReportModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'bugReportModal';
+        modal.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.7);
+            display:flex; align-items:center; justify-content:center;
+            z-index:9999; padding:20px; box-sizing:border-box;
+        `;
+        modal.innerHTML = `
+            <div style="background:var(--surface1,#1e293b); border:1px solid var(--border,#334155);
+                        border-radius:16px; padding:24px; width:100%; max-width:400px;
+                        box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div style="font-weight:700; font-size:1rem; color:#fff;">🐛 Report a Bug</div>
+                    <button onclick="closeBugReportModal()" style="background:none; border:none;
+                            color:var(--text-muted,#94a3b8); font-size:1.2rem; cursor:pointer; padding:4px;">✕</button>
+                </div>
+                <p style="font-size:0.75rem; color:var(--text-muted,#94a3b8); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <textarea id="bugReportModalText"
+                    placeholder="Describe what happened…"
+                    rows="5"
+                    style="width:100%; background:var(--bg2,#0f172a); border:1.5px solid var(--border,#334155);
+                           color:#fff; padding:14px; border-radius:12px; margin-bottom:12px;
+                           outline:none; font-size:14px; font-family:inherit;
+                           resize:vertical; box-sizing:border-box;"
+                ></textarea>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-main" style="flex:1; background:#334155; color:#fff;"
+                        onclick="closeBugReportModal()">Cancel</button>
+                    <button class="btn-main" style="flex:1; background:var(--accent,#38bdf8); color:#000;"
+                        onclick="submitBugReport()">📨 Send Report</button>
+                </div>
+            </div>
+        `;
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) closeBugReportModal();
+        });
+        document.body.appendChild(modal);
+    } else {
+        modal.style.display = 'flex';
+        const ta = document.getElementById('bugReportModalText');
+        if (ta) ta.value = '';
+    }
+}
+
+function closeBugReportModal() {
+    const modal = document.getElementById('bugReportModal');
+    if (modal) modal.style.display = 'none';
+}
+
 function submitBugReport() {
-    const text = (document.getElementById('bugReportText')?.value || '').trim();
+    const text = (document.getElementById('bugReportModalText')?.value || '').trim();
     if (!text) {
         alert('Please describe the bug before sending.');
         return;
@@ -548,6 +592,7 @@ function submitBugReport() {
         'Active courts: ' + (activeCourts ?? 'N/A')
     );
     window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
+    closeBugReportModal();
 }
 
 function importSyncToken() {
