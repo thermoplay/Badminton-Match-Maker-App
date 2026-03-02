@@ -227,14 +227,20 @@ const SidelineView = {
 
     _renderAchievements() {
         const passport = Passport.get();
-        if (!passport || !passport.playerUUID || !window.fetchPlayerAchievements) return;
+        if (!passport || !passport.playerUUID) return;
 
-        // Find a place to inject the achievements if not present
-        // We'll place it after the identity card
+        // Find player in local squad data
+        const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+
         const identityEl = document.querySelector('.sl-identity');
         if (!identityEl) return;
-
         let container = document.getElementById('slAchievements');
+
+        if (!me || !me.achievements || me.achievements.length === 0) {
+            if (container) container.style.display = 'none';
+            return;
+        }
+
         if (!container) {
             container = document.createElement('div');
             container.id = 'slAchievements';
@@ -242,18 +248,12 @@ const SidelineView = {
             identityEl.parentNode.insertBefore(container, identityEl.nextSibling);
         }
 
-        window.fetchPlayerAchievements(passport.playerUUID).then(unlocked => {
-            if (!unlocked || unlocked.length === 0) {
-                container.style.display = 'none';
-                return;
-            }
-            container.style.display = 'flex';
-            const badges = unlocked.map(a => {
-                const def = window.Achievements ? window.Achievements[a.achievement_id] : null;
-                return def ? `<div class="sl-ach-badge" title="${def.name}">${def.icon}</div>` : '';
-            }).join('');
-            container.innerHTML = `<div class="sl-ach-label">Achievements</div><div class="sl-ach-list">${badges}</div>`;
-        }).catch(() => {});
+        container.style.display = 'flex';
+        const badges = me.achievements.map(achId => {
+            const def = window.Achievements ? window.Achievements[achId] : null;
+            return def ? `<div class="sl-ach-badge" title="${def.name}: ${def.description}">${def.icon}</div>` : '';
+        }).join('');
+        container.innerHTML = `<div class="sl-ach-label">Achievements</div><div class="sl-ach-list">${badges}</div>`;
     },
 };
 

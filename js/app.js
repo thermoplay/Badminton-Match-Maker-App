@@ -833,37 +833,27 @@ async function openPlayerCard(idx) {
     document.getElementById('playerCardModal').style.display = 'flex';
     Haptic.bump();
 
-    // Asynchronously fetch and render achievements
-    if (p.uuid && window.fetchPlayerAchievements && window.Achievements) {
-        const container = document.getElementById('pc-achievements-container');
-        if (!container) return;
-
-        container.innerHTML = `<div class="pc-achievements-loading">Loading achievements...</div>`;
-        
-        try {
-            const unlocked = await fetchPlayerAchievements(p.uuid);
-            
-            if (unlocked && unlocked.length > 0) {
-                const achievementsHTML = unlocked.map(a => {
-                    const achievement = Achievements[a.achievement_id];
-                    if (!achievement) return '';
-                    return `
-                        <div class="pc-achievement-badge" title="${achievement.name}: ${achievement.description}">
-                            ${achievement.icon}
-                        </div>
-                    `;
-                }).join('');
-
-                container.innerHTML = `
-                    <div class="pc-section-title">Achievements</div>
-                    <div class="pc-achievements-grid">${achievementsHTML}</div>
+    // Render achievements directly from local squad data
+    const achievementsContainer = document.getElementById('pc-achievements-container');
+    if (achievementsContainer) {
+        if (p.achievements && p.achievements.length > 0 && window.Achievements) {
+            const achievementsHTML = p.achievements.map(achId => {
+                const achievement = Achievements[achId];
+                if (!achievement) return '';
+                return `
+                    <div class="pc-achievement-badge" title="${achievement.name}: ${achievement.description}">
+                        ${achievement.icon}
+                    </div>
                 `;
-            } else {
-                // To save space, just clear the container if there are no achievements.
-                container.innerHTML = '';
-            }
-        } catch (e) {
-            container.innerHTML = `<div class="pc-achievements-loading">Could not load achievements.</div>`;
+            }).join('');
+
+            achievementsContainer.innerHTML = `
+                <div class="pc-section-title">Achievements</div>
+                <div class="pc-achievements-grid">${achievementsHTML}</div>
+            `;
+        } else {
+            // Clear it if no achievements to save space
+            achievementsContainer.innerHTML = '';
         }
     }
 }
