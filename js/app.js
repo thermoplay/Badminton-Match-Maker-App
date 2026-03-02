@@ -486,7 +486,9 @@ function _supportSectionHTML() {
     return `
         <hr style="margin:28px 0; border:none; border-top:1px solid var(--border);">
 
-        <div style="margin-bottom:24px;">
+        <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+
+        <div style="flex:1 1 0; min-width:140px;">
             <div class="sync-section-label">🐛 Report a Bug</div>
             <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
                 Something broken? Let the dev know.
@@ -497,9 +499,7 @@ function _supportSectionHTML() {
             </button>
         </div>
 
-        <hr style="margin:28px 0; border:none; border-top:1px solid var(--border);">
-
-        <div style="margin-bottom:24px;">
+        <div style="flex:1 1 0; min-width:140px;">
             <div class="sync-section-label">☕ Support the Dev</div>
             <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
                 If Courtside Pro saves you time, consider buying the dev a coffee.
@@ -518,6 +518,8 @@ function _supportSectionHTML() {
                     ☕ Ko-fi
                 </a>
             </div>
+        </div>
+
         </div>
     `;
 }
