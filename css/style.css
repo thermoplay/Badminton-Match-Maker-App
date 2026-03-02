@@ -4916,7 +4916,7 @@ button:active,
     min-width: 0;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 320px) {
     .sl-support-flex-row {
         flex-direction: column;
     }
