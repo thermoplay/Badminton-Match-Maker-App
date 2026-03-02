@@ -3929,6 +3929,60 @@ button:active,
     white-space: nowrap;
 }
 
+/* ── Bug Report Modal (Player View) ─────────────────────────────────────── */
+.sl-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(10,10,15,0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.sl-modal-card {
+    width: 100%;
+    max-width: 340px;
+    background: var(--surface);
+    border: 1px solid var(--border-accent);
+    border-radius: 20px;
+    padding: 24px;
+    animation: cardPop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+
+.sl-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.sl-modal-title {
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text);
+}
+
+.sl-modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 4px;
+    transition: color 0.2s;
+}
+
+.sl-modal-close:hover { color: var(--text); }
+
 /* ── Section labels ─────────────────────────────────────────────────────────── */
 .sl-section-label {
     display: flex;

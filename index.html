@@ -331,12 +331,7 @@
             <div class="sl-support-section sl-support-flex-item">
                 <div class="sl-support-label">🐛 Report a Bug</div>
                 <p class="sl-support-sub">Something broken? Let the dev know.</p>
-                <textarea id="slBugReportText"
-                    placeholder="Describe what happened…"
-                    rows="3"
-                    class="sl-bug-textarea"
-                ></textarea>
-                <button class="sl-support-btn" onclick="slSubmitBugReport()">📨 Send Report</button>
+                <button class="sl-support-btn" onclick="slOpenBugModal()">🐛 Report a Bug</button>
             </div>
 
             <!-- ── SUPPORT THE DEV ────────────────────────────────────────── -->
@@ -358,6 +353,19 @@
 
         </div><!-- /.sl-inner -->
     </div><!-- /#sidelinePanel -->
+
+    <!-- ── Bug Report Modal (Player View) ────────────────────────────────── -->
+    <div id="slBugModal" class="sl-modal" style="display:none;">
+        <div class="sl-modal-card">
+            <div class="sl-modal-header">
+                <div class="sl-modal-title">🐛 Report a Bug</div>
+                <button class="sl-modal-close" onclick="slCloseBugModal()">✕</button>
+            </div>
+            <p class="sl-support-sub">Describe what happened so we can fix it.</p>
+            <textarea id="slBugModalText" class="sl-bug-textarea" rows="5" placeholder="Describe what happened…"></textarea>
+            <button class="sl-support-btn" onclick="slSubmitBugReport()">📨 Send Report</button>
+        </div>
+    </div>
 
     <script src="js/polish.js"></script>
     <script src="js/passport.js"></script>
@@ -383,8 +391,17 @@
             banner._timer = setTimeout(() => banner.classList.remove('visible'), 12000);
         }
 
+        function slOpenBugModal() {
+            document.getElementById('slBugModal').style.display = 'flex';
+            document.getElementById('slBugModalText').focus();
+        }
+
+        function slCloseBugModal() {
+            document.getElementById('slBugModal').style.display = 'none';
+        }
+
         function slSubmitBugReport() {
-            const text = (document.getElementById('slBugReportText')?.value || '').trim();
+            const text = (document.getElementById('slBugModalText')?.value || '').trim();
             if (!text) { alert('Please describe the bug before sending.'); return; }
             const subject = encodeURIComponent('[Courtside Pro] Bug Report');
             const body = encodeURIComponent(
@@ -392,6 +409,8 @@
                 '\n\n---\nTime: ' + new Date().toLocaleString() +
                 '\nView: Player/Sideline'
             );
+            slCloseBugModal();
+            document.getElementById('slBugModalText').value = '';
             window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
         }
 
