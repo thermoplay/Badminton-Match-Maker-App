@@ -89,6 +89,15 @@ async function checkAndAwardAchievements(match, squad) {
  */
 async function fetchPlayerAchievements(player_uuid) {
     if (!player_uuid) return [];
+
+    // 1. Try local squad state (Host & Player view have this)
+    if (typeof squad !== 'undefined') {
+        const p = squad.find(p => p.uuid === player_uuid);
+        if (p && p.achievements) {
+            return p.achievements.map(id => ({ achievement_id: id }));
+        }
+    }
+
     try {
         const res = await fetch(`/api/match-history?player_uuid=${encodeURIComponent(player_uuid)}`);
         if (!res.ok) return [];
@@ -107,6 +116,19 @@ async function fetchPlayerAchievements(player_uuid) {
  */
 async function unlockAchievement(player_uuid, achievement_id) {
     if (!player_uuid) return;
+
+    // 1. Update local state
+    if (typeof squad !== 'undefined') {
+        const p = squad.find(p => p.uuid === player_uuid);
+        if (p) {
+            if (!p.achievements) p.achievements = [];
+            if (!p.achievements.includes(achievement_id)) {
+                p.achievements.push(achievement_id);
+                if (typeof saveToDisk === 'function') saveToDisk();
+            }
+        }
+    }
+
     try {
         await fetch('/api/match-history', {
             method: 'POST',
@@ -130,7 +152,7 @@ async function unlockAchievement(player_uuid, achievement_id) {
 function showAchievementToast(playerName, achievement) {
     // This relies on a function in app.js. We'll add it later.
     if (typeof showSessionToast === 'function') {
-        showSessionToast(`${achievement.icon} ${playerName} unlocked: <strong>${achievement.name}</strong>`);
+        showSessionToast(`${achievement.icon} ${playerName} unlocked: ${achievement.name}`);
     } else {
         console.log(`[Achievement Unlocked!] ${playerName} earned: ${achievement.name}`);
     }
