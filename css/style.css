@@ -4904,3 +4904,20 @@ button:active,
     from { opacity: 0; transform: translateX(-10px); }
     to   { opacity: 1; transform: translateX(0); }
 }
+/* ── Support flex row ─────────────────────────────────────────────────── */
+.sl-support-flex-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.sl-support-flex-item {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+@media (max-width: 480px) {
+    .sl-support-flex-row {
+        flex-direction: column;
+    }
+}
