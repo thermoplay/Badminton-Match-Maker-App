@@ -47,6 +47,7 @@ function migratePlayer(p) {
     if (p.active           == null) p.active           = true;
     if (p.teammateHistory  == null) p.teammateHistory  = {};
     if (p.opponentHistory  == null) p.opponentHistory  = {};
+    if (p.achievements     == null) p.achievements     = [];
     return p;
 }
 
@@ -129,6 +130,7 @@ function addPlayer() {
         forcedRest:        false,
         teammateHistory:   {},
         opponentHistory:   {},
+        achievements:      [],
     });
     el.value = '';
     if (!playerQueue.includes(name)) playerQueue.push(name);
@@ -1320,7 +1322,7 @@ function closePlayRequests() {
 
 async function approvePlayRequest(name, id, playerUUID = null) {
     if (!squad.find(p => p.name === name)) {
-        squad.push({ name, uuid: playerUUID || null, rating: 1000, wins: 0, games: 0, streak: 0, active: true });
+        squad.push({ name, uuid: playerUUID || null, rating: 1000, wins: 0, games: 0, streak: 0, active: true, achievements: [] });
     }
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};
