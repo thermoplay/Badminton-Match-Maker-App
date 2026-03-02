@@ -65,6 +65,11 @@ function processCourtResult(mIdx) {
     // Apply ELO for this court only
     applyELOForMatch(match);
 
+    // Check for any newly unlocked achievements from this match
+    if (window.checkAndAwardAchievements) {
+        checkAndAwardAchievements(match, squad);
+    }
+
     // Rotate just this court's players back into the queue
     rotateCourtPlayers(match);
 

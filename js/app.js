@@ -789,7 +789,7 @@ function getPlayerTitle(p) {
     return { title: 'The Veteran', icon: '🏅' };
 }
 
-function openPlayerCard(idx) {
+async function openPlayerCard(idx) {
     const p  = squad[idx];
     if (!p) return;
 
@@ -825,10 +825,45 @@ function openPlayerCard(idx) {
             </div>
         </div>
         ${p.streak > 0 ? `<div class="pc-streak">🔥 ${p.streak} game win streak</div>` : ''}
+        <div id="pc-achievements-container"></div>
     `;
 
     document.getElementById('playerCardModal').style.display = 'flex';
     Haptic.bump();
+
+    // Asynchronously fetch and render achievements
+    if (p.uuid && window.fetchPlayerAchievements && window.Achievements) {
+        const container = document.getElementById('pc-achievements-container');
+        if (!container) return;
+
+        container.innerHTML = `<div class="pc-achievements-loading">Loading achievements...</div>`;
+        
+        try {
+            const unlocked = await fetchPlayerAchievements(p.uuid);
+            
+            if (unlocked && unlocked.length > 0) {
+                const achievementsHTML = unlocked.map(a => {
+                    const achievement = Achievements[a.achievement_id];
+                    if (!achievement) return '';
+                    return `
+                        <div class="pc-achievement-badge" title="${achievement.name}: ${achievement.description}">
+                            ${achievement.icon}
+                        </div>
+                    `;
+                }).join('');
+
+                container.innerHTML = `
+                    <div class="pc-section-title">Achievements</div>
+                    <div class="pc-achievements-grid">${achievementsHTML}</div>
+                `;
+            } else {
+                // To save space, just clear the container if there are no achievements.
+                container.innerHTML = '';
+            }
+        } catch (e) {
+            container.innerHTML = `<div class="pc-achievements-loading">Could not load achievements.</div>`;
+        }
+    }
 }
 
 function closePlayerCard() {
