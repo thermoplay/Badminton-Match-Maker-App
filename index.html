@@ -250,59 +250,79 @@
                 </div>
             </div>
 
-            <!-- ── STATUS ────────────────────────────────────────────────── -->
-            <div class="sl-status-card" id="slStatusCard" data-state="pending">
-                <div class="sl-status-lhs">
-                    <div class="sl-status-icon" id="slStatusIcon">⏳</div>
-                </div>
-                <div class="sl-status-rhs">
-                    <div class="sl-status-label">STATUS</div>
-                    <div class="sl-status-text" id="slStatusText">Waiting for approval</div>
-                    <div class="sl-status-sub"  id="slStatusSub">The host will add you to the rotation</div>
-                </div>
+            <!-- ── TABS ─────────────────────────────────────────────────── -->
+            <div class="sl-tabs">
+                <button class="sl-tab active" onclick="SidelineView.switchTab('live')">COURT</button>
+                <button class="sl-tab" onclick="SidelineView.switchTab('profile')">PROFILE</button>
             </div>
 
-            <!-- ── IDENTITY ──────────────────────────────────────────────── -->
-            <div class="sl-identity">
-                <div class="sl-avatar" id="slPassportAvatar">?</div>
-                <div class="sl-identity-text">
-                    <div class="sl-passport-name" id="slPassportName">—</div>
-                    <div class="sl-identity-meta">
-                        <button class="sl-rename-btn" onclick="passportRename()">✏️ Edit name</button>
-                        <span class="sl-play-count" id="slPlayCount" style="display:none;"></span>
+            <!-- ── VIEW: LIVE ───────────────────────────────────────────── -->
+            <div id="slViewLive">
+                <!-- ── STATUS ────────────────────────────────────────────────── -->
+                <div class="sl-status-card" id="slStatusCard" data-state="pending">
+                    <div class="sl-status-lhs">
+                        <div class="sl-status-icon" id="slStatusIcon">⏳</div>
+                    </div>
+                    <div class="sl-status-rhs">
+                        <div class="sl-status-label">STATUS</div>
+                        <div class="sl-status-text" id="slStatusText">Waiting for approval</div>
+                        <div class="sl-status-sub"  id="slStatusSub">The host will add you to the rotation</div>
                     </div>
                 </div>
+
+                <!-- ── IDENTITY ──────────────────────────────────────────────── -->
+                <div class="sl-identity">
+                    <div class="sl-avatar" id="slPassportAvatar">?</div>
+                    <div class="sl-identity-text">
+                        <div class="sl-passport-name" id="slPassportName">—</div>
+                        <div class="sl-identity-meta">
+                            <button class="sl-rename-btn" onclick="passportRename()">✏️ Edit name</button>
+                            <span class="sl-play-count" id="slPlayCount" style="display:none;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── LIVE MATCHES ───────────────────────────────────────────── -->
+                <div class="sl-section-label">
+                    <span class="sl-dot-accent"></span>LIVE NOW
+                </div>
+                <div id="slCurrentMatches" class="sl-matches">
+                    <div class="sl-empty">No active round yet</div>
+                </div>
+
+                <!-- ── NEXT UP ────────────────────────────────────────────────── -->
+                <div class="sl-next-up" id="slNextUpRow" style="display:none;">
+                    <span class="sl-next-up-label">NEXT UP</span>
+                    <span class="sl-next-up-names" id="slNextUp"></span>
+                </div>
+
+                <!-- ── LAST MATCH WINNER ──────────────────────────────────────── -->
+                <div class="sl-last-winner-row" id="slLastWinnerRow" style="display:none;">
+                    <span class="sl-last-winner-label">LAST MATCH</span>
+                    <span class="sl-last-winner-name" id="slLastWinner"></span>
+                </div>
+
+                <!-- ── INVITE TO COURT ────────────────────────────────────────── -->
+                <button class="sl-invite-btn" onclick="InviteQR.show(typeof PlayerMode !== 'undefined' ? PlayerMode._joinCode : window.currentRoomCode)">
+                    <span class="sl-invite-icon">📲</span>
+                    Invite to Court
+                    <span class="sl-invite-hint-inline">Share QR</span>
+                </button>
             </div>
 
-            <!-- ── ACHIEVEMENTS (Populated by JS) ────────────────────────── -->
-            <div id="slAchievements" class="sl-achievements-block" style="display:none;"></div>
+            <!-- ── VIEW: PROFILE ────────────────────────────────────────── -->
+            <div id="slViewProfile" style="display:none;">
+                <div class="sl-profile-header">
+                    <div class="sl-profile-avatar" id="slProfileAvatar">?</div>
+                    <div class="sl-profile-info">
+                        <div class="sl-profile-name" id="slProfileName"></div>
+                        <div class="sl-profile-stats" id="slProfileStats"></div>
+                    </div>
+                </div>
 
-            <!-- ── LIVE MATCHES ───────────────────────────────────────────── -->
-            <div class="sl-section-label">
-                <span class="sl-dot-accent"></span>LIVE NOW
+                <div class="sl-section-label">ACHIEVEMENTS</div>
+                <div id="slProfileAchievements" class="sl-achievements-list"></div>
             </div>
-            <div id="slCurrentMatches" class="sl-matches">
-                <div class="sl-empty">No active round yet</div>
-            </div>
-
-            <!-- ── NEXT UP ────────────────────────────────────────────────── -->
-            <div class="sl-next-up" id="slNextUpRow" style="display:none;">
-                <span class="sl-next-up-label">NEXT UP</span>
-                <span class="sl-next-up-names" id="slNextUp"></span>
-            </div>
-
-            <!-- ── LAST MATCH WINNER ──────────────────────────────────────── -->
-            <div class="sl-last-winner-row" id="slLastWinnerRow" style="display:none;">
-                <span class="sl-last-winner-label">LAST MATCH</span>
-                <span class="sl-last-winner-name" id="slLastWinner"></span>
-            </div>
-
-            <!-- ── INVITE TO COURT ────────────────────────────────────────── -->
-            <button class="sl-invite-btn" onclick="InviteQR.show(typeof PlayerMode !== 'undefined' ? PlayerMode._joinCode : window.currentRoomCode)">
-                <span class="sl-invite-icon">📲</span>
-                Invite to Court
-                <span class="sl-invite-hint-inline">Share QR</span>
-            </button>
 
             <!-- ── SUPPORT FLEX ROW ──────────────────────────────────────── -->
             <div class="sl-support-flex-row">

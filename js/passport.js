@@ -72,6 +72,7 @@ const Passport = {
 
 const SidelineView = {
     _visible: false,
+    _currentTab: 'live',
 
     show() {
         this._visible = true;
@@ -85,6 +86,14 @@ const SidelineView = {
         if (panel) panel.style.display = 'none';
     },
 
+    switchTab(tab) {
+        this._currentTab = tab;
+        document.querySelectorAll('.sl-tab').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().includes(tab)));
+        document.getElementById('slViewLive').style.display = tab === 'live' ? 'block' : 'none';
+        document.getElementById('slViewProfile').style.display = tab === 'profile' ? 'block' : 'none';
+        if (tab === 'profile') this._renderProfile();
+    },
+
     refresh() {
         if (!this._visible) return;
         const passport = Passport.get();
@@ -96,7 +105,7 @@ const SidelineView = {
         this._renderMatches();
         this._renderNextUp();
         this._renderLastWinner();
-        this._renderAchievements();
+        if (this._currentTab === 'profile') this._renderProfile();
     },
 
     _renderMatches() {
@@ -225,35 +234,45 @@ const SidelineView = {
         }
     },
 
-    _renderAchievements() {
+    _renderProfile() {
         const passport = Passport.get();
-        if (!passport || !passport.playerUUID) return;
-
-        // Find player in local squad data
+        if (!passport) return;
         const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
 
-        const identityEl = document.querySelector('.sl-identity');
-        if (!identityEl) return;
-        let container = document.getElementById('slAchievements');
+        // Render Header
+        const nameEl = document.getElementById('slProfileName');
+        const avatarEl = document.getElementById('slProfileAvatar');
+        const statsEl = document.getElementById('slProfileStats');
 
-        if (!me || !me.achievements || me.achievements.length === 0) {
-            if (container) container.style.display = 'none';
-            return;
+        if (nameEl) nameEl.textContent = passport.playerName;
+        if (avatarEl) {
+             avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
+             if (window.Avatar) avatarEl.style.background = Avatar.color(passport.playerName);
+        }
+        if (statsEl && me) {
+             const wr = me.games > 0 ? Math.round((me.wins / me.games) * 100) : 0;
+             statsEl.textContent = `${me.wins} Wins · ${me.games} Games · ${wr}% WR`;
         }
 
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'slAchievements';
-            container.className = 'sl-achievements-block';
-            identityEl.parentNode.insertBefore(container, identityEl.nextSibling);
+        // Render Achievements List
+        const container = document.getElementById('slProfileAchievements');
+        if (container && window.Achievements) {
+            const myAch = me ? (me.achievements || []) : [];
+            const html = Object.keys(window.Achievements).map(key => {
+                const def = window.Achievements[key];
+                const unlocked = myAch.includes(key);
+                return `
+                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}">
+                        <div class="sl-ach-icon">${def.icon}</div>
+                        <div class="sl-ach-text">
+                            <div class="sl-ach-title">${def.name}</div>
+                            <div class="sl-ach-desc">${def.description}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            container.innerHTML = html;
         }
-
-        container.style.display = 'flex';
-        const badges = me.achievements.map(achId => {
-            const def = window.Achievements ? window.Achievements[achId] : null;
-            return def ? `<div class="sl-ach-badge" title="${def.name}: ${def.description}">${def.icon}</div>` : '';
-        }).join('');
-        container.innerHTML = `<div class="sl-ach-label">Achievements</div><div class="sl-ach-list">${badges}</div>`;
     },
 };
 

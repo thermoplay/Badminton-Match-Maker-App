@@ -3929,41 +3929,6 @@ button:active,
     white-space: nowrap;
 }
 
-/* ── Achievements Block (Player View) ───────────────────────────────────── */
-.sl-achievements-block {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 10px 16px;
-    margin-top: 8px;
-    animation: sl-fade-up 0.3s ease both;
-}
-
-.sl-ach-label {
-    font-family: var(--font-display);
-    font-size: 0.6rem;
-    font-weight: 900;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    flex-shrink: 0;
-}
-
-.sl-ach-list {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
-.sl-ach-badge {
-    font-size: 1.1rem;
-    line-height: 1;
-    cursor: help;
-}
-
 /* ── Section labels ─────────────────────────────────────────────────────────── */
 .sl-section-label {
     display: flex;
@@ -5017,4 +4982,129 @@ button:active,
     .sl-support-flex-row {
         flex-direction: column;
     }
+}
+
+/* ── Player View Tabs ───────────────────────────────────────────────────── */
+.sl-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 4px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 12px;
+}
+
+.sl-tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sl-tab.active {
+    background: var(--surface2);
+    color: var(--accent);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+/* ── Profile View ───────────────────────────────────────────────────────── */
+.sl-profile-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border-accent);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+.sl-profile-avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--accent-dim);
+    border: 2px solid var(--border-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-size: 1.8rem;
+    font-weight: 900;
+    font-style: italic;
+    color: #fff;
+}
+
+.sl-profile-name {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    color: var(--text);
+    line-height: 1;
+    margin-bottom: 6px;
+}
+
+.sl-profile-stats {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+/* ── Achievements List ──────────────────────────────────────────────────── */
+.sl-achievements-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sl-ach-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    transition: all 0.2s;
+}
+
+.sl-ach-item.locked {
+    opacity: 0.4;
+    filter: grayscale(1);
+}
+
+.sl-ach-item.unlocked {
+    border-color: var(--border-accent);
+    background: linear-gradient(90deg, rgba(0,255,163,0.05), transparent);
+}
+
+.sl-ach-icon {
+    font-size: 1.8rem;
+    line-height: 1;
+}
+
+.sl-ach-title {
+    font-family: var(--font-display);
+    font-size: 0.9rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: var(--text);
+    margin-bottom: 2px;
+}
+
+.sl-ach-desc {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    line-height: 1.3;
 }
