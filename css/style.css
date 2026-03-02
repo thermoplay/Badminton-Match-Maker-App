@@ -2391,6 +2391,61 @@ header {
 
 .player-card-share-btn:active { transform: scale(0.96); opacity: 0.85; }
 
+/* =============================================================================
+   PLAYER CARD — ACHIEVEMENTS
+   ============================================================================= */
+
+.pc-section-title {
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 24px 0 12px;
+    text-align: center;
+    opacity: 0.8;
+}
+
+.pc-achievements-grid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 4px;
+}
+
+.pc-achievement-badge {
+    width: 44px;
+    height: 44px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    cursor: help;
+    transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    user-select: none;
+}
+
+.pc-achievement-badge:hover {
+    transform: translateY(-3px) scale(1.1);
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    box-shadow: 0 4px 12px rgba(0, 255, 163, 0.15);
+    z-index: 2;
+}
+
+.pc-achievements-loading {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-top: 16px;
+    opacity: 0.6;
+}
+
 
 /* =============================================================================
    AURA MATCH POSTER
