@@ -48,6 +48,7 @@ function migratePlayer(p) {
     if (p.teammateHistory  == null) p.teammateHistory  = {};
     if (p.opponentHistory  == null) p.opponentHistory  = {};
     if (p.achievements     == null) p.achievements     = [];
+    if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
     return p;
 }
 
@@ -120,6 +121,7 @@ function addPlayer() {
     }
     squad.push({
         name,
+        uuid:             _generateUUID(),
         active:           true,
         wins:             0,
         games:            0,
@@ -836,24 +838,22 @@ async function openPlayerCard(idx) {
     // Render achievements directly from local squad data
     const achievementsContainer = document.getElementById('pc-achievements-container');
     if (achievementsContainer) {
-        if (p.achievements && p.achievements.length > 0 && window.Achievements) {
-            const achievementsHTML = p.achievements.map(achId => {
-                const achievement = Achievements[achId];
-                if (!achievement) return '';
+        if (window.Achievements) {
+            const allAchHTML = Object.keys(window.Achievements).map(key => {
+                const def = window.Achievements[key];
+                const isUnlocked = p.achievements && p.achievements.includes(key);
                 return `
-                    <div class="pc-achievement-badge" title="${achievement.name}: ${achievement.description}">
-                        ${achievement.icon}
+                    <div class="pc-achievement-badge ${isUnlocked ? 'unlocked' : 'locked'}" 
+                         title="${def.name}: ${def.description}">
+                        ${def.icon}
                     </div>
                 `;
             }).join('');
 
             achievementsContainer.innerHTML = `
                 <div class="pc-section-title">Achievements</div>
-                <div class="pc-achievements-grid">${achievementsHTML}</div>
+                <div class="pc-achievements-grid">${allAchHTML}</div>
             `;
-        } else {
-            // Clear it if no achievements to save space
-            achievementsContainer.innerHTML = '';
         }
     }
 }
@@ -1312,7 +1312,7 @@ function closePlayRequests() {
 
 async function approvePlayRequest(name, id, playerUUID = null) {
     if (!squad.find(p => p.name === name)) {
-        squad.push({ name, uuid: playerUUID || null, rating: 1000, wins: 0, games: 0, streak: 0, active: true, achievements: [] });
+        squad.push({ name, uuid: playerUUID || _generateUUID(), rating: 1000, wins: 0, games: 0, streak: 0, active: true, achievements: [] });
     }
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};
@@ -1345,6 +1345,14 @@ function _makeApprovalToken() {
     const arr = new Uint8Array(12);
     (window.crypto || crypto).getRandomValues(arr);
     return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function _generateUUID() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
 }
 
 async function denyPlayRequest(id) {

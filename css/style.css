@@ -2430,7 +2430,14 @@ header {
     user-select: none;
 }
 
-.pc-achievement-badge:hover {
+.pc-achievement-badge.locked {
+    opacity: 0.2;
+    filter: grayscale(1);
+    background: transparent;
+    border-color: var(--border);
+}
+
+.pc-achievement-badge.unlocked:hover {
     transform: translateY(-3px) scale(1.1);
     border-color: var(--accent);
     background: var(--accent-dim);
