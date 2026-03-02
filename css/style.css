@@ -3922,6 +3922,41 @@ button:active,
     white-space: nowrap;
 }
 
+/* ── Achievements Block (Player View) ───────────────────────────────────── */
+.sl-achievements-block {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px 16px;
+    margin-top: 8px;
+    animation: sl-fade-up 0.3s ease both;
+}
+
+.sl-ach-label {
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.sl-ach-list {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.sl-ach-badge {
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: help;
+}
+
 /* ── Section labels ─────────────────────────────────────────────────────────── */
 .sl-section-label {
     display: flex;
@@ -4976,4 +5011,3 @@ button:active,
         flex-direction: column;
     }
 }
-
