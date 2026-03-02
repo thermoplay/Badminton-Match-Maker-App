@@ -42,7 +42,7 @@ function calculateOdds(teamA, teamB) {
 // PER-COURT ADVANCEMENT — fires when host taps "Next Game" on one court
 // ---------------------------------------------------------------------------
 
-function processCourtResult(mIdx) {
+async function processCourtResult(mIdx) {
     const match = currentMatches[mIdx];
     if (!match || match.winnerTeamIndex === null) {
         alert('Select a winner first.');
@@ -67,7 +67,7 @@ function processCourtResult(mIdx) {
 
     // Check for any newly unlocked achievements from this match
     if (window.checkAndAwardAchievements) {
-        checkAndAwardAchievements(match, squad);
+        await checkAndAwardAchievements(match, squad);
     }
 
     // Rotate just this court's players back into the queue

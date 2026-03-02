@@ -56,19 +56,19 @@ async function checkAndAwardAchievements(match, squad) {
         if (winners.includes(player)) {
             // Check for 'first_win'
             if (!existingIds.has('first_win') && player.wins === 1) {
-                await unlockAchievement(player.uuid, 'first_win');
+                unlockAchievement(player.uuid, 'first_win');
                 showAchievementToast(player.name, Achievements.first_win);
             }
             // Check for 'streak_3'
             if (!existingIds.has('streak_3') && player.streak === 3) {
-                await unlockAchievement(player.uuid, 'streak_3');
+                unlockAchievement(player.uuid, 'streak_3');
                 showAchievementToast(player.name, Achievements.streak_3);
             }
             // Check for 'underdog'
             const winnerTeamRating = match.teams[winIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
             const loserTeamRating = match.teams[loseIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
             if (!existingIds.has('underdog') && winnerTeamRating < loserTeamRating) {
-                await unlockAchievement(player.uuid, 'underdog');
+                unlockAchievement(player.uuid, 'underdog');
                 showAchievementToast(player.name, Achievements.underdog);
             }
         }
@@ -76,7 +76,7 @@ async function checkAndAwardAchievements(match, squad) {
         // --- CHECK PARTICIPATION ACHIEVEMENTS ---
         // Check for 'iron_man'
         if (!existingIds.has('iron_man') && player.sessionPlayCount === 5) {
-            await unlockAchievement(player.uuid, 'iron_man');
+            unlockAchievement(player.uuid, 'iron_man');
             showAchievementToast(player.name, Achievements.iron_man);
         }
     }
