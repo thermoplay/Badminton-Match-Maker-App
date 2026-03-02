@@ -2802,6 +2802,7 @@ header {
     font-size: 0.75rem;
     color: var(--text-muted);
 }
+
 /* Player Card Achievements */
 #pc-achievements-container {
     margin-top: 20px;
