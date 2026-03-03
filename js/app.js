@@ -1706,6 +1706,9 @@ async function initApp() {
 // =============================================================================
 
 window.addEventListener('DOMContentLoaded', () => {
+    // Ensure the original long-press menu gets the correct class for styling
+    document.getElementById('actionMenu')?.classList.add('actionMenu');
+
     initApp().catch(err => {
         console.error('[CourtSide] initApp() failed:', err);
         if (typeof _csShowError === 'function') {
