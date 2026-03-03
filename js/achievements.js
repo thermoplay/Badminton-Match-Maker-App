@@ -95,7 +95,7 @@ async function fetchPlayerAchievements(player_uuid) {
         const data = await res.json();
         return Array.isArray(data.achievements) ? data.achievements : [];
     } catch (e) {
-        console.error('Failed to fetch achievements:', e);
+        console.warn('Failed to fetch achievements (network or API error):', e);
         return [];
     }
 }
