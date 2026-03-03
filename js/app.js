@@ -397,9 +397,11 @@ function showOverlay(type) {
                 </div>
 
                 <hr style="margin:28px 0; border:none; border-top:1px solid var(--border);">
-                <button class="btn-main" style="width:100%; background:rgba(239,68,68,0.1); color:#ef4444;"
-                    onclick="eraseAllData()">WIPE ALL DATA</button>
-
+                <div style="text-align: center;">
+                    <button class="btn-main" style="width: auto; display: inline-flex; background:rgba(239,68,68,0.1); color:#ef4444; flex: initial;"
+                        onclick="eraseAllData()">WIPE ALL DATA</button>
+                </div>
+                
                 ${_supportSectionHTML()}
             `}
         `;
@@ -622,11 +624,60 @@ function importSyncToken() {
     }
 }
 
+function showConfirmationModal({ title, message, confirmText, isDestructive, onConfirm }) {
+    // Remove existing modal if any
+    document.getElementById('confirmationModal')?.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'confirmationModal';
+    modal.className = 'actionMenu'; // Reuse styles from actionMenu
+    modal.style.display = 'flex';
+    modal.style.zIndex = '4000'; // Ensure it's on top of other overlays
+
+    const confirmBtnClass = isDestructive ? 'btn-main btn-danger' : 'btn-main';
+
+    modal.innerHTML = `
+        <div class="menu-card">
+            <h2>${escapeHTML(title)}</h2>
+            <p>${escapeHTML(message)}</p>
+            <button id="confirmBtn" class="${confirmBtnClass} menu-btn">${escapeHTML(confirmText)}</button>
+            <button id="cancelBtn" class="btn-cancel">Cancel</button>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const confirmBtn = document.getElementById('confirmBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    
+    const close = () => modal.remove();
+
+    confirmBtn.onclick = () => {
+        close();
+        onConfirm();
+    };
+
+    cancelBtn.onclick = close;
+    
+    // Also close if clicking the backdrop
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) close();
+    });
+}
+
 function eraseAllData() {
-    if (confirm('Wipe everything? This cannot be undone.')) {
-        localStorage.clear();
-        location.reload();
-    }
+    localStorage.clear();
+    location.reload();
+}
+
+function confirmEraseAllData() {
+    showConfirmationModal({
+        title: 'Wipe All Data?',
+        message: 'This will permanently delete all players, matches, and session history. This action cannot be undone.',
+        confirmText: 'Yes, Wipe Everything',
+        isDestructive: true,
+        onConfirm: eraseAllData
+    });
 }
 
 // ---------------------------------------------------------------------------
