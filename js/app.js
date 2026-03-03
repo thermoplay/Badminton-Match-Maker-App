@@ -1370,8 +1370,25 @@ function closePlayRequests() {
 }
 
 async function approvePlayRequest(name, id, playerUUID = null) {
-    if (!squad.find(p => p.name === name)) {
-        squad.push({ name, uuid: playerUUID || _generateUUID(), rating: 1000, wins: 0, games: 0, streak: 0, active: true, achievements: [] });
+    const existingPlayer = squad.find(p => p.name === name || (playerUUID && p.uuid === playerUUID));
+
+    if (!existingPlayer) {
+        const newPlayerUUID = playerUUID || _generateUUID();
+        let existingAchievements = [];
+
+        // Pre-fetch achievements to fully hydrate the player object upon joining.
+        // This ensures their full history is available for the session.
+        if (window.fetchPlayerAchievements) {
+            try {
+                const fetched = await window.fetchPlayerAchievements(newPlayerUUID);
+                existingAchievements = fetched.map(a => a.achievement_id);
+            } catch (e) {
+                console.error(`Failed to pre-fetch achievements for ${name}`, e);
+            }
+        }
+        squad.push({
+            name, uuid: newPlayerUUID, rating: 1000, wins: 0, games: 0, streak: 0, active: true, achievements: existingAchievements
+        });
     }
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};

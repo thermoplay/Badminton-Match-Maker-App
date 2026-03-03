@@ -89,14 +89,6 @@ async function checkAndAwardAchievements(match, squad) {
 async function fetchPlayerAchievements(player_uuid) {
     if (!player_uuid) return [];
 
-    // 1. Try local squad state (Host & Player view have this)
-    if (typeof squad !== 'undefined') {
-        const p = squad.find(p => p.uuid === player_uuid);
-        if (p && p.achievements) {
-            return p.achievements.map(id => ({ achievement_id: id }));
-        }
-    }
-
     try {
         const res = await fetch(`/api/match-history?player_uuid=${encodeURIComponent(player_uuid)}`);
         if (!res.ok) return [];
