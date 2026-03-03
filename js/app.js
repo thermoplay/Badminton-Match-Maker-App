@@ -490,40 +490,42 @@ function fallbackCopy(text) {
 
 function _supportSectionHTML() {
     return `
-        <hr style="margin:28px 0; border:none; border-top:1px solid var(--border);">
+        <div style="margin-top: auto; padding-top: 24px;">
+            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
 
-        <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
 
-        <div style="flex:1 1 0; min-width:140px;">
-            <div class="sync-section-label">🐛 Report a Bug</div>
-            <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
-                Something broken? Let the dev know.
-            </p>
-            <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
-                onclick="openBugReportModal()">
-                🐛 Report a Bug
-            </button>
-        </div>
-
-        <div style="flex:1 1 0; min-width:140px;">
-            <div class="sync-section-label">☕ Support the Dev</div>
-            <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
-                If Courtside Pro saves you time, consider buying the dev a coffee.
-            </p>
-            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
-                <div style="text-align:center;">
-                        
-                </div>
-                <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
-                    style="display:inline-flex; align-items:center; gap:8px;
-                           background:#FF5E5B; color:#fff; font-weight:700;
-                           font-size:0.82rem; padding:12px 20px; border-radius:12px;
-                           text-decoration:none; white-space:nowrap;">
-                    ☕ Ko-fi
-                </a>
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">🐛 Report a Bug</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
+                    onclick="openBugReportModal()">
+                    🐛 Report a Bug
+                </button>
             </div>
-        </div>
 
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">☕ Support the Dev</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
+                    If Courtside Pro saves you time, consider buying the dev a coffee.
+                </p>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
+                    <div style="text-align:center;">
+                            
+                    </div>
+                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
+                        style="display:inline-flex; align-items:center; gap:8px;
+                               background:#FF5E5B; color:#fff; font-weight:700;
+                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
+                               text-decoration:none; white-space:nowrap;">
+                        ☕ Ko-fi
+                    </a>
+                </div>
+            </div>
+
+            </div>
         </div>
     `;
 }

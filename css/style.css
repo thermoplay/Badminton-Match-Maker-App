@@ -993,12 +993,21 @@ input:focus {
     z-index: 2000;
     padding: 36px 20px calc(36px + var(--safe-bottom));
     transform: translateY(100%);
+    display: flex;
+    flex-direction: column;
     transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
     overflow-y: auto;
     overscroll-behavior: contain;
 }
 
 #overlay.open { transform: translateY(0); }
+
+/* This is the container for the dynamic content inside the overlay */
+#overlayContent {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+}
 
 .overlay-header {
     display: flex;
@@ -3518,7 +3527,7 @@ button:active,
     max-width: 480px;
     margin: 0 auto;
     min-height: 100%;
-    padding: 1.5rem 0 5rem;
+    padding: 1.5rem 0 2rem;
     display: flex;
     flex-direction: column;
     gap: 0.875rem;
