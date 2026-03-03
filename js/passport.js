@@ -382,10 +382,15 @@ const PlayerMode = {
     leaveSession() {
         const doLeave = () => {
             const passport = Passport.get();
-            if (!passport || !this._joinCode) return;
+            
+            // Recover code if missing (e.g. after reload) so we can leave properly
+            if (!this._joinCode) {
+                this._joinCode = localStorage.getItem('cs_player_room_code');
+            }
 
             // 1. Notify host that we are leaving
-            try {
+            if (passport && this._joinCode) {
+                try {
                 // API call with keepalive ensures it sends even if page unloads
                 fetch('/api/play-request', {
                     method: 'POST',
@@ -397,8 +402,9 @@ const PlayerMode = {
                 if (typeof window.broadcastPlayerLeaving === 'function') {
                     window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
                 }
-            } catch (e) {
-                console.error('[CourtSide] Failed to broadcast leaving event. Leaving locally anyway.', e);
+                } catch (e) {
+                    console.error('[CourtSide] Failed to broadcast leaving event. Leaving locally anyway.', e);
+                }
             }
 
             // 2. Clean up local state
@@ -730,6 +736,19 @@ const PlayerMode = {
         }
 
         SidelineView.show();
+
+        // Self-repair: Fetch achievements locally to ensure they appear even if host sync missed them
+        if (window.fetchPlayerAchievements) {
+            window.fetchPlayerAchievements(passport.playerUUID).then(achs => {
+                const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+                if (me && achs && achs.length > 0) {
+                    const ids = achs.map(a => a.achievement_id);
+                    me.achievements = [...new Set([...(me.achievements || []), ...ids])];
+                    SidelineView.refresh();
+                }
+            }).catch(() => {});
+        }
+
         setTimeout(() => this._updateStatus(passport), 800);
     },
 
@@ -868,6 +887,19 @@ const PlayerMode = {
         if (window.Haptic) Haptic.success();
 
         SidelineView.show();
+
+        // Self-repair: Fetch achievements locally
+        if (window.fetchPlayerAchievements) {
+            window.fetchPlayerAchievements(passport.playerUUID).then(achs => {
+                const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+                if (me && achs && achs.length > 0) {
+                    const ids = achs.map(a => a.achievement_id);
+                    me.achievements = [...new Set([...(me.achievements || []), ...ids])];
+                    SidelineView.refresh();
+                }
+            }).catch(() => {});
+        }
+
         setTimeout(() => this._updateStatus(p), 1200);
 
         if (window.Haptic) Haptic.success();
