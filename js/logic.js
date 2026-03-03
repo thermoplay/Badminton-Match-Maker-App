@@ -571,6 +571,9 @@ function setWinner(mIdx, tIdx) {
 
     checkNextButtonState();
     saveToDisk();
+
+    // Broadcast winner selection immediately so players see it on their feed.
+    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx);
 }
 
 // ---------------------------------------------------------------------------

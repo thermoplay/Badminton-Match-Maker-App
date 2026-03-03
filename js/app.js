@@ -62,9 +62,10 @@ function loadFromDisk() {
 
             squad.forEach(migratePlayer);
 
-            currentMatches = (data.currentMatches || []).filter(m => {
-                return m.teams.flat().every(name => squad.find(p => p.name === name));
-            });
+            const squadPlayerNames = new Set(squad.map(p => p.name));
+            currentMatches = (data.currentMatches || []).filter(m =>
+                m.teams.flat().every(name => squadPlayerNames.has(name))
+            );
 
             playerQueue  = (data.playerQueue || [])
                 .filter(name => squad.find(p => p.name === name));
