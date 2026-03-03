@@ -1042,13 +1042,8 @@ function _showYoureUpBanner() {
 function _renderPlayCount(playerName) {
     const el = document.getElementById('slPlayCount');
     if (!el) return;
-
-    const squad = window.squad || [];
-    const me    = squad.find(p => p.name?.toLowerCase() === playerName?.toLowerCase());
-    const count = me?.sessionPlayCount ?? 0;
-
-    el.textContent   = `${count} game${count !== 1 ? 's' : ''} this session`;
-    el.style.display = 'inline-flex';
+    // Per user request, hide this pill.
+    el.style.display = 'none';
 }
 
 // =============================================================================

@@ -93,7 +93,7 @@ async function fetchPlayerAchievements(player_uuid) {
         const res = await fetch(`/api/match-history?player_uuid=${encodeURIComponent(player_uuid)}`);
         if (!res.ok) return [];
         const data = await res.json();
-        return data.achievements || [];
+        return Array.isArray(data.achievements) ? data.achievements : [];
     } catch (e) {
         console.error('Failed to fetch achievements:', e);
         return [];

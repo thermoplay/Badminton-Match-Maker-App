@@ -1370,33 +1370,53 @@ function closePlayRequests() {
 }
 
 async function approvePlayRequest(name, id, playerUUID = null) {
-    const existingPlayer = squad.find(p => p.name === name || (playerUUID && p.uuid === playerUUID));
+    // Ensure empty strings are treated as null
+    const validUUID = playerUUID && playerUUID.trim().length > 0 ? playerUUID : null;
+    
+    let player = squad.find(p => p.name === name || (validUUID && p.uuid === validUUID));
+    let isNew = false;
 
-    if (!existingPlayer) {
-        const newPlayerUUID = playerUUID || _generateUUID();
-        let existingAchievements = [];
+    // If we found a player by NAME but they have a different (or generated) UUID,
+    // and the incoming request has a valid Passport UUID, we "adopt" the existing player.
+    if (player && validUUID && player.uuid !== validUUID) {
+        console.log(`[CourtSide] Adopting existing player "${player.name}" with new UUID: ${validUUID}`);
+        player.uuid = validUUID; // Update to the real Passport UUID
+    }
 
-        // Pre-fetch achievements to fully hydrate the player object upon joining.
-        // This ensures their full history is available for the session.
-        if (window.fetchPlayerAchievements) {
-            try {
-                const fetched = await window.fetchPlayerAchievements(newPlayerUUID);
-                existingAchievements = fetched.map(a => a.achievement_id);
-            } catch (e) {
-                console.error(`Failed to pre-fetch achievements for ${name}`, e);
-            }
+    if (!player) {
+        isNew = true;
+        const newPlayerUUID = validUUID || _generateUUID();
+        player = {
+            name: name,
+            uuid: newPlayerUUID,
+            rating: 1000, // Keep original rating for new online players
+            active: true,
+            achievements: []
+        };
+        migratePlayer(player);
+        squad.push(player);
+    }
+
+    // Always fetch/refresh achievements if we have a valid UUID (new or adopted)
+    if (player.uuid && window.fetchPlayerAchievements) {
+        try {
+            const fetched = await window.fetchPlayerAchievements(player.uuid);
+            const achievementIds = fetched.map(a => a.achievement_id);
+            // Merge with existing to avoid losing session-unlocked ones
+            const currentSet = new Set(player.achievements || []);
+            achievementIds.forEach(id => currentSet.add(id));
+            player.achievements = Array.from(currentSet);
+        } catch (e) {
+            console.error(`Failed to fetch achievements for ${name}`, e);
         }
-        squad.push({
-            name, uuid: newPlayerUUID, rating: 1000, wins: 0, games: 0, streak: 0, active: true, achievements: existingAchievements
-        });
     }
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};
-    if (playerUUID) window._sessionUUIDMap[name] = playerUUID;
+    if (validUUID) window._sessionUUIDMap[name] = validUUID;
 
     const token = _makeApprovalToken();
     window._approvedPlayers = window._approvedPlayers || {};
-    window._approvedPlayers[playerUUID || name] = { token, name, uuid: playerUUID, approvedAt: Date.now() };
+    window._approvedPlayers[validUUID || name] = { token, name, uuid: validUUID, approvedAt: Date.now() };
 
     renderSquad();
     saveToDisk();
@@ -1406,12 +1426,12 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     showSessionToast(`✅ ${name} added`);
     Haptic.success();
 
-    if (typeof memberApprove === 'function' && playerUUID) {
-        memberApprove(playerUUID);
+    if (typeof memberApprove === 'function' && validUUID) {
+        memberApprove(validUUID);
     }
 
     if (typeof broadcastApproval === 'function') {
-        broadcastApproval(playerUUID, name, token);
+        broadcastApproval(validUUID, name, token);
     }
 
     await denyPlayRequest(id);
