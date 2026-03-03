@@ -8,6 +8,7 @@
 let passport  = null;
 let inviteQR  = null;
 let supabase  = null;
+let _hostHtml5QrCode = null;
 
 // ---------------------------------------------------------------------------
 // STATE
@@ -616,6 +617,84 @@ function fallbackCopy(text) {
         alert('Could not copy automatically. Please copy the token manually.');
     }
     document.body.removeChild(ta);
+}
+
+async function startHostScanner(btn) {
+    if (btn) {
+        btn.textContent = 'Loading Camera...';
+        btn.disabled = true;
+    }
+
+    if (!window.Html5Qrcode) {
+        try {
+            await new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = "https://unpkg.com/html5-qrcode";
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        } catch (e) {
+            alert('Could not load scanner library. Check internet connection.');
+            if (btn) { btn.textContent = '📷 Scan QR Code'; btn.disabled = false; }
+            return;
+        }
+    }
+
+    const wrapper = document.getElementById('host-scanner-wrapper');
+    if (wrapper) wrapper.style.display = 'block';
+    if (btn) btn.style.display = 'none';
+
+    _hostHtml5QrCode = new Html5Qrcode("host-scanner-reader");
+    const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+    
+    _hostHtml5QrCode.start({ facingMode: "environment" }, config, 
+        (decodedText) => {
+            let code = null;
+            try {
+                const url = new URL(decodedText);
+                code = url.searchParams.get('join');
+            } catch (e) {}
+            
+            if (!code && /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(decodedText)) {
+                code = decodedText;
+            }
+
+            if (code) {
+                stopHostScanner().then(() => {
+                    const input = document.getElementById('roomCodeInput');
+                    if (input) input.value = code;
+                    if (typeof joinOnlineSession === 'function') {
+                        joinOnlineSession(code);
+                    }
+                });
+            }
+        },
+        (errorMessage) => { /* ignore */ }
+    ).catch(err => {
+        console.error("Error starting scanner", err);
+        alert("Camera access failed. Please ensure permissions are granted.");
+        stopHostScanner();
+    });
+}
+
+async function stopHostScanner() {
+    if (_hostHtml5QrCode) {
+        try {
+            await _hostHtml5QrCode.stop();
+            _hostHtml5QrCode.clear();
+        } catch (e) { /* ignore */ }
+        _hostHtml5QrCode = null;
+    }
+    const wrapper = document.getElementById('host-scanner-wrapper');
+    if (wrapper) wrapper.style.display = 'none';
+    
+    const btn = document.getElementById('hostScanBtn');
+    if (btn) {
+        btn.style.display = ''; // Revert to CSS default (flex)
+        btn.textContent = '📷 Scan QR Code';
+        btn.disabled = false;
+    }
 }
 
 function _supportSectionHTML() {

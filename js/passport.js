@@ -1070,11 +1070,14 @@ const PlayerMode = {
                 <div style="font-size:0.85rem; color:var(--text-muted); line-height:1.5; margin-bottom:1.5rem;">
                     Open your camera app and scan the QR code on the host device to enter the court.
                 </div>
-                <button class="sl-code-btn" onclick="PlayerMode._startInAppScanner(this)">
+                <button id="slScanBtn" class="sl-code-btn" onclick="PlayerMode._startInAppScanner(this)">
                     Open Camera Scanner
                 </button>
                 <div id="sl-scanner-wrapper" style="margin-top:1rem; overflow:hidden; border-radius:12px; display:none;">
                     <div id="sl-scanner-reader" style="width:100%"></div>
+                    <button class="sl-code-btn" style="margin-top:12px; background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3);" onclick="PlayerMode._stopInAppScanner()">
+                        Cancel
+                    </button>
                 </div>
             </div>`;
     },
@@ -1105,10 +1108,10 @@ const PlayerMode = {
         if (wrapper) wrapper.style.display = 'block';
         if (btn) btn.style.display = 'none';
 
-        const html5QrCode = new Html5Qrcode("sl-scanner-reader");
+        this._html5QrCode = new Html5Qrcode("sl-scanner-reader");
         const config = { fps: 10, qrbox: { width: 250, height: 250 } };
         
-        html5QrCode.start({ facingMode: "environment" }, config, 
+        this._html5QrCode.start({ facingMode: "environment" }, config, 
             (decodedText) => {
                 let code = null;
                 try {
@@ -1121,8 +1124,9 @@ const PlayerMode = {
                 }
 
                 if (code) {
-                    html5QrCode.stop().then(() => {
-                        html5QrCode.clear();
+                    this._html5QrCode.stop().then(() => {
+                        this._html5QrCode.clear();
+                        this._html5QrCode = null;
                         PlayerMode.boot(Passport.get(), code);
                     }).catch(err => console.error(err));
                 }
@@ -1131,9 +1135,27 @@ const PlayerMode = {
         ).catch(err => {
             console.error("Error starting scanner", err);
             alert("Camera access failed. Please ensure permissions are granted.");
-            if (wrapper) wrapper.style.display = 'none';
-            if (btn) { btn.style.display = 'block'; btn.textContent = 'Open Camera Scanner'; btn.disabled = false; }
+            this._stopInAppScanner();
         });
+    },
+
+    async _stopInAppScanner() {
+        if (this._html5QrCode) {
+            try {
+                await this._html5QrCode.stop();
+                this._html5QrCode.clear();
+            } catch (e) { /* ignore if not running */ }
+            this._html5QrCode = null;
+        }
+        const wrapper = document.getElementById('sl-scanner-wrapper');
+        if (wrapper) wrapper.style.display = 'none';
+        
+        const btn = document.getElementById('slScanBtn');
+        if (btn) {
+            btn.style.display = 'block';
+            btn.textContent = 'Open Camera Scanner';
+            btn.disabled = false;
+        }
     },
 
     _promptName() {
