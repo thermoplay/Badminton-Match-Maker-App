@@ -166,26 +166,30 @@ function deletePlayer() {
     const p = squad[selectedPlayerIndex];
     if (!p) return;
 
-    if (!confirm(`Delete ${p.name}? This will remove the player from the squad and all current matches. This action cannot be undone.`)) {
-        return;
-    }
+    showConfirmationModal({
+        title: `Delete ${p.name}?`,
+        message: 'This will remove the player from the squad and all current matches. This action cannot be undone.',
+        confirmText: 'Yes, Delete Player',
+        isDestructive: true,
+        onConfirm: () => {
+            const removedName = p.name;
+            const removedUUID = p.uuid || null;
 
-    const removedName = p.name;
-    const removedUUID = p.uuid || null;
+            squad.splice(selectedPlayerIndex, 1);
+            currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
+            playerQueue = playerQueue.filter(n => n !== removedName);
 
-    squad.splice(selectedPlayerIndex, 1);
-    currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
-    playerQueue = playerQueue.filter(n => n !== removedName);
+            closeMenu();
+            renderSquad();
+            rebuildMatchCardIndices(); // Use this to safely re-render matches
+            checkNextButtonState();
+            saveToDisk();
 
-    closeMenu();
-    renderSquad();
-    rebuildMatchCardIndices(); // Use this to safely re-render matches
-    checkNextButtonState();
-    saveToDisk();
-
-    if (isOnlineSession && typeof _broadcast === 'function') {
-        _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
-    }
+            if (isOnlineSession && typeof _broadcast === 'function') {
+                _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
+            }
+        }
+    });
 }
 
 function toggleRestingState() {
@@ -402,7 +406,7 @@ function showOverlay(type) {
                 <hr style="margin:28px 0; border:none; border-top:1px solid var(--border);">
                 <div style="text-align: center;">
                     <button class="btn-main" style="width: auto; display: inline-flex; background:rgba(239,68,68,0.1); color:#ef4444; flex: initial;"
-                        onclick="eraseAllData()">WIPE ALL DATA</button>
+                        onclick="confirmEraseAllData()">WIPE ALL DATA</button>
                 </div>
                 
                 ${_supportSectionHTML()}
