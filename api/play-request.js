@@ -54,7 +54,20 @@ export default async function handler(req, res) {
 
     // ── POST: player submits join request ────────────────────────────────────
     if (req.method === 'POST') {
-        const { room_code, name, player_uuid, force } = req.body;
+        const { room_code, name, player_uuid, force, leave } = req.body;
+
+        // ── OPTION A: Player Leaving (Self-Delete) ───────────────────────────
+        if (leave === true) {
+            if (!room_code || !player_uuid) return res.status(400).json({ error: 'Missing fields' });
+            const code = String(room_code).trim().toUpperCase();
+            const uuid = String(player_uuid).trim();
+            const del = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`, {
+                method: 'DELETE'
+            });
+            return res.status(del.ok ? 200 : 500).json({ ok: del.ok });
+        }
+
+        // ── OPTION B: Player Joining ─────────────────────────────────────────
         if (!room_code || !name) return res.status(400).json({ error: 'Missing fields' });
 
         const code    = String(room_code).trim().toUpperCase();

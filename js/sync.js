@@ -550,7 +550,8 @@ function subscribeRealtime(roomCode) {
 
                 if (table === 'session_members' || data.payload?.data?.table === 'session_members') {
                     // session_members change — ALL subscribers handle this
-                    if (record) _handleMemberChange(record, old, data.payload?.data?.type);
+                    if (type === 'DELETE' && old) _handleMemberChange(old, null, type);
+                    else if (record) _handleMemberChange(record, old, type);
                     return;
                 }
 

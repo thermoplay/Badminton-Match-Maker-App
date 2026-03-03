@@ -386,6 +386,14 @@ const PlayerMode = {
 
             // 1. Notify host that we are leaving
             try {
+                // API call with keepalive ensures it sends even if page unloads
+                fetch('/api/play-request', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room_code: this._joinCode, player_uuid: passport.playerUUID, leave: true }),
+                    keepalive: true
+                });
+
                 if (typeof window.broadcastPlayerLeaving === 'function') {
                     window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
                 }
