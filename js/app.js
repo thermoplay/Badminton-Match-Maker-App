@@ -1503,6 +1503,7 @@ function _resolvePlayerForSession(name, incomingUUID) {
 }
 
 async function approvePlayRequest(name, id, playerUUID = null) {
+    console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
     const player = _resolvePlayerForSession(name, playerUUID);
     const finalName = player.name;
     const validUUID = player.uuid;
@@ -1513,7 +1514,8 @@ async function approvePlayRequest(name, id, playerUUID = null) {
             const fetched = await window.fetchPlayerAchievements(player.uuid);
             const achievementIds = fetched.map(a => a.achievement_id);
             // Merge with existing to avoid losing session-unlocked ones
-            const currentSet = new Set(player.achievements || []);
+            // If fetch returns empty but we have local ones, keep local ones (safety)
+            const currentSet = new Set(player.achievements || []); 
             achievementIds.forEach(id => currentSet.add(id));
             player.achievements = Array.from(currentSet);
         } catch (e) {

@@ -279,13 +279,23 @@ const SidelineView = {
         if (profileView && !profileView.querySelector('.sl-session-actions')) {
             const actionsEl = document.createElement('div');
             actionsEl.className = 'sl-session-actions';
-            actionsEl.innerHTML = `
-                <div class="sl-support-section" style="margin-top: 24px;">
-                    <button class="sl-leave-btn" onclick="PlayerMode.leaveSession()">
-                        Leave Session
-                    </button>
-                    <p class="sl-leave-hint">You will be removed from the rotation. You can rejoin later.</p>
-                </div>`;
+            
+            const supportSection = document.createElement('div');
+            supportSection.className = 'sl-support-section';
+            supportSection.style.marginTop = '24px';
+
+            const leaveBtn = document.createElement('button');
+            leaveBtn.className = 'sl-leave-btn';
+            leaveBtn.textContent = 'Leave Session';
+            leaveBtn.onclick = () => PlayerMode.leaveSession(); // Direct binding fixes scope issue
+
+            const hint = document.createElement('p');
+            hint.className = 'sl-leave-hint';
+            hint.textContent = 'You will be removed from the rotation. You can rejoin later.';
+
+            supportSection.appendChild(leaveBtn);
+            supportSection.appendChild(hint);
+            actionsEl.appendChild(supportSection);
             profileView.appendChild(actionsEl);
         }
     },
@@ -854,6 +864,7 @@ const PlayerMode = {
 
     async _submitJoinRequest(passport, joinCode) {
         this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
+        console.log('[PlayerMode] Joining with UUID:', passport.playerUUID);
         try {
             const res = await fetch('/api/play-request', {
                 method:  'POST',
