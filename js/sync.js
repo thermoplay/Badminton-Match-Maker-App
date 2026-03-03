@@ -978,7 +978,7 @@ updateSessionUI = function() {
     }
     if (isOnlineSession && !isOperator) registerPresence();
     if (typeof updateIWTPVisibility === 'function') updateIWTPVisibility();
-    if (isOnlineSession && isOperator && typeof _startPolling === 'function') _startPolling();
+    if (isOnlineSession && isOperator && typeof window._startPolling === 'function') window._startPolling();
 };
 
 // ---------------------------------------------------------------------------

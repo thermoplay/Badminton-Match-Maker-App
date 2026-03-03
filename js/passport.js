@@ -486,6 +486,25 @@ const PlayerMode = {
         }
 
         if (upsertResult.status === 'active') {
+            // VERIFY: The member table says active, but are we actually in the session's approved list?
+            // If the host removed us, we might still be 'active' in member table but gone from session data.
+            try {
+                const sessionRes = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
+                if (sessionRes.ok) {
+                    const sData = await sessionRes.json();
+                    const approved = sData.session?.approved_players || {};
+                    const me = approved[passport.playerUUID] || approved[passport.playerName];
+                    if (!me) {
+                        // Desync detected: Server says active, but session says we are gone. Force a new request.
+                        throw new Error('Ghost player detected');
+                    }
+                }
+            } catch (e) {
+                // Fall through to submitJoinRequest
+                await this._submitJoinRequest(Passport.get(), joinCode);
+                return;
+            }
+
             this._markApprovedInSession(joinCode);
             this._hydrateFromUpsert(upsertResult);
             const p = Passport.get();

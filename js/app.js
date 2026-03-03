@@ -222,6 +222,7 @@ function removePlayerFromSession(playerUUID, playerName) {
     if (playerIndex === -1) return; // Player not in squad
 
     const removedName = squad[playerIndex].name;
+    const removedUUID = squad[playerIndex].uuid;
     squad.splice(playerIndex, 1);
 
     currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
@@ -229,6 +230,12 @@ function removePlayerFromSession(playerUUID, playerName) {
 
     // Ensure any players stranded by a disbanded match are returned to the queue
     if (typeof initQueue === 'function') initQueue();
+
+    // Clean up approved players list so they can rejoin properly later
+    if (window._approvedPlayers) {
+        if (removedUUID) delete window._approvedPlayers[removedUUID];
+        if (removedName) delete window._approvedPlayers[removedName];
+    }
 
     renderSquad();
     rebuildMatchCardIndices();
@@ -1570,6 +1577,7 @@ const _startPolling = () => {
     pollPlayRequests();
     setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
 };
+window._startPolling = _startPolling;
 
 function updateIWTPVisibility() {
     const sheet = document.getElementById('iwantToPlaySheet');
