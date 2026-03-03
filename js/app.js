@@ -1530,7 +1530,12 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     window._approvedPlayers = window._approvedPlayers || {};
     window._approvedPlayers[validUUID || player.name] = { token, name: player.name, uuid: validUUID, approvedAt: Date.now() };
 
+    if (!playerQueue.includes(player.name)) {
+        playerQueue.push(player.name);
+    }
+
     renderSquad();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
     saveToDisk();
     // Broadcast squad update immediately — don't wait for DB debounce
     if (typeof broadcastGameState === 'function') broadcastGameState();
