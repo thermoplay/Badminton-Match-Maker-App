@@ -163,26 +163,33 @@ function editPlayerName() {
 }
 
 function deletePlayer() {
-    if (!confirm('Remove this player?')) return;
-    const removed     = squad[selectedPlayerIndex];
-    const removedName = removed.name;
-    const removedUUID = removed.uuid || null;
+    const p = squad[selectedPlayerIndex];
+    if (!p) return;
 
-    squad.splice(selectedPlayerIndex, 1);
-    currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
-    playerQueue = playerQueue.filter(n => n !== removedName);
+    showConfirmationModal({
+        title: `Delete ${p.name}?`,
+        message: 'This will remove the player from the squad and all current matches. This action cannot be undone.',
+        confirmText: 'Yes, Delete Player',
+        isDestructive: true,
+        onConfirm: () => {
+            const removedName = p.name;
+            const removedUUID = p.uuid || null;
 
-    closeMenu();
-    renderSquad();
-    const container = document.getElementById('matchContainer');
-    container.innerHTML = '';
-    renderSavedMatches();
-    checkNextButtonState();
-    saveToDisk();
+            squad.splice(selectedPlayerIndex, 1);
+            currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
+            playerQueue = playerQueue.filter(n => n !== removedName);
 
-    if (isOnlineSession && typeof _broadcast === 'function') {
-        _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
-    }
+            closeMenu();
+            renderSquad();
+            rebuildMatchCardIndices(); // Use this to safely re-render matches
+            checkNextButtonState();
+            saveToDisk();
+
+            if (isOnlineSession && typeof _broadcast === 'function') {
+                _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
+            }
+        }
+    });
 }
 
 function toggleRestingState() {
@@ -631,7 +638,6 @@ function showConfirmationModal({ title, message, confirmText, isDestructive, onC
     const modal = document.createElement('div');
     modal.id = 'confirmationModal';
     modal.className = 'actionMenu'; // Reuse styles from actionMenu
-    modal.style.display = 'flex';
     modal.style.zIndex = '4000'; // Ensure it's on top of other overlays
 
     const confirmBtnClass = isDestructive ? 'btn-main btn-danger' : 'btn-main';
