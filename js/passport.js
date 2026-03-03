@@ -694,24 +694,23 @@ const PlayerMode = {
     _prevStatus: null,
 
     _updateStatus(passport) {
-        const name    = passport.playerName?.toLowerCase();
         const squad   = window.squad          || [];
         const matches = window.currentMatches || [];
 
-        const playing = matches.some(m =>
-            [...(m.teams[0]||[]), ...(m.teams[1]||[])].map(n => n.toLowerCase()).includes(name)
-        );
-        const inSquad = squad.some(p => p.name?.toLowerCase() === name);
+        // Prioritize UUID for all lookups to ensure robustness against name changes.
+        const me = squad.find(p => p.uuid === passport.playerUUID);
+        const myName = me ? me.name : passport.playerName;
 
-        const playingNames = new Set(
-            matches.flatMap(m => [...(m.teams[0]||[]), ...(m.teams[1]||[])])
-                   .map(n => n.toLowerCase())
-        );
-        const bench = squad.filter(p => p.active && !playingNames.has(p.name?.toLowerCase()));
-        const qPos  = bench.findIndex(p => p.name?.toLowerCase() === name);
+        const onCourtNow = new Set(matches.flatMap(m => m.teams.flat()));
+        const playing = me ? onCourtNow.has(me.name) : false;
+        const inSquad = !!me;
+
+        // The bench is anyone active and not on court.
+        const bench = squad.filter(p => p.active && !onCourtNow.has(p.name));
+        const qPos  = me ? bench.findIndex(p => p.uuid === me.uuid) : -1;
 
         const nextUpRaw = window._lastNextUp || '';
-        const isNextUp  = name && nextUpRaw.toLowerCase().includes(name);
+        const isNextUp  = myName && nextUpRaw.toLowerCase().includes(myName.toLowerCase());
 
         // Determine new status key before setting UI
         let newStatus = null;
