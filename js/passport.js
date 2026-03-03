@@ -389,15 +389,21 @@ const PlayerMode = {
             setTimeout(() => { window.location.href = window.location.origin + window.location.pathname; }, 500);
         };
 
-        if (typeof window.showConfirmationModal === 'function') {
-            window.showConfirmationModal({
-                title: 'Leave Session?',
-                message: 'You will be removed from the rotation. You can rejoin later.',
-                confirmText: 'Yes, Leave',
-                isDestructive: true,
-                onConfirm: doLeave
-            });
-        } else {
+        try {
+            if (typeof window.showConfirmationModal === 'function') {
+                window.showConfirmationModal({
+                    title: 'Leave Session?',
+                    message: 'You will be removed from the rotation. You can rejoin later.',
+                    confirmText: 'Yes, Leave',
+                    isDestructive: true,
+                    onConfirm: doLeave
+                });
+            } else {
+                if (confirm('Are you sure you want to leave this session? You will be removed from the rotation.')) {
+                    doLeave();
+                }
+            }
+        } catch (e) {
             if (confirm('Are you sure you want to leave this session? You will be removed from the rotation.')) {
                 doLeave();
             }
@@ -1547,3 +1553,9 @@ function _roundRectFill(ctx, x, y, w, h, r) {
     ctx.closePath();
     ctx.fill();
 }
+
+// Expose globals for inline event handlers
+window.Passport = Passport;
+window.SidelineView = SidelineView;
+window.PlayerMode = PlayerMode;
+window.InviteQR = InviteQR;
