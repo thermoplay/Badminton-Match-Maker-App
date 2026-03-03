@@ -231,6 +231,16 @@ function removePlayerFromSession(playerUUID, playerName) {
     // Ensure any players stranded by a disbanded match are returned to the queue
     if (typeof initQueue === 'function') initQueue();
 
+    // If the leaving player had a pending join request, remove it.
+    // This prevents them from being unable to rejoin because the old
+    // request still exists in the database.
+    if (window.playRequests && removedUUID) {
+        const pendingRequest = window.playRequests.find(r => r.player_uuid === removedUUID);
+        if (pendingRequest && typeof denyPlayRequest === 'function') {
+            denyPlayRequest(pendingRequest.id);
+        }
+    }
+
     // Clean up approved players list so they can rejoin properly later
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];
