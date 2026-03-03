@@ -691,7 +691,7 @@ function _handleMemberChange(record, oldRecord, eventType) {
 
     if (record.status === 'active') {
         if (typeof PlayerMode !== 'undefined') PlayerMode._onMemberActivated(record);
-    } else if (record.status === 'pending' || eventType === 'DELETE') {
+    } else if (eventType === 'DELETE') {
         // Host removed or reset this player
         if (typeof PlayerMode !== 'undefined' && typeof PlayerMode._onRemovedFromSession === 'function') {
             PlayerMode._onRemovedFromSession();
