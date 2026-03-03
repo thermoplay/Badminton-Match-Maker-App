@@ -510,8 +510,8 @@ const PlayerMode = {
                     }
                 }
             } catch (e) {
-                // Fall through to submitJoinRequest
-                await this._submitJoinRequest(Passport.get(), joinCode);
+                // Fall through to submitJoinRequest with force flag to bypass 'alreadyActive' check
+                await this._submitJoinRequest(Passport.get(), joinCode, { force: true });
                 return;
             }
 
@@ -862,7 +862,7 @@ const PlayerMode = {
         }
     },
 
-    async _submitJoinRequest(passport, joinCode) {
+    async _submitJoinRequest(passport, joinCode, options = {}) {
         this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
         console.log('[PlayerMode] Joining with UUID:', passport.playerUUID);
         try {
@@ -873,6 +873,7 @@ const PlayerMode = {
                     room_code:   joinCode,
                     name:        passport.playerName,
                     player_uuid: passport.playerUUID,
+                    force:       options.force || false,
                 }),
             });
 

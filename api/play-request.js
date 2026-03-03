@@ -48,7 +48,7 @@ export default async function handler(req, res) {
 
     // ── POST: player submits join request ────────────────────────────────────
     if (req.method === 'POST') {
-        const { room_code, name, player_uuid } = req.body;
+        const { room_code, name, player_uuid, force } = req.body;
         if (!room_code || !name) return res.status(400).json({ error: 'Missing fields' });
 
         const code    = String(room_code).trim().toUpperCase();
@@ -57,7 +57,8 @@ export default async function handler(req, res) {
 
         // ── Step 1: Check if player is already approved in session_members ────
         // Only this check should short-circuit. A pending row does NOT block us.
-        if (uuid) {
+        // If 'force' is true (ghost player detected by client), skip this check.
+        if (uuid && !force) {
             const existing = await sbFetch(
                 `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status,player_name&limit=1`
             );
