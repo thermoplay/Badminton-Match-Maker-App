@@ -34,6 +34,12 @@ const hdrs = () => ({
     'Prefer':        'return=representation',
 });
 
+async function hashKey(key) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+    return Array.from(new Uint8Array(buf))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function sbFetch(path, options = {}) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
         headers: { ...hdrs(), ...(options.headers || {}) },
@@ -151,13 +157,35 @@ export default async function handler(req, res) {
 
     // ── DELETE: host dismisses a request ─────────────────────────────────────
     if (req.method === 'DELETE') {
-        const { id } = req.body;
-        if (!id) return res.status(400).json({ error: 'Missing id' });
-        const r = await fetch(
-            `${SUPABASE_URL}/rest/v1/play_requests?id=eq.${id}`,
-            { method: 'DELETE', headers: hdrs() }
-        );
-        return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
+        const { id, room_code, player_uuid, operator_key } = req.body;
+
+        // Case 1: Host is removing a player from the session entirely.
+        if (player_uuid && room_code && operator_key) {
+            const code = String(room_code).trim().toUpperCase();
+            const uuid = String(player_uuid).trim();
+
+            // Verify operator key
+            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key_hash&limit=1`);
+            if (!sessionRes.ok || !sessionRes.data?.[0]) {
+                return res.status(404).json({ error: 'Session not found' });
+            }
+            const opKeyHash = await hashKey(String(operator_key));
+            if (opKeyHash !== sessionRes.data[0].operator_key_hash) {
+                return res.status(403).json({ error: 'Invalid operator key' });
+            }
+
+            // Delete from session_members
+            const delRes = await sbFetch(`/session_members?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+            return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
+        }
+
+        // Case 2: Host is dismissing a join request (original logic).
+        if (id) {
+            const r = await sbFetch(`/play_requests?id=eq.${id}`, { method: 'DELETE' });
+            return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
+        }
+
+        return res.status(400).json({ error: 'Missing required parameters for DELETE' });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });

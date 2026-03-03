@@ -206,7 +206,7 @@ function toggleRestingState() {
  * @param {string} playerUUID - The UUID of the player leaving.
  * @param {string} playerName - The name of the player leaving.
  */
-function removePlayerFromSession(playerUUID, playerName) {
+async function removePlayerFromSession(playerUUID, playerName) {
     if (!playerUUID && !playerName) return;
 
     let playerIndex = -1;
@@ -255,6 +255,23 @@ function removePlayerFromSession(playerUUID, playerName) {
 
     // Immediately notify all clients of the change
     if (typeof broadcastGameState === 'function') broadcastGameState();
+
+    // Also remove the player from the session_members table in the database.
+    // This ensures they are fully removed from the session's source of truth
+    // and fixes any state desync issues.
+    if (isOperator && removedUUID && currentRoomCode && operatorKey) {
+        try {
+            await fetch('/api/play-request', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    room_code: currentRoomCode,
+                    player_uuid: removedUUID,
+                    operator_key: operatorKey
+                })
+            });
+        } catch (e) { console.error('[CourtSide] Failed to remove member from DB session', e); }
+    }
 
     showSessionToast(`👋 ${removedName} left the session.`);
     Haptic.bump();
