@@ -46,7 +46,7 @@ async function checkAndAwardAchievements(match, squad) {
     const allPlayersInMatch = match.teams.flat().map(findP).filter(Boolean);
 
     await Promise.all(allPlayersInMatch.map(async (player) => {
-        if (!player.uuid) continue; // Cannot save achievements for players without a UUID (from passport)
+           if (!player.uuid) return; // Cannot save achievements for players without a UUID (from passport)
 
         const existingAchievements = await fetchPlayerAchievements(player.uuid);
         const existingIds = new Set(existingAchievements.map(a => a.achievement_id));
