@@ -166,30 +166,26 @@ function deletePlayer() {
     const p = squad[selectedPlayerIndex];
     if (!p) return;
 
-    showConfirmationModal({
-        title: `Delete ${p.name}?`,
-        message: 'This will remove the player from the squad and all current matches. This action cannot be undone.',
-        confirmText: 'Yes, Delete Player',
-        isDestructive: true,
-        onConfirm: () => {
-            const removedName = p.name;
-            const removedUUID = p.uuid || null;
+    if (!confirm(`Delete ${p.name}? This will remove the player from the squad and all current matches. This action cannot be undone.`)) {
+        return;
+    }
 
-            squad.splice(selectedPlayerIndex, 1);
-            currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
-            playerQueue = playerQueue.filter(n => n !== removedName);
+    const removedName = p.name;
+    const removedUUID = p.uuid || null;
 
-            closeMenu();
-            renderSquad();
-            rebuildMatchCardIndices(); // Use this to safely re-render matches
-            checkNextButtonState();
-            saveToDisk();
+    squad.splice(selectedPlayerIndex, 1);
+    currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
+    playerQueue = playerQueue.filter(n => n !== removedName);
 
-            if (isOnlineSession && typeof _broadcast === 'function') {
-                _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
-            }
-        }
-    });
+    closeMenu();
+    renderSquad();
+    rebuildMatchCardIndices(); // Use this to safely re-render matches
+    checkNextButtonState();
+    saveToDisk();
+
+    if (isOnlineSession && typeof _broadcast === 'function') {
+        _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
+    }
 }
 
 function toggleRestingState() {
