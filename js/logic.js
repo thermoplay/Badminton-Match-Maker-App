@@ -70,6 +70,10 @@ async function processCourtResult(mIdx) {
         await checkAndAwardAchievements(match, squad);
     }
 
+    // Dispatch win signals BEFORE updating currentMatches so we capture the finished game's winner.
+    // We pass true to skipBroadcast because we will broadcast the NEW state manually at the end.
+    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx, true);
+
     // Rotate just this court's players back into the queue
     rotateCourtPlayers(match);
 
@@ -118,10 +122,6 @@ async function processCourtResult(mIdx) {
     renderQueueStrip();
     checkNextButtonState();
     updateUndoButton();
-
-    // Dispatch win signals AFTER currentMatches is updated so broadcastGameState
-    // sends the new lineup, not the completed one.
-    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx, true);
 
     saveToDisk();
     if (typeof broadcastGameState === 'function') broadcastGameState();

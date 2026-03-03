@@ -45,8 +45,7 @@ async function checkAndAwardAchievements(match, squad) {
     const winners = winnerNames.map(findP).filter(Boolean);
     const allPlayersInMatch = match.teams.flat().map(findP).filter(Boolean);
 
-    // We can make this more efficient later by batching, but one-by-one is fine for now.
-    for (const player of allPlayersInMatch) {
+    await Promise.all(allPlayersInMatch.map(async (player) => {
         if (!player.uuid) continue; // Cannot save achievements for players without a UUID (from passport)
 
         const existingAchievements = await fetchPlayerAchievements(player.uuid);
@@ -79,7 +78,7 @@ async function checkAndAwardAchievements(match, squad) {
             unlockAchievement(player.uuid, 'iron_man');
             showAchievementToast(player.name, Achievements.iron_man);
         }
-    }
+    }));
 }
 
 /**

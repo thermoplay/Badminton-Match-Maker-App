@@ -117,6 +117,7 @@ function addPlayer() {
     const name = el.value.trim();
     if (!name) return;
     if (squad.find(p => p.name.toLowerCase() === name.toLowerCase())) {
+        alert('Player already exists!');
         el.value = '';
         return;
     }
