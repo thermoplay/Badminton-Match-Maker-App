@@ -1067,10 +1067,73 @@ const PlayerMode = {
             <div class="sl-code-entry" style="text-align:center; padding: 2rem 1.5rem;">
                 <div style="font-size:3rem; margin-bottom:1rem; opacity:0.8;">📷</div>
                 <div class="sl-code-label" style="margin-bottom:0.75rem; font-size:0.9rem;">SCAN TO JOIN</div>
-                <div style="font-size:0.85rem; color:var(--text-muted); line-height:1.5;">
+                <div style="font-size:0.85rem; color:var(--text-muted); line-height:1.5; margin-bottom:1.5rem;">
                     Open your camera app and scan the QR code on the host device to enter the court.
                 </div>
+                <button class="sl-code-btn" onclick="PlayerMode._startInAppScanner(this)">
+                    Open Camera Scanner
+                </button>
+                <div id="sl-scanner-wrapper" style="margin-top:1rem; overflow:hidden; border-radius:12px; display:none;">
+                    <div id="sl-scanner-reader" style="width:100%"></div>
+                </div>
             </div>`;
+    },
+
+    async _startInAppScanner(btn) {
+        if (btn) {
+            btn.textContent = 'Loading Camera...';
+            btn.disabled = true;
+        }
+
+        if (!window.Html5Qrcode) {
+            try {
+                await new Promise((resolve, reject) => {
+                    const script = document.createElement('script');
+                    script.src = "https://unpkg.com/html5-qrcode";
+                    script.onload = resolve;
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
+            } catch (e) {
+                alert('Could not load scanner library. Check internet connection.');
+                if (btn) { btn.textContent = 'Open Camera Scanner'; btn.disabled = false; }
+                return;
+            }
+        }
+
+        const wrapper = document.getElementById('sl-scanner-wrapper');
+        if (wrapper) wrapper.style.display = 'block';
+        if (btn) btn.style.display = 'none';
+
+        const html5QrCode = new Html5Qrcode("sl-scanner-reader");
+        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+        
+        html5QrCode.start({ facingMode: "environment" }, config, 
+            (decodedText) => {
+                let code = null;
+                try {
+                    const url = new URL(decodedText);
+                    code = url.searchParams.get('join');
+                } catch (e) {}
+                
+                if (!code && /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(decodedText)) {
+                    code = decodedText;
+                }
+
+                if (code) {
+                    html5QrCode.stop().then(() => {
+                        html5QrCode.clear();
+                        PlayerMode.boot(Passport.get(), code);
+                    }).catch(err => console.error(err));
+                }
+            },
+            (errorMessage) => { /* ignore */ }
+        ).catch(err => {
+            console.error("Error starting scanner", err);
+            alert("Camera access failed. Please ensure permissions are granted.");
+            if (wrapper) wrapper.style.display = 'none';
+            if (btn) { btn.style.display = 'block'; btn.textContent = 'Open Camera Scanner'; btn.disabled = false; }
+        });
     },
 
     _promptName() {

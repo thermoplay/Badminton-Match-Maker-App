@@ -1873,6 +1873,20 @@ async function initApp() {
         _installPassportIWTPOverride();
     }
 
+    // ── PLAYER MODE BOOT ─────────────────────────────────────────────────────
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('role') === 'player') {
+        document.body.classList.add('player-mode');
+        const joinCode = urlParams.get('join');
+        
+        // Clean URL immediately
+        const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
+        window.history.replaceState({}, document.title, cleanUrl);
+
+        if (typeof PlayerMode !== 'undefined') await PlayerMode.boot(passport, joinCode);
+        return; // Stop here — do not load host logic
+    }
+
     try {
         loadFromDisk();
     } catch (e) {
