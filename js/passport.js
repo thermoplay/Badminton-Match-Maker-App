@@ -1031,12 +1031,10 @@ const PlayerMode = {
         const input = document.getElementById('slCodeInput');
         const code  = (input?.value || '').trim().toUpperCase();
         if (!code) return;
-        this._joinCode = code;
-        const codeEl = document.getElementById('slSessionCode');
-        if (codeEl) codeEl.textContent = code;
-        const el = document.getElementById('slCurrentMatches');
-        if (el) el.innerHTML = '<div class="sl-empty">Connecting…</div>';
-        await this._joinSession(Passport.get(), code);
+
+        // Re-run the entire boot sequence with the new code. This ensures the
+        // "ghost player" detection logic (which forces a new request) is triggered.
+        await this.boot(Passport.get(), code);
     },
 
     _promptName() {
