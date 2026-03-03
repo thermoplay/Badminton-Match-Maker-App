@@ -272,6 +272,17 @@ function broadcastNameUpdate(playerUUID, oldName, newName) {
     }));
 }
 
+function broadcastPlayerLeaving(playerUUID, playerName) {
+    if (!realtimeChannel || realtimeChannel.readyState !== WebSocket.OPEN) return;
+    realtimeChannel.send(JSON.stringify({
+        topic:   `realtime:courtside-${currentRoomCode}`,
+        event:   'broadcast',
+        payload: { type: 'player_leaving', playerUUID, playerName },
+        ref:     String(Date.now()),
+    }));
+}
+window.broadcastPlayerLeaving = broadcastPlayerLeaving;
+
 // ---------------------------------------------------------------------------
 // SESSION MEMBERS — DB operations called from app.js
 // ---------------------------------------------------------------------------
@@ -373,6 +384,14 @@ function _handleBroadcast(payload) {
                     PlayerMode._onRemovedFromSession();
                 }
             }
+        }
+        return;
+    }
+
+    // Player is leaving the session
+    if (type === 'player_leaving') {
+        if (isOperator && typeof window.removePlayerFromSession === 'function') {
+            window.removePlayerFromSession(payload.playerUUID, payload.playerName);
         }
         return;
     }

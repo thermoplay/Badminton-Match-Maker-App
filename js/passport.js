@@ -273,6 +273,21 @@ const SidelineView = {
             }).join('');
             container.innerHTML = html;
         }
+
+        // Add Leave Session button to the profile view
+        const profileView = document.getElementById('slViewProfile');
+        if (profileView && !profileView.querySelector('.sl-session-actions')) {
+            const actionsEl = document.createElement('div');
+            actionsEl.className = 'sl-session-actions';
+            actionsEl.innerHTML = `
+                <div class="sl-support-section" style="margin-top: 24px;">
+                    <button class="sl-leave-btn" onclick="PlayerMode.leaveSession()">
+                        Leave Session
+                    </button>
+                    <p class="sl-leave-hint">You will be removed from the rotation. You can rejoin later.</p>
+                </div>`;
+            profileView.appendChild(actionsEl);
+        }
     },
 };
 
@@ -353,6 +368,33 @@ const PlayerMode = {
 
     _joinCode:  null,
     _pollTimer: null,
+
+    async leaveSession() {
+        if (!confirm('Are you sure you want to leave this session? You will be removed from the rotation.')) {
+            return;
+        }
+
+        const passport = Passport.get();
+        if (!passport || !this._joinCode) return;
+
+        // 1. Notify host that we are leaving
+        if (typeof window.broadcastPlayerLeaving === 'function') {
+            window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
+        }
+
+        // 2. Clean up local state
+        if (window.realtimeChannel) {
+            window.realtimeChannel.close();
+            window.realtimeChannel = null;
+        }
+        clearInterval(this._pollTimer);
+        localStorage.removeItem('cs_player_room_code');
+        try { sessionStorage.removeItem(SS_APPROVED); } catch {}
+
+        // 3. Reset UI by reloading. Give broadcast a moment to send.
+        if (typeof showSessionToast === 'function') showSessionToast('👋 You have left the session.');
+        setTimeout(() => { window.location.href = window.location.origin + window.location.pathname; }, 500);
+    },
 
     // ─────────────────────────────────────────────────────────────────────────
     // BOOT

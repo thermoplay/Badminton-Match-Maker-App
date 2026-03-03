@@ -200,6 +200,44 @@ function toggleRestingState() {
     saveToDisk();
 }
 
+/**
+ * Removes a player from the session. Called by the host when a 'player_leaving'
+ * broadcast event is received from a player.
+ * @param {string} playerUUID - The UUID of the player leaving.
+ * @param {string} playerName - The name of the player leaving.
+ */
+function removePlayerFromSession(playerUUID, playerName) {
+    if (!playerUUID && !playerName) return;
+
+    let playerIndex = -1;
+
+    if (playerUUID) {
+        playerIndex = squad.findIndex(p => p.uuid === playerUUID);
+    }
+    // Fallback to name if not found by UUID (e.g., older client)
+    if (playerIndex === -1 && playerName) {
+        playerIndex = squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
+    }
+
+    if (playerIndex === -1) return; // Player not in squad
+
+    const removedName = squad[playerIndex].name;
+    squad.splice(playerIndex, 1);
+
+    currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
+    playerQueue = playerQueue.filter(n => n !== removedName);
+
+    renderSquad();
+    rebuildMatchCardIndices();
+    renderQueueStrip();
+    checkNextButtonState();
+    saveToDisk(); // This also triggers a broadcastGameState to update other clients
+
+    showSessionToast(`👋 ${removedName} left the session.`);
+    Haptic.bump();
+}
+window.removePlayerFromSession = removePlayerFromSession;
+
 // ---------------------------------------------------------------------------
 // RENDERING
 // ---------------------------------------------------------------------------
@@ -300,19 +338,60 @@ function endPress(i) {
 function openMenu(i) {
     selectedPlayerIndex = i;
     const p = squad[i];
-    document.getElementById('menuPlayerName').innerText = p.name;
-    document.getElementById('playerStatusText').innerText = p.active
-        ? 'Ready for Rotation'
-        : 'Taking a Break ☕';
-    const restBtn = document.getElementById('restToggleBtn');
-    restBtn.innerHTML = p.active ? 'Take a Break ☕' : 'Return to Play';
-    restBtn.onclick = toggleRestingState;
-    document.getElementById('actionMenu').style.display = 'flex';
+    const menu = document.getElementById('actionMenu');
+    if (!menu) return;
+
+    const onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    const isPlaying = onCourt.has(p.name);
+
+    menu.innerHTML = `
+        <div class="menu-card">
+            <h2>${escapeHTML(p.name)}</h2>
+            <p>${p.active ? (isPlaying ? 'Currently Playing 🏸' : 'Ready for Rotation') : 'Taking a Break ☕'}</p>
+            
+            <button class="btn-main menu-btn" onclick="toggleRestingState()">
+                ${p.active ? 'Take a Break ☕' : 'Return to Play'}
+            </button>
+
+            ${p.active && !isPlaying ? `
+            <button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="movePlayerToFront()">
+                Move to Front ⬆
+            </button>
+            ` : ''}
+
+            <button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="editPlayerName()">
+                Edit Name
+            </button>
+
+            <button class="btn-main menu-btn btn-danger" onclick="deletePlayer()">
+                Remove Player
+            </button>
+            
+            <button class="btn-cancel" onclick="closeMenu()">Cancel</button>
+        </div>
+    `;
+    menu.style.display = 'flex';
 }
 
 function closeMenu() {
     document.getElementById('actionMenu').style.display = 'none';
     selectedPlayerIndex = null;
+}
+
+function movePlayerToFront() {
+    const p = squad[selectedPlayerIndex];
+    if (!p) return;
+    
+    // Remove from current spot in queue and add to front
+    playerQueue = playerQueue.filter(n => n !== p.name);
+    playerQueue.unshift(p.name);
+    
+    closeMenu();
+    renderQueueStrip();
+    saveToDisk();
+    if (typeof broadcastGameState === 'function') broadcastGameState();
+    Haptic.success();
+    if (typeof showSessionToast === 'function') showSessionToast(`${p.name} moved to front`);
 }
 
 // ---------------------------------------------------------------------------
