@@ -385,8 +385,12 @@ const PlayerMode = {
             if (!passport || !this._joinCode) return;
 
             // 1. Notify host that we are leaving
-            if (typeof window.broadcastPlayerLeaving === 'function') {
-                window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
+            try {
+                if (typeof window.broadcastPlayerLeaving === 'function') {
+                    window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
+                }
+            } catch (e) {
+                console.error('[CourtSide] Failed to broadcast leaving event. Leaving locally anyway.', e);
             }
 
             // 2. Clean up local state
