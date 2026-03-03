@@ -113,20 +113,26 @@ export default async function handler(req, res) {
             return res.status(500).json({ ok: false, error: 'Failed to write play request' });
         }
 
-        // ── Step 4: Upsert into session_members (pending) ────────────────────
+        // ── Step 4: Upsert/Update session_members status ────────────────────
         if (uuid) {
-            await sbFetch('/session_members', {
-                method:  'POST',
-                headers: { 'Prefer': 'return=minimal,resolution=ignore-duplicates' },
-                body: {
-                    room_code:   code,
-                    player_uuid: uuid,
-                    player_name: trimmed,
-                    status:      'pending',
-                    joined_at:   new Date().toISOString(),
-                    last_seen:   new Date().toISOString(),
-                },
-            });
+            if (force) {
+                // If forcing (ghost player rejoin), we MUST update the status to pending.
+                await sbFetch(
+                    `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+                    {
+                        method:  'PATCH',
+                        headers: { 'Prefer': 'return=minimal' },
+                        body:    { status: 'pending', last_seen: new Date().toISOString() },
+                    }
+                );
+            } else {
+                // Standard join: upsert, ignoring if already exists.
+                await sbFetch('/session_members', {
+                    method:  'POST',
+                    headers: { 'Prefer': 'return=minimal,resolution=ignore-duplicates' },
+                    body:    { room_code: code, player_uuid: uuid, player_name: trimmed, status: 'pending', joined_at: new Date().toISOString(), last_seen: new Date().toISOString() },
+                });
+            }
         }
 
         return res.status(200).json({ ok: true, alreadyActive: false });
