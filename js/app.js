@@ -1372,26 +1372,32 @@ function closePlayRequests() {
 async function approvePlayRequest(name, id, playerUUID = null) {
     // Ensure empty strings are treated as null
     const validUUID = playerUUID && playerUUID.trim().length > 0 ? playerUUID : null;
-    
-    let player = squad.find(p => p.name === name || (validUUID && p.uuid === validUUID));
-    let isNew = false;
+    let player = null;
 
-    // If we found a player by NAME but they have a different (or generated) UUID,
-    // and the incoming request has a valid Passport UUID, we "adopt" the existing player.
-    if (player && validUUID && player.uuid !== validUUID) {
-        console.log(`[CourtSide] Adopting existing player "${player.name}" with new UUID: ${validUUID}`);
-        player.uuid = validUUID; // Update to the real Passport UUID
+    // 1. Prioritize finding by UUID. This is the canonical identity.
+    if (validUUID) {
+        player = squad.find(p => p.uuid === validUUID);
+        // If found, but name is different, update name to what they're joining as.
+        if (player && player.name !== name) {
+            console.log(`[CourtSide] Player found by UUID, updating name: ${player.name} -> ${name}`);
+            player.name = name;
+        }
     }
 
+    // 2. If no player by UUID, try to find by name. This handles adopting a manually-added player.
     if (!player) {
-        isNew = true;
-        const newPlayerUUID = validUUID || _generateUUID();
+        player = squad.find(p => p.name.toLowerCase() === name.toLowerCase());
+        if (player && validUUID && player.uuid !== validUUID) {
+            console.log(`[CourtSide] Adopting existing player "${player.name}" with new Passport UUID: ${validUUID}`);
+            player.uuid = validUUID;
+        }
+    }
+
+    // 3. If still no player, they are brand new to this session.
+    if (!player) {
         player = {
             name: name,
-            uuid: newPlayerUUID,
-            rating: 1000, // Keep original rating for new online players
-            active: true,
-            achievements: []
+            uuid: validUUID || _generateUUID(),
         };
         migratePlayer(player);
         squad.push(player);
