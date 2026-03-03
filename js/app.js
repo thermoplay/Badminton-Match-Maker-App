@@ -227,6 +227,9 @@ function removePlayerFromSession(playerUUID, playerName) {
     currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
     playerQueue = playerQueue.filter(n => n !== removedName);
 
+    // Ensure any players stranded by a disbanded match are returned to the queue
+    if (typeof initQueue === 'function') initQueue();
+
     renderSquad();
     rebuildMatchCardIndices();
     renderQueueStrip();
