@@ -722,7 +722,7 @@ function showConfirmationModal({ title, message, confirmText, isDestructive, onC
     const modal = document.createElement('div');
     modal.id = 'confirmationModal';
     modal.className = 'actionMenu'; // Reuse styles from actionMenu
-    modal.style.zIndex = '4000'; // Ensure it's on top of other overlays
+    modal.style.zIndex = '10000'; // Ensure it's on top of all overlays, including player view (z-index: 6000)
 
     const confirmBtnClass = isDestructive ? 'btn-main btn-danger' : 'btn-main';
 
