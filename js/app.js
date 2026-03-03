@@ -206,7 +206,9 @@ function toggleRestingState() {
 
 function renderSquad() {
     const container = document.getElementById('squadList');
-    const chips = squad.map((p, i) => `
+    const chips = squad.map((p, i) => {
+        const isNew = p.games === 0 && p.wins === 0;
+        return `
         <div class="player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''}"
              onmousedown="startPress(${i})"
              onmouseup="endPress(${i})"
@@ -214,9 +216,9 @@ function renderSquad() {
              ontouchend="endPress(${i})"
              oncontextmenu="return false;">
             ${Avatar.html(p.name)}
-            <span class="chip-name">${escapeHTML(p.name)}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
         </div>
-    `);
+    `});
     container.innerHTML = chips.join('');
 }
 
@@ -1369,39 +1371,49 @@ function closePlayRequests() {
     document.getElementById('playRequestsModal').style.display = 'none';
 }
 
-async function approvePlayRequest(name, id, playerUUID = null) {
-    // Ensure empty strings are treated as null
-    const validUUID = playerUUID && playerUUID.trim().length > 0 ? playerUUID : null;
+function _resolvePlayerForSession(name, incomingUUID) {
+    const validUUID = incomingUUID && incomingUUID.trim().length > 0 ? incomingUUID : null;
     let player = null;
+    let finalName = name;
 
-    // 1. Prioritize finding by UUID. This is the canonical identity.
+    // 1. Priority: UUID (Canonical Identity)
     if (validUUID) {
         player = squad.find(p => p.uuid === validUUID);
-        // If found, but name is different, update name to what they're joining as.
-        if (player && player.name !== name) {
-            console.log(`[CourtSide] Player found by UUID, updating name: ${player.name} -> ${name}`);
-            player.name = name;
+        if (player) {
+            // Update name if changed
+            if (player.name !== name) {
+                console.log(`[CourtSide] Updating name for ${player.uuid}: ${player.name} -> ${name}`);
+                player.name = name;
+            }
+            return player;
         }
     }
 
-    // 2. If no player by UUID, try to find by name. This handles adopting a manually-added player.
-    if (!player) {
-        player = squad.find(p => p.name.toLowerCase() === name.toLowerCase());
-        if (player && validUUID && player.uuid !== validUUID) {
-            console.log(`[CourtSide] Adopting existing player "${player.name}" with new Passport UUID: ${validUUID}`);
-            player.uuid = validUUID;
-        }
+    // 2. If not found by UUID, treat as NEW.
+    //    Check for name collisions and auto-rename.
+    let collision = squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
+    let counter = 1;
+    while (collision) {
+        finalName = `${name} (${counter})`;
+        collision = squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
+        counter++;
     }
 
-    // 3. If still no player, they are brand new to this session.
-    if (!player) {
-        player = {
-            name: name,
-            uuid: validUUID || _generateUUID(),
-        };
-        migratePlayer(player);
-        squad.push(player);
-    }
+    // 3. Create new player
+    player = {
+        name: finalName,
+        uuid: validUUID || _generateUUID(),
+    };
+    migratePlayer(player);
+    squad.push(player);
+    
+    return player;
+}
+
+async function approvePlayRequest(name, id, playerUUID = null) {
+    const player = _resolvePlayerForSession(name, playerUUID);
+    const finalName = player.name;
+    const validUUID = player.uuid;
 
     // Always fetch/refresh achievements if we have a valid UUID (new or adopted)
     if (player.uuid && window.fetchPlayerAchievements) {
@@ -1413,23 +1425,23 @@ async function approvePlayRequest(name, id, playerUUID = null) {
             achievementIds.forEach(id => currentSet.add(id));
             player.achievements = Array.from(currentSet);
         } catch (e) {
-            console.error(`Failed to fetch achievements for ${name}`, e);
+            console.error(`Failed to fetch achievements for ${player.name}`, e);
         }
     }
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};
-    if (validUUID) window._sessionUUIDMap[name] = validUUID;
+    if (validUUID) window._sessionUUIDMap[player.name] = validUUID;
 
     const token = _makeApprovalToken();
     window._approvedPlayers = window._approvedPlayers || {};
-    window._approvedPlayers[validUUID || name] = { token, name, uuid: validUUID, approvedAt: Date.now() };
+    window._approvedPlayers[validUUID || player.name] = { token, name: player.name, uuid: validUUID, approvedAt: Date.now() };
 
     renderSquad();
     saveToDisk();
     // Broadcast squad update immediately — don't wait for DB debounce
     if (typeof broadcastGameState === 'function') broadcastGameState();
 
-    showSessionToast(`✅ ${name} added`);
+    showSessionToast(`✅ ${player.name} added`);
     Haptic.success();
 
     if (typeof memberApprove === 'function' && validUUID) {
@@ -1437,7 +1449,7 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     }
 
     if (typeof broadcastApproval === 'function') {
-        broadcastApproval(validUUID, name, token);
+        broadcastApproval(validUUID, player.name, token);
     }
 
     await denyPlayRequest(id);
