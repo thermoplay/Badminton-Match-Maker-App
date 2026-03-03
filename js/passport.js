@@ -369,31 +369,43 @@ const PlayerMode = {
     _joinCode:  null,
     _pollTimer: null,
 
-    async leaveSession() {
-        if (!confirm('Are you sure you want to leave this session? You will be removed from the rotation.')) {
-            return;
+    leaveSession() {
+        const doLeave = () => {
+            const passport = Passport.get();
+            if (!passport || !this._joinCode) return;
+
+            // 1. Notify host that we are leaving
+            if (typeof window.broadcastPlayerLeaving === 'function') {
+                window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
+            }
+
+            // 2. Clean up local state
+            if (window.realtimeChannel) {
+                window.realtimeChannel.close();
+                window.realtimeChannel = null;
+            }
+            clearInterval(this._pollTimer);
+            localStorage.removeItem('cs_player_room_code');
+            try { sessionStorage.removeItem(SS_APPROVED); } catch {}
+
+            // 3. Reset UI by reloading. Give broadcast a moment to send.
+            if (typeof showSessionToast === 'function') showSessionToast('👋 You have left the session.');
+            setTimeout(() => { window.location.href = window.location.origin + window.location.pathname; }, 500);
+        };
+
+        if (typeof window.showConfirmationModal === 'function') {
+            window.showConfirmationModal({
+                title: 'Leave Session?',
+                message: 'You will be removed from the rotation. You can rejoin later.',
+                confirmText: 'Yes, Leave',
+                isDestructive: true,
+                onConfirm: doLeave
+            });
+        } else {
+            if (confirm('Are you sure you want to leave this session? You will be removed from the rotation.')) {
+                doLeave();
+            }
         }
-
-        const passport = Passport.get();
-        if (!passport || !this._joinCode) return;
-
-        // 1. Notify host that we are leaving
-        if (typeof window.broadcastPlayerLeaving === 'function') {
-            window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
-        }
-
-        // 2. Clean up local state
-        if (window.realtimeChannel) {
-            window.realtimeChannel.close();
-            window.realtimeChannel = null;
-        }
-        clearInterval(this._pollTimer);
-        localStorage.removeItem('cs_player_room_code');
-        try { sessionStorage.removeItem(SS_APPROVED); } catch {}
-
-        // 3. Reset UI by reloading. Give broadcast a moment to send.
-        if (typeof showSessionToast === 'function') showSessionToast('👋 You have left the session.');
-        setTimeout(() => { window.location.href = window.location.origin + window.location.pathname; }, 500);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
