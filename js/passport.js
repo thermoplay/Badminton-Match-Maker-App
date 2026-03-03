@@ -380,10 +380,6 @@ const PlayerMode = {
             }
 
             // 2. Clean up local state
-            if (window.realtimeChannel) {
-                window.realtimeChannel.close();
-                window.realtimeChannel = null;
-            }
             clearInterval(this._pollTimer);
             localStorage.removeItem('cs_player_room_code');
             try { sessionStorage.removeItem(SS_APPROVED); } catch {}

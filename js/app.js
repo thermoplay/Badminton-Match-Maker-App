@@ -234,7 +234,10 @@ function removePlayerFromSession(playerUUID, playerName) {
     rebuildMatchCardIndices();
     renderQueueStrip();
     checkNextButtonState();
-    saveToDisk(); // This also triggers a broadcastGameState to update other clients
+    saveToDisk();
+
+    // Immediately notify all clients of the change
+    if (typeof broadcastGameState === 'function') broadcastGameState();
 
     showSessionToast(`👋 ${removedName} left the session.`);
     Haptic.bump();
