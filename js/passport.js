@@ -708,9 +708,17 @@ const PlayerMode = {
         if (payload.squad)           window.squad          = payload.squad;
         if (payload.current_matches) window.currentMatches = payload.current_matches;
 
+        this._clearQueuedState();
+
         this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
-        this._subscribeAndPoll(this._joinCode, passport);
-        setTimeout(() => this._updateStatus(passport), 1500);
+
+        if (window.Haptic) Haptic.success();
+        if (typeof showSessionToast === 'function') {
+            showSessionToast("🏀 You're approved! Welcome to the court.");
+        }
+
+        SidelineView.show();
+        setTimeout(() => this._updateStatus(passport), 800);
     },
 
     _onGameStateUpdate(payload) {
@@ -843,7 +851,7 @@ const PlayerMode = {
 
         const p = Passport.get();
         this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
-
+        
         // Haptic feedback on host approval
         if (window.Haptic) Haptic.success();
 
