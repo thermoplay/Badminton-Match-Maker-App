@@ -420,6 +420,17 @@ const PlayerMode = {
         }
     },
 
+    _onRemovedFromSession() {
+        clearInterval(this._pollTimer);
+        localStorage.removeItem('cs_player_room_code');
+        try { sessionStorage.removeItem(SS_APPROVED); } catch {}
+
+        if (typeof showSessionToast === 'function') {
+            showSessionToast('You have been removed from the session.');
+        }
+        setTimeout(() => { window.location.href = window.location.origin + window.location.pathname; }, 2000);
+    },
+
     // ─────────────────────────────────────────────────────────────────────────
     // BOOT
     // ─────────────────────────────────────────────────────────────────────────
@@ -496,31 +507,13 @@ const PlayerMode = {
         }
 
         if (upsertResult.status === 'active') {
-            // VERIFY: The member table says active, but are we actually in the session's approved list?
-            // If the host removed us, we might still be 'active' in member table but gone from session data.
-            try {
-                const sessionRes = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
-                if (sessionRes.ok) {
-                    const sData = await sessionRes.json();
-                    const approved = sData.session?.approved_players || {};
-                    const me = approved[passport.playerUUID] || approved[passport.playerName];
-                    if (!me) {
-                        // Desync detected: Server says active, but session says we are gone. Force a new request.
-                        throw new Error('Ghost player detected');
-                    }
-                }
-            } catch (e) {
-                // Fall through to submitJoinRequest with force flag to bypass 'alreadyActive' check
-                await this._submitJoinRequest(Passport.get(), joinCode, { force: true });
-                return;
-            }
-
-            this._markApprovedInSession(joinCode);
-            this._hydrateFromUpsert(upsertResult);
-            const p = Passport.get();
-            this.setStatus('approved', `Welcome back, ${p.playerName}!`, "You're in the squad ✅");
-            SidelineView.refresh();
-            setTimeout(() => this._updateStatus(p), 800);
+            // If the DB thinks we are 'active', it could be stale state from a
+            // previous session (e.g. player left without host getting the signal).
+            // To be safe, always force a new join request. This ensures the host
+            // gets a fresh notification and can re-approve the player, which
+            // correctly resets their status to 'pending' and then 'active',
+            // fixing any desync.
+            await this._submitJoinRequest(Passport.get(), joinCode, { force: true });
             return;
         }
 
@@ -586,6 +579,7 @@ const PlayerMode = {
                     room_code:   this._joinCode,
                     name:        passport.playerName,
                     player_uuid: passport.playerUUID,
+                    force:       true, // Force a fresh notification
                 }),
             });
             if (res.ok) {
