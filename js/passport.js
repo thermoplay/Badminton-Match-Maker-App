@@ -1061,26 +1061,16 @@ const PlayerMode = {
     },
 
     _promptForCode() {
-        this.setStatus('pending', 'No room code', 'Ask the host for the QR code');
+        this.setStatus('pending', 'Ready to Join', 'Scan the QR code on the host screen');
         const el = document.getElementById('slCurrentMatches');
         if (el) el.innerHTML = `
-            <div class="sl-code-entry">
-                <div class="sl-code-label">Enter Room Code</div>
-                <input id="slCodeInput" class="sl-code-input" placeholder="XXXX-XXXX"
-                    autocomplete="off" autocapitalize="characters" maxlength="9"
-                    onkeydown="if(event.key==='Enter') PlayerMode._manualJoin()">
-                <button class="sl-code-btn" onclick="PlayerMode._manualJoin()">Join →</button>
+            <div class="sl-code-entry" style="text-align:center; padding: 2rem 1.5rem;">
+                <div style="font-size:3rem; margin-bottom:1rem; opacity:0.8;">📷</div>
+                <div class="sl-code-label" style="margin-bottom:0.75rem; font-size:0.9rem;">SCAN TO JOIN</div>
+                <div style="font-size:0.85rem; color:var(--text-muted); line-height:1.5;">
+                    Open your camera app and scan the QR code on the host device to enter the court.
+                </div>
             </div>`;
-    },
-
-    async _manualJoin() {
-        const input = document.getElementById('slCodeInput');
-        const code  = (input?.value || '').trim().toUpperCase();
-        if (!code) return;
-
-        // Re-run the entire boot sequence with the new code. This ensures the
-        // "ghost player" detection logic (which forces a new request) is triggered.
-        await this.boot(Passport.get(), code);
     },
 
     _promptName() {
