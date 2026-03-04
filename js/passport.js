@@ -1111,7 +1111,8 @@ const PlayerMode = {
         this._html5QrCode = new Html5Qrcode("sl-scanner-reader");
         const config = {
             fps: 10,
-            qrbox: { width: 280, height: 280 },
+            // qrbox removed to allow full-screen scanning (more reliable)
+            experimentalFeatures: { useBarCodeDetectorIfSupported: true }
         };
         
         this._html5QrCode.start({ facingMode: "environment" }, config,
@@ -1124,8 +1125,10 @@ const PlayerMode = {
                     code = url.searchParams.get('join');
                 } catch (e) {}
                 
-                if (!code && /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(decodedText)) {
-                    code = decodedText;
+                // Fallback: look for the code pattern anywhere in the text
+                if (!code) {
+                    const match = decodedText.match(/[A-Z0-9]{4}-?[A-Z0-9]{4}/i);
+                    if (match) code = match[0];
                 }
 
                 if (code) {
