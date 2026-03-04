@@ -504,6 +504,22 @@ function showOverlay(type) {
                             Cancel
                         </button>
                     </div>
+
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:1.5rem;">
+                        <hr style="flex:1; border:none; border-top:1px solid var(--border);">
+                        <span style="font-size:0.7rem; color:var(--text-muted);">OR</span>
+                        <hr style="flex:1; border:none; border-top:1px solid var(--border);">
+                    </div>
+                    <input type="text" id="manualRoomCodeInput" placeholder="ENTER CODE"
+                        style="width:100%; background:var(--bg2); border:1.5px solid var(--border);
+                               color:#fff; padding:14px; border-radius:12px; margin-top:1.5rem;
+                               outline:none; font-size:1.2rem; font-family:var(--font-display); text-align:center;
+                               text-transform:uppercase; letter-spacing: 4px;"
+                        autocomplete="off" autocorrect="off" maxlength="9">
+                    <button class="btn-main" style="width:100%; margin-top:10px; background: var(--surface2); color: var(--text);" onclick="joinManualCode()">
+                        Join with Code
+                    </button>
+
                     <!-- Hidden input for compatibility with scanner callback -->
                     <input type="hidden" id="roomCodeInput">
                 </div>
