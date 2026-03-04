@@ -643,12 +643,10 @@ async function startHostScanner(btn) {
     if (wrapper) wrapper.style.display = 'block';
     if (btn) btn.style.display = 'none';
 
-    _hostHtml5QrCode = new Html5Qrcode("host-scanner-reader", {
-        formatsToSupport: [ window.Html5QrcodeSupportedFormats.QR_CODE ]
-    });
+    _hostHtml5QrCode = new Html5Qrcode("host-scanner-reader");
     const config = {
         fps: 10,
-        qrbox: { width: 250, height: 250 },
+        qrbox: { width: 280, height: 280 },
         experimentalFeatures: { useBarCodeDetectorIfSupported: true }
     };
     
