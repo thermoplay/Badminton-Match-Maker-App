@@ -1108,10 +1108,16 @@ const PlayerMode = {
         if (wrapper) wrapper.style.display = 'block';
         if (btn) btn.style.display = 'none';
 
-        this._html5QrCode = new Html5Qrcode("sl-scanner-reader");
-        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+        this._html5QrCode = new Html5Qrcode("sl-scanner-reader", {
+            formatsToSupport: [ Html5Qrcode.Html5QrcodeSupportedFormats.QR_CODE ]
+        });
+        const config = {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+        };
         
-        this._html5QrCode.start({ facingMode: "environment" }, config, 
+        this._html5QrCode.start({ facingMode: "environment" }, config,
             (decodedText) => {
                 let code = null;
                 try {

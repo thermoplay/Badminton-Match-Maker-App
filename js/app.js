@@ -643,10 +643,16 @@ async function startHostScanner(btn) {
     if (wrapper) wrapper.style.display = 'block';
     if (btn) btn.style.display = 'none';
 
-    _hostHtml5QrCode = new Html5Qrcode("host-scanner-reader");
-    const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+    _hostHtml5QrCode = new Html5Qrcode("host-scanner-reader", {
+        formatsToSupport: [ Html5Qrcode.Html5QrcodeSupportedFormats.QR_CODE ]
+    });
+    const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 250 },
+        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    };
     
-    _hostHtml5QrCode.start({ facingMode: "environment" }, config, 
+    _hostHtml5QrCode.start({ facingMode: "environment" }, config,
         (decodedText) => {
             let code = null;
             try {
