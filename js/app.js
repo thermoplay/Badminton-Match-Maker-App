@@ -439,6 +439,16 @@ function movePlayerToFront() {
 // OVERLAYS — STATS & SYNC
 // ---------------------------------------------------------------------------
 
+function joinManualCode() {
+    const input = document.getElementById('manualRoomCodeInput');
+    const code = input?.value?.trim();
+    if (code && typeof joinOnlineSession === 'function') {
+        joinOnlineSession(code);
+    } else if (!code) {
+        alert('Please enter a room code.');
+    }
+}
+
 function showOverlay(type) {
     const title   = document.getElementById('overlayTitle');
     const content = document.getElementById('overlayContent');
@@ -516,7 +526,7 @@ function showOverlay(type) {
                                outline:none; font-size:1.2rem; font-family:var(--font-display); text-align:center;
                                text-transform:uppercase; letter-spacing: 4px;"
                         autocomplete="off" autocorrect="off" maxlength="9">
-                    <button class="btn-main" style="width:100%; margin-top:10px; background: var(--surface2); color: var(--text);" onclick="joinManualCode()">
+                    <button id="joinManualCodeBtn" class="btn-main" style="width:100%; margin-top:10px; background: var(--surface2); color: var(--text);">
                         Join with Code
                     </button>
 
@@ -574,6 +584,14 @@ function showOverlay(type) {
                     qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
                 }
             }
+        }
+
+        // Attach event listeners for manual code entry to avoid global scope issues
+        if (!isOnlineSession) {
+            document.getElementById('joinManualCodeBtn')?.addEventListener('click', joinManualCode);
+            document.getElementById('manualRoomCodeInput')?.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') joinManualCode();
+            });
         }
     }
 }
@@ -1949,6 +1967,7 @@ function spectateOnly() {
     document.body.classList.add('spectator-mode');
     showSessionToast('👁 Spectating live');
 }
+
 
 // =============================================================================
 // initApp

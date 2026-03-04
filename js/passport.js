@@ -1060,6 +1060,13 @@ const PlayerMode = {
         _renderPlayCount(passport.playerName);
     },
 
+    _joinWithManualCode() {
+        const input = document.getElementById('slManualCodeInput');
+        const code = input?.value?.trim();
+        if (code) {
+            PlayerMode.boot(Passport.get(), code);
+        }
+    },
     _promptForCode() {
         this.setStatus('pending', 'Ready to Join', 'Scan the QR code on the host screen');
         const el = document.getElementById('slCurrentMatches');
@@ -1079,9 +1086,28 @@ const PlayerMode = {
                         Cancel
                     </button>
                 </div>
-            </div>`;
-    },
 
+                <div style="display:flex; align-items:center; gap:10px; margin:1.5rem 0;">
+                    <hr style="flex:1; border:none; border-top:1px solid var(--border);">
+                    <span style="font-size:0.7rem; color:var(--text-muted);">OR</span>
+                    <hr style="flex:1; border:none; border-top:1px solid var(--border);">
+                </div>
+                <input type="text" id="slManualCodeInput" placeholder="ENTER CODE"
+                    class="sl-code-input"
+                    style="margin-bottom: 0.625rem;"
+                    autocomplete="off" autocorrect="off" maxlength="9">
+                <button id="slJoinManualCodeBtn" class="sl-code-btn">
+                    Join with Code
+                </button>
+            </div>`;
+
+        // Attach listeners after rendering the HTML
+        document.getElementById('slJoinManualCodeBtn')?.addEventListener('click', () => this._joinWithManualCode());
+        document.getElementById('slManualCodeInput')?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') this._joinWithManualCode();
+        });
+    },
+ 
     async _startInAppScanner(btn) {
         if (btn) {
             btn.textContent = 'Loading Camera...';
