@@ -647,14 +647,15 @@ async function startHostScanner(btn) {
     const config = {
         fps: 10,
         qrbox: { width: 280, height: 280 },
-        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
     };
     
     _hostHtml5QrCode.start({ facingMode: "environment" }, config,
         (decodedText) => {
             let code = null;
+            let isUrl = false;
             try {
                 const url = new URL(decodedText);
+                isUrl = true;
                 code = url.searchParams.get('join');
             } catch (e) {}
             
@@ -669,6 +670,10 @@ async function startHostScanner(btn) {
                     if (typeof joinOnlineSession === 'function') {
                         joinOnlineSession(code);
                     }
+                });
+            } else if (isUrl) {
+                stopHostScanner().then(() => {
+                    window.location.href = decodedText;
                 });
             }
         },

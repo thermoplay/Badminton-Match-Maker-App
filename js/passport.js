@@ -1112,14 +1112,15 @@ const PlayerMode = {
         const config = {
             fps: 10,
             qrbox: { width: 280, height: 280 },
-            experimentalFeatures: { useBarCodeDetectorIfSupported: true }
         };
         
         this._html5QrCode.start({ facingMode: "environment" }, config,
             (decodedText) => {
                 let code = null;
+                let isUrl = false;
                 try {
                     const url = new URL(decodedText);
+                    isUrl = true;
                     code = url.searchParams.get('join');
                 } catch (e) {}
                 
@@ -1132,6 +1133,12 @@ const PlayerMode = {
                         this._html5QrCode.clear();
                         this._html5QrCode = null;
                         PlayerMode.boot(Passport.get(), code);
+                    }).catch(err => console.error(err));
+                } else if (isUrl) {
+                    this._html5QrCode.stop().then(() => {
+                        this._html5QrCode.clear();
+                        this._html5QrCode = null;
+                        window.location.href = decodedText;
                     }).catch(err => console.error(err));
                 }
             },
