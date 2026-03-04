@@ -493,21 +493,19 @@ function showOverlay(type) {
                 <div style="margin-bottom:24px;">
                     <div class="sync-section-label">Join a Session</div>
                     <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
-                        Enter a room code to watch a live session anywhere in the world.
+                        Scan a room code to watch a live session.
                     </p>
-                    <input type="text" id="roomCodeInput"
-                        placeholder="e.g. ABCD-1234"
-                        style="width:100%; background:var(--bg2); border:1.5px solid var(--border);
-                               color:#fff; padding:14px; border-radius:12px; margin-bottom:10px;
-                               outline:none; font-size:16px; font-family:var(--font-display);
-                               letter-spacing:3px; text-transform:uppercase; text-align:center;"
-                        autocomplete="off" autocorrect="off" autocapitalize="characters"
-                        oninput="this.value=this.value.toUpperCase()"
-                    >
-                    <button class="btn-main" style="width:100%; background:#475569; color:#fff;"
-                        onclick="joinOnlineSession(document.getElementById('roomCodeInput').value)">
-                        Join Session
+                    <button id="hostScanBtn" class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="startHostScanner(this)">
+                        📷 Scan QR Code
                     </button>
+                    <div id="host-scanner-wrapper" style="margin-top:1rem; overflow:hidden; border-radius:12px; display:none;">
+                        <div id="host-scanner-reader" style="width:100%"></div>
+                        <button class="btn-main" style="width:100%; margin-top:12px; background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3);" onclick="stopHostScanner()">
+                            Cancel
+                        </button>
+                    </div>
+                    <!-- Hidden input for compatibility with scanner callback -->
+                    <input type="hidden" id="roomCodeInput">
                 </div>
 
                 <div class="sync-divider"></div>
