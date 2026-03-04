@@ -644,7 +644,7 @@ async function startHostScanner(btn) {
     if (btn) btn.style.display = 'none';
 
     _hostHtml5QrCode = new Html5Qrcode("host-scanner-reader", {
-        formatsToSupport: [ Html5Qrcode.Html5QrcodeSupportedFormats.QR_CODE ]
+        formatsToSupport: [ window.Html5QrcodeSupportedFormats.QR_CODE ]
     });
     const config = {
         fps: 10,

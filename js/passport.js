@@ -1109,7 +1109,7 @@ const PlayerMode = {
         if (btn) btn.style.display = 'none';
 
         this._html5QrCode = new Html5Qrcode("sl-scanner-reader", {
-            formatsToSupport: [ Html5Qrcode.Html5QrcodeSupportedFormats.QR_CODE ]
+            formatsToSupport: [ window.Html5QrcodeSupportedFormats.QR_CODE ]
         });
         const config = {
             fps: 10,
