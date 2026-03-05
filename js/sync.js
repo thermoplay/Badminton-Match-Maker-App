@@ -96,7 +96,8 @@ async function createOnlineSession() {
                 room_code: roomCode,
                 operator_key_hash: opKeyHash,
                 squad,
-                current_matches: currentMatches
+                current_matches: currentMatches,
+                player_queue: playerQueue
             },
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');

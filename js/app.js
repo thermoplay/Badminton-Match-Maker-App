@@ -1907,9 +1907,18 @@ async function initApp() {
 
     // ── PLAYER MODE BOOT ─────────────────────────────────────────────────────
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('role') === 'player') {
+    const joinCode = urlParams.get('join');
+    const role = urlParams.get('role');
+
+    // --- HOST OVERRIDE CHECK ---
+    // A host rejoining their own session via an invite link should be treated as a host.
+    const savedCode = localStorage.getItem('cs_room_code');
+    const savedOpKey = localStorage.getItem('cs_operator_key');
+    const isHostOfThisSession = (joinCode && savedCode === joinCode && savedOpKey);
+
+    // If the URL says "player" but we are NOT the host of this specific session, boot into player mode.
+    if (role === 'player' && !isHostOfThisSession) {
         document.body.classList.add('player-mode');
-        const joinCode = urlParams.get('join');
         
         // Clean URL immediately
         const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
@@ -1917,6 +1926,10 @@ async function initApp() {
 
         if (typeof PlayerMode !== 'undefined') await PlayerMode.boot(passport, joinCode);
         return; // Stop here — do not load host logic
+    } else if (isHostOfThisSession) {
+        // We are the host, but clicked a player link. Clean the URL and proceed with host boot.
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
     }
 
     try {

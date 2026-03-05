@@ -32,7 +32,7 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { room_code, operator_key, squad, current_matches } = req.body;
+    const { room_code, operator_key, squad, current_matches, player_queue } = req.body;
 
     if (!room_code || !operator_key) {
         return res.status(400).json({ error: 'Missing required fields' });
@@ -60,6 +60,7 @@ export default async function handler(req, res) {
             body: {
                 squad,
                 current_matches,
+                player_queue:     player_queue || [],
                 uuid_map:         req.body.uuid_map         || {},
                 approved_players: req.body.approved_players || {},
                 last_active: new Date().toISOString(),

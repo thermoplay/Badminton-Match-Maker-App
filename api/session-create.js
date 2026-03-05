@@ -55,7 +55,7 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Server misconfiguration' });
     }
 
-    const { room_code, operator_key_hash, squad, current_matches } = req.body;
+    const { room_code, operator_key_hash, squad, current_matches, player_queue } = req.body;
 
     if (!room_code || !operator_key_hash) {
         return res.status(400).json({ error: 'Missing required fields' });
@@ -76,6 +76,7 @@ export default async function handler(req, res) {
                 operator_key_hash: operator_key_hash || null,
                 squad:             squad           || [],
                 current_matches:   current_matches || [],
+                player_queue:      player_queue    || [],
                 round_history:     [],
                 last_active:       new Date().toISOString(),
             },
