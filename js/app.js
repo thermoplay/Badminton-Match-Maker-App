@@ -8,7 +8,6 @@
 let passport  = null;
 let inviteQR  = null;
 let supabase  = null;
-let _hostHtml5QrCode = null;
 
 // ---------------------------------------------------------------------------
 // STATE
@@ -442,8 +441,16 @@ function movePlayerToFront() {
 function joinManualCode() {
     const input = document.getElementById('manualRoomCodeInput');
     const code = input?.value?.trim();
-    if (code && typeof joinOnlineSession === 'function') {
-        joinOnlineSession(code);
+    if (code) {
+        if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
+            const newUrl = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
+            window.history.pushState({}, document.title, newUrl);
+            document.body.classList.add('player-mode');
+            closeOverlay();
+            PlayerMode.boot(Passport.get(), code);
+        } else {
+            window.location.href = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
+        }
     } else if (!code) {
         alert('Please enter a room code.');
     }
@@ -503,23 +510,8 @@ function showOverlay(type) {
                 <div style="margin-bottom:24px;">
                     <div class="sync-section-label">Join a Session</div>
                     <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
-                        Scan a room code to watch a live session.
+                        Enter a room code to watch a live session.
                     </p>
-                    <button id="hostScanBtn" class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="startHostScanner(this)">
-                        📷 Scan QR Code
-                    </button>
-                    <div id="host-scanner-wrapper" style="margin-top:1rem; overflow:hidden; border-radius:12px; display:none;">
-                        <div id="host-scanner-reader" style="width:100%"></div>
-                        <button class="btn-main" style="width:100%; margin-top:12px; background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3);" onclick="stopHostScanner()">
-                            Cancel
-                        </button>
-                    </div>
-
-                    <div style="display:flex; align-items:center; gap:10px; margin-top:1.5rem;">
-                        <hr style="flex:1; border:none; border-top:1px solid var(--border);">
-                        <span style="font-size:0.7rem; color:var(--text-muted);">OR</span>
-                        <hr style="flex:1; border:none; border-top:1px solid var(--border);">
-                    </div>
                     <input type="text" id="manualRoomCodeInput" placeholder="ENTER CODE"
                         style="width:100%; background:var(--bg2); border:1.5px solid var(--border);
                                color:#fff; padding:14px; border-radius:12px; margin-top:1.5rem;
@@ -529,9 +521,6 @@ function showOverlay(type) {
                     <button id="joinManualCodeBtn" class="btn-main" style="width:100%; margin-top:10px; background: var(--surface2); color: var(--text);">
                         Join with Code
                     </button>
-
-                    <!-- Hidden input for compatibility with scanner callback -->
-                    <input type="hidden" id="roomCodeInput">
                 </div>
 
                 <div class="sync-divider"></div>
@@ -649,96 +638,6 @@ function fallbackCopy(text) {
         alert('Could not copy automatically. Please copy the token manually.');
     }
     document.body.removeChild(ta);
-}
-
-async function startHostScanner(btn) {
-    if (btn) {
-        btn.textContent = 'Loading Camera...';
-        btn.disabled = true;
-    }
-
-    if (!window.Html5Qrcode) {
-        try {
-            await new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = "https://unpkg.com/html5-qrcode";
-                script.onload = resolve;
-                script.onerror = reject;
-                document.head.appendChild(script);
-            });
-        } catch (e) {
-            alert('Could not load scanner library. Check internet connection.');
-            if (btn) { btn.textContent = '📷 Scan QR Code'; btn.disabled = false; }
-            return;
-        }
-    }
-
-    const wrapper = document.getElementById('host-scanner-wrapper');
-    if (wrapper) wrapper.style.display = 'block';
-    if (btn) btn.style.display = 'none';
-
-    _hostHtml5QrCode = new Html5Qrcode("host-scanner-reader");
-    const config = {
-        fps: 10,
-        // qrbox removed to allow full-screen scanning (more reliable)
-        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-    };
-    
-    _hostHtml5QrCode.start({ facingMode: "environment" }, config,
-        (decodedText) => {
-            let code = null;
-            let isUrl = false;
-            try {
-                const url = new URL(decodedText);
-                isUrl = true;
-                code = url.searchParams.get('join');
-            } catch (e) {}
-            
-            // Fallback: look for the code pattern anywhere in the text
-            if (!code) {
-                const match = decodedText.match(/[A-Z0-9]{4}-?[A-Z0-9]{4}/i);
-                if (match) code = match[0];
-            }
-
-            if (code) {
-                stopHostScanner().then(() => {
-                    const input = document.getElementById('roomCodeInput');
-                    if (input) input.value = code;
-                    if (typeof joinOnlineSession === 'function') {
-                        joinOnlineSession(code);
-                    }
-                });
-            } else if (isUrl) {
-                stopHostScanner().then(() => {
-                    window.location.href = decodedText;
-                });
-            }
-        },
-        (errorMessage) => { /* ignore */ }
-    ).catch(err => {
-        console.error("Error starting scanner", err);
-        alert("Camera access failed. Please ensure permissions are granted.");
-        stopHostScanner();
-    });
-}
-
-async function stopHostScanner() {
-    if (_hostHtml5QrCode) {
-        try {
-            await _hostHtml5QrCode.stop();
-            _hostHtml5QrCode.clear();
-        } catch (e) { /* ignore */ }
-        _hostHtml5QrCode = null;
-    }
-    const wrapper = document.getElementById('host-scanner-wrapper');
-    if (wrapper) wrapper.style.display = 'none';
-    
-    const btn = document.getElementById('hostScanBtn');
-    if (btn) {
-        btn.style.display = ''; // Revert to CSS default (flex)
-        btn.textContent = '📷 Scan QR Code';
-        btn.disabled = false;
-    }
 }
 
 function _supportSectionHTML() {
