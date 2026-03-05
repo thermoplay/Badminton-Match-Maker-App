@@ -54,25 +54,29 @@ export default async function handler(req, res) {
 
     // ── POST: player submits join request ────────────────────────────────────
     if (req.method === 'POST') {
-        const { room_code, name, player_uuid, force, leave } = req.body;
+        const { room_code, name, player_uuid, force } = req.body;
 
-        // ── OPTION A: Player Leaving (Self-Delete) ───────────────────────────
-        if (leave === true) {
-            if (!room_code || !player_uuid) return res.status(400).json({ error: 'Missing fields' });
-            const code = String(room_code).trim().toUpperCase();
-            const uuid = String(player_uuid).trim();
-            const del = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`, {
-                method: 'DELETE'
-            });
-            return res.status(del.ok ? 200 : 500).json({ ok: del.ok });
+        // The `leave: true` functionality has been removed. Player removal is now
+        // exclusively handled by the authenticated DELETE endpoint, which is triggered
+        // by the host. This prevents a player from being able to remove another
+        // player from a session without authorization.
+
+        if (!room_code || !name) {
+            return res.status(400).json({ error: 'Missing fields for join' });
         }
 
-        // ── OPTION B: Player Joining ─────────────────────────────────────────
-        if (!room_code || !name) return res.status(400).json({ error: 'Missing fields' });
+        const code = String(room_code).trim().toUpperCase();
+        const trimmedName = String(name).trim().slice(0, 50);
+        const uuid = player_uuid ? String(player_uuid).trim() : null;
 
-        const code    = String(room_code).trim().toUpperCase();
-        const trimmed = String(name).trim().slice(0, 50);
-        const uuid    = player_uuid ? String(player_uuid).trim() : null;
+        // --- Input Validation ---
+        if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+            return res.status(400).json({ error: 'Invalid room code format' });
+        }
+        if (uuid && !/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
+            return res.status(400).json({ error: 'Invalid player UUID format' });
+        }
+        // ------------------------
 
         // ── Step 1: Check if player is already approved in session_members ────
         // Only this check should short-circuit. A pending row does NOT block us.
@@ -90,13 +94,13 @@ export default async function handler(req, res) {
 
                 // Status is 'pending' — update name if it changed, then FALL THROUGH.
                 // Do NOT return early here — we still need to write play_requests.
-                if (member.player_name !== trimmed) {
+                if (member.player_name !== trimmedName) {
                     await sbFetch(
                         `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
                         {
                             method:  'PATCH',
                             headers: { 'Prefer': 'return=minimal' },
-                            body:    { player_name: trimmed, last_seen: new Date().toISOString() },
+                            body:    { player_name: trimmedName, last_seen: new Date().toISOString() },
                         }
                     );
                 }
@@ -122,7 +126,7 @@ export default async function handler(req, res) {
             method: 'POST',
             body: {
                 room_code:    code,
-                name:         trimmed,
+                name:         trimmedName,
                 player_uuid:  uuid,
                 requested_at: new Date().toISOString(),
             },
@@ -149,7 +153,7 @@ export default async function handler(req, res) {
                 await sbFetch('/session_members', {
                     method:  'POST',
                     headers: { 'Prefer': 'return=minimal,resolution=ignore-duplicates' },
-                    body:    { room_code: code, player_uuid: uuid, player_name: trimmed, status: 'pending', joined_at: new Date().toISOString(), last_seen: new Date().toISOString() },
+                    body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: 'pending', joined_at: new Date().toISOString(), last_seen: new Date().toISOString() },
                 });
             }
         }
@@ -172,10 +176,21 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
         const { id, room_code, player_uuid, operator_key } = req.body;
 
-        // Case 1: Host is removing a player from the session entirely.
+        // --- ACTION 1: Host removes a player from the session ---
+        // This is an authenticated action that deletes a row from `session_members`.
+        // It is triggered by the host UI (e.g., player leaves, host kicks player).
         if (player_uuid && room_code && operator_key) {
             const code = String(room_code).trim().toUpperCase();
             const uuid = String(player_uuid).trim();
+
+            // --- Input Validation ---
+            if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+                return res.status(400).json({ error: 'Invalid room code format' });
+            }
+            if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
+                return res.status(400).json({ error: 'Invalid player UUID format' });
+            }
+            // ------------------------
 
             // Verify operator key
             const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key_hash&limit=1`);
@@ -189,10 +204,16 @@ export default async function handler(req, res) {
 
             // Delete from session_members
             const delRes = await sbFetch(`/session_members?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+            
+            // ALSO delete from play_requests to prevent join-blocking ghosts
+            await sbFetch(`/play_requests?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+
             return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
         }
 
-        // Case 2: Host is dismissing a join request (original logic).
+        // --- ACTION 2: Host dismisses a pending join request ---
+        // This deletes a row from `play_requests` using its unique ID.
+        // It's called when the host approves or denies a join notification.
         if (id) {
             const r = await sbFetch(`/play_requests?id=eq.${id}`, { method: 'DELETE' });
             return res.status(r.ok ? 200 : 500).json({ ok: r.ok });

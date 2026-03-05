@@ -18,10 +18,10 @@ function findP(name) {
 // ELO ENGINE
 // ---------------------------------------------------------------------------
 
-function calculateELOSift(winnerRating, loserRating) {
-    const K = 32;
-    const expectedWin = 1 / (1 + Math.pow(10, (loserRating - winnerRating) / 400));
-    return Math.round(K * (1 - expectedWin));
+function calculateELODelta(playerRating, opponentAvgRating, actualScore, gamesPlayed) {
+    const K = gamesPlayed < 10 ? 60 : 32; // Placement matches move faster
+    const expectedScore = 1 / (1 + Math.pow(10, (opponentAvgRating - playerRating) / 400));
+    return Math.round(K * (actualScore - expectedScore));
 }
 
 function calculateOdds(teamA, teamB) {
@@ -149,10 +149,18 @@ function applyELOForMatch(m) {
 
     const winAvg  = winners.reduce((s, p) => s + p.rating, 0) / winners.length;
     const loseAvg = losers.reduce((s, p)  => s + p.rating, 0) / losers.length;
-    const sift    = calculateELOSift(winAvg, loseAvg);
 
-    winners.forEach(p => { p.rating += sift; p.wins++; p.games++; p.streak++; });
-    losers.forEach(p  => { p.rating = Math.max(800, p.rating - sift); p.games++; p.streak = 0; });
+    // Update Winners
+    winners.forEach(p => {
+        p.rating += calculateELODelta(p.rating, loseAvg, 1, p.games);
+        p.wins++; p.games++; p.streak++;
+    });
+    // Update Losers
+    losers.forEach(p => {
+        const delta = calculateELODelta(p.rating, winAvg, 0, p.games);
+        p.rating = Math.max(800, p.rating + delta); // delta is negative here
+        p.games++; p.streak = 0;
+    });
 }
 
 // Legacy alias — kept for undo path

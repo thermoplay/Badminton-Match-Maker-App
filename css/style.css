@@ -18,6 +18,7 @@
    --------------------------------------------------------------------------- */
 :root {
     --accent:       #00ffa3;
+    --accent-rgb:   0, 255, 163;
     --accent-dim:   rgba(0, 255, 163, 0.15);
     --accent-glow:  rgba(0, 255, 163, 0.35);
     --bg:           #0a0a0f;
@@ -4805,6 +4806,21 @@ button:active,
 @keyframes onDeckPulse {
     0%, 100% { border-color: #facc15; background: rgba(250,204,21,0.06); }
     50%       { border-color: rgba(250,204,21,0.7); background: rgba(250,204,21,0.10); }
+}
+
+/* =============================================================================
+   PLAYER REMOVAL ANIMATION
+   ============================================================================= */
+
+.player-chip-removing {
+    animation: chipOut 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes chipOut {
+    to {
+        opacity: 0;
+        transform: scale(0.85) translateY(10px);
+    }
 }
 /* =============================================================================
    COURT TIMER

@@ -222,59 +222,69 @@ async function removePlayerFromSession(playerUUID, playerName) {
     if (playerIndex === -1) return; // Player not in squad
 
     const removedName = squad[playerIndex].name;
-    const removedUUID = squad[playerIndex].uuid;
-    squad.splice(playerIndex, 1);
+    const removedUUID = squad[playerIndex].uuid || null;
 
-    currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
-    playerQueue = playerQueue.filter(n => n !== removedName);
+    const chipEl = document.querySelector(`.player-chip[data-uuid="${removedUUID}"]`);
 
-    // Ensure any players stranded by a disbanded match are returned to the queue
-    if (typeof initQueue === 'function') initQueue();
+    const performRemoval = async () => {
+        // Re-find index in case of race conditions
+        const pIndex = squad.findIndex(p => p.uuid === removedUUID);
+        if (pIndex === -1) return;
 
-    // If the leaving player had a pending join request, remove it.
-    // This prevents them from being unable to rejoin because the old
-    // request still exists in the database.
-    if (window.playRequests && removedUUID) {
-        const pendingRequest = window.playRequests.find(r => r.player_uuid === removedUUID);
-        if (pendingRequest && typeof denyPlayRequest === 'function') {
-            denyPlayRequest(pendingRequest.id);
+        squad.splice(pIndex, 1);
+
+        currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
+        playerQueue = playerQueue.filter(n => n !== removedName);
+
+        // Ensure queue is clean
+        if (typeof window.initQueue === 'function') window.initQueue();
+
+        if (window.playRequests && removedUUID) {
+            const pendingRequest = window.playRequests.find(r => r.player_uuid === removedUUID);
+            if (pendingRequest && typeof denyPlayRequest === 'function') {
+                denyPlayRequest(pendingRequest.id);
+            }
         }
+
+        if (window._approvedPlayers) {
+            if (removedUUID) delete window._approvedPlayers[removedUUID];
+            if (removedName) delete window._approvedPlayers[removedName];
+        }
+
+        renderSquad();
+        rebuildMatchCardIndices();
+        renderQueueStrip();
+        checkNextButtonState();
+        saveToDisk();
+
+        if (typeof broadcastGameState === 'function') broadcastGameState();
+
+        if (isOperator && removedUUID && currentRoomCode && operatorKey) {
+            try {
+                await fetch('/api/play-request', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        room_code: currentRoomCode,
+                        player_uuid: removedUUID,
+                        operator_key: operatorKey
+                    })
+                });
+            } catch (e) { console.error('[CourtSide] Failed to remove member from DB session', e); }
+        }
+
+        showSessionToast(`👋 ${removedName} left the session.`);
+        Haptic.bump();
+    };
+
+    if (chipEl) {
+        chipEl.classList.add('player-chip-removing');
+        // Wait for animation to finish before removing from state and re-rendering
+        setTimeout(performRemoval, 350);
+    } else {
+        // Fallback for when element isn't found (e.g., player is inactive)
+        await performRemoval();
     }
-
-    // Clean up approved players list so they can rejoin properly later
-    if (window._approvedPlayers) {
-        if (removedUUID) delete window._approvedPlayers[removedUUID];
-        if (removedName) delete window._approvedPlayers[removedName];
-    }
-
-    renderSquad();
-    rebuildMatchCardIndices();
-    renderQueueStrip();
-    checkNextButtonState();
-    saveToDisk();
-
-    // Immediately notify all clients of the change
-    if (typeof broadcastGameState === 'function') broadcastGameState();
-
-    // Also remove the player from the session_members table in the database.
-    // This ensures they are fully removed from the session's source of truth
-    // and fixes any state desync issues.
-    if (isOperator && removedUUID && currentRoomCode && operatorKey) {
-        try {
-            await fetch('/api/play-request', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    room_code: currentRoomCode,
-                    player_uuid: removedUUID,
-                    operator_key: operatorKey
-                })
-            });
-        } catch (e) { console.error('[CourtSide] Failed to remove member from DB session', e); }
-    }
-
-    showSessionToast(`👋 ${removedName} left the session.`);
-    Haptic.bump();
 }
 window.removePlayerFromSession = removePlayerFromSession;
 
@@ -288,6 +298,7 @@ function renderSquad() {
         const isNew = p.games === 0 && p.wins === 0;
         return `
         <div class="player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''}"
+             data-uuid="${p.uuid}"
              onmousedown="startPress(${i})"
              onmouseup="endPress(${i})"
              ontouchstart="startPress(${i})"
@@ -595,6 +606,10 @@ function closeOverlay() {
 
 function generateQR() {
     const token = btoa(JSON.stringify({ squad, currentMatches }));
+    if (token.length > 2500) {
+        alert('Data is too large for a QR code. Please use the "Copy Sync Token" button instead.');
+        return;
+    }
     const qrDiv = document.getElementById('qrcode');
     if (!qrDiv) return;
     qrDiv.innerHTML = '';
@@ -616,7 +631,7 @@ function copySyncToken() {
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
-            .then(() => alert(isOnlineSession ? `Room code copied: ${text}` : 'Token copied!'))
+            .then(() => showSessionToast(isOnlineSession ? `📋 Room code copied: ${text}` : '📋 Token copied!'))
             .catch(() => fallbackCopy(text));
     } else {
         fallbackCopy(text);
@@ -633,7 +648,7 @@ function fallbackCopy(text) {
     ta.select();
     try {
         document.execCommand('copy');
-        alert('Token copied!');
+        showSessionToast('📋 Token copied!');
     } catch (e) {
         alert('Could not copy automatically. Please copy the token manually.');
     }
@@ -1609,13 +1624,7 @@ function _makeApprovalToken() {
     return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function _generateUUID() {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-        const r = Math.random() * 16 | 0;
-        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-    });
-}
+const _generateUUID = () => window.Passport?._uuid() || crypto.randomUUID();
 
 async function denyPlayRequest(id) {
     try {
@@ -1916,13 +1925,8 @@ async function initApp() {
         console.error('[CourtSide] initApp: loadFromDisk failed', e);
     }
 
-    if (typeof bootApp === 'function') {
-        await bootApp();
-    } else {
-        console.warn('[CourtSide] initApp: bootApp not found, falling back to tryAutoRejoin');
-        if (typeof tryAutoRejoin === 'function') {
-            await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
-        }
+    if (typeof tryAutoRejoin === 'function') {
+        await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
     }
 }
 

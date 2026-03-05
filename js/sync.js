@@ -43,8 +43,9 @@ function _syncState() {
 // Key: player_uuid → { player_uuid, player_name, status, room_code }
 window._sessionMembers = {};
 
+// It's best practice to load these from a configuration file or environment variables.
 const _RT_URL = 'wss://crqwaqovoqmlyvqeekhk.supabase.co/realtime/v1/websocket';
-const _RT_KEY = 'sb_publishable_2NEOSY4wadPb93X55k_uvg_ASydylcv';
+const _RT_KEY = 'sb_publishable_2NEOSY4wadPb93X55k_uvg_ASydylcv'; // This should be your project's public anon key
 
 // ---------------------------------------------------------------------------
 // API HELPERS
@@ -88,14 +89,20 @@ async function createOnlineSession() {
     try {
         const roomCode = generateRoomCode();
         const opKey    = generateOperatorKey();
+        const opKeyHash = await hashKey(opKey);
         const result   = await apiCall('session-create', {
             method: 'POST',
-            body: { room_code: roomCode, operator_key: opKey, squad, current_matches: currentMatches },
+            body: {
+                room_code: roomCode,
+                operator_key_hash: opKeyHash,
+                squad,
+                current_matches: currentMatches
+            },
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
         currentRoomCode = roomCode;
         operatorKey     = opKey;
-        operatorKeyHash = await hashKey(opKey);
+        operatorKeyHash = opKeyHash;
         isOperator      = true;
         isOnlineSession = true;
         _syncState();
@@ -466,8 +473,22 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     uuidMap[trimmed] = playerUUID;
     window._sessionUUIDMap = uuidMap;
 
+    // Update active matches if the player is currently in a game
+    let matchUpdated = false;
+    if (window.currentMatches) {
+        window.currentMatches.forEach(m => {
+            m.teams.forEach((team, tIdx) => {
+                if (team.includes(prevName)) {
+                    m.teams[tIdx] = team.map(n => n === prevName ? trimmed : n);
+                    matchUpdated = true;
+                }
+            });
+        });
+    }
+
     renderSquad();
     saveToDisk();
+    if (matchUpdated) broadcastGameState(); // Ensure players see the new name on match cards
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
 
@@ -547,6 +568,7 @@ function subscribeRealtime(roomCode) {
                 const table  = data.payload?.data?.table || data.payload?.table;
                 const record = data.payload?.data?.record;
                 const old    = data.payload?.data?.old_record;
+                const type   = data.payload?.eventType || data.payload?.type;
 
                 if (table === 'session_members' || data.payload?.data?.table === 'session_members') {
                     // session_members change — ALL subscribers handle this
@@ -566,7 +588,9 @@ function subscribeRealtime(roomCode) {
                 _handleBroadcast(data.payload);
                 return;
             }
-        } catch { /* ignore */ }
+        } catch (e) {
+            console.error('[CourtSide] Realtime: Error processing message', e, msg.data);
+        }
     };
 
     ws.onerror = () => {};

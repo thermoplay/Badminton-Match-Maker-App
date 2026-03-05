@@ -501,43 +501,6 @@
             }
         });
 
-        const _originalLoad = window.onload;
-        window.onload = async function () {
-            try {
-                if (_originalLoad) _originalLoad();
-            } catch (e) {
-                console.error('[CourtSide] Original onload error:', e);
-            }
-
-            try {
-                const params   = new URLSearchParams(window.location.search);
-                const role     = params.get('role');
-                const joinCode = params.get('room') || params.get('join')
-                    || window._pendingJoinCode
-                    || (function(){ try{ return localStorage.getItem('cs_player_room_code'); }catch(e){ return null; } })()
-                    || null;
-
-                if (role === 'player') {
-                    const passport = Passport.init();
-
-                    const hostRoot = document.getElementById('hostRoot');
-                    const hostNav  = document.getElementById('hostNav');
-                    if (hostRoot) hostRoot.style.display = 'none';
-                    if (hostNav)  hostNav.style.display  = 'none';
-
-                    SidelineView.show();
-                    await PlayerMode.boot(passport, joinCode);
-
-                } else {
-                    await tryAutoRejoin();
-                }
-            } catch (bootErr) {
-                console.error('[CourtSide] window.onload boot failed:', bootErr);
-                _csShowError('Session boot failed: ' + bootErr.message);
-                const panel = document.getElementById('sidelinePanel');
-                if (panel) panel.classList.remove('sl-booting');
-            }
-        };
     </script>
 </body>
 </html>

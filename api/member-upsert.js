@@ -49,6 +49,15 @@ export default async function handler(req, res) {
     const code        = String(room_code).trim().toUpperCase();
     const uuid        = String(player_uuid).trim();
 
+    // --- Input Validation ---
+    if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+        return res.status(400).json({ error: 'Invalid room code format' });
+    }
+    if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
+        return res.status(400).json({ error: 'Invalid player UUID format' });
+    }
+    // ------------------------
+
     if (!trimmedName || !uuid) {
         return res.status(400).json({ error: 'Invalid name or uuid' });
     }

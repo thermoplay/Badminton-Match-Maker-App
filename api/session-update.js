@@ -21,6 +21,12 @@ async function sbFetch(path, options = {}) {
     return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
 }
 
+async function hashKey(key) {
+    if (!key) return null;
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'PATCH') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -34,14 +40,14 @@ export default async function handler(req, res) {
 
     // Verify operator_key server-side — never trust the client
     const checkResult = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`
+        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key_hash&limit=1`
     );
 
     if (!checkResult.ok || !checkResult.data || checkResult.data.length === 0) {
         return res.status(404).json({ error: 'Session not found' });
     }
 
-    if (checkResult.data[0].operator_key !== operator_key) {
+    if (checkResult.data[0].operator_key_hash !== await hashKey(operator_key)) {
         // Wrong key — refuse silently (don't tell them why — makes brute force harder)
         return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -54,7 +60,6 @@ export default async function handler(req, res) {
             body: {
                 squad,
                 current_matches,
-                round_history:    req.body.round_history    || [],
                 uuid_map:         req.body.uuid_map         || {},
                 approved_players: req.body.approved_players || {},
                 last_active: new Date().toISOString(),

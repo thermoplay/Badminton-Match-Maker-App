@@ -55,9 +55,9 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Server misconfiguration' });
     }
 
-    const { room_code, operator_key, operator_key_hash, squad, current_matches } = req.body;
+    const { room_code, operator_key_hash, squad, current_matches } = req.body;
 
-    if (!room_code || !operator_key) {
+    if (!room_code || !operator_key_hash) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -66,14 +66,13 @@ export default async function handler(req, res) {
     }
 
     // Run cleanup in parallel — doesn't block the response
-    cleanupStaleSessions();
+    await cleanupStaleSessions();
 
     try {
         const result = await sbFetch('/sessions', {
             method: 'POST',
             body: {
                 room_code,
-                operator_key,
                 operator_key_hash: operator_key_hash || null,
                 squad:             squad           || [],
                 current_matches:   current_matches || [],

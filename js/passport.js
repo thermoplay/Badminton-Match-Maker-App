@@ -390,21 +390,17 @@ const PlayerMode = {
 
             // 1. Notify host that we are leaving
             if (passport && this._joinCode) {
-                try {
-                // API call with keepalive ensures it sends even if page unloads
-                fetch('/api/play-request', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ room_code: this._joinCode, player_uuid: passport.playerUUID, leave: true }),
-                    keepalive: true
-                });
-
+            // The correct pattern is to broadcast our intent to leave. The host
+            // receives this broadcast and performs a secure, authenticated removal
+            // of the player from the session. We no longer make a direct,
+            // unauthenticated API call to delete the session_members row.
+            try {
                 if (typeof window.broadcastPlayerLeaving === 'function') {
                     window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
                 }
-                } catch (e) {
-                    console.error('[CourtSide] Failed to broadcast leaving event. Leaving locally anyway.', e);
-                }
+            } catch (e) {
+                console.error('[CourtSide] Failed to broadcast leaving event. Leaving locally anyway.', e);
+            }
             }
 
             // 2. Clean up local state
@@ -453,17 +449,43 @@ const PlayerMode = {
     // BOOT
     // ─────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Initializes the player view, handling everything from joining a room
+     * to subscribing to live updates.
+     */
     async boot(passport, joinCode) {
+        // 1. Determine room code from URL param or localStorage
         if (!joinCode) {
             try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
         }
-
         this._joinCode = joinCode;
 
-        if (joinCode) {
-            try { localStorage.setItem('cs_player_room_code', joinCode); } catch {}
+        // 2. Initial UI setup
+        this._bootUI(passport, joinCode);
+
+        // 3. If no code, prompt user to enter one and stop.
+        if (!joinCode) {
+            this._promptForCode();
+            return;
         }
 
+        // 4. Handle name entry if the player is new
+        const hasName = !!(passport.playerName && passport.playerName.trim());
+        if (!hasName) {
+            const name = await this._handleNewPlayerName();
+            if (!name) return; // Player cancelled name entry
+            passport = Passport.get(); // Re-fetch passport with new name
+        } else {
+            this._showWelcomeBack(passport.playerName, joinCode);
+            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
+        }
+
+        // 5. Core join and sync logic
+        await this._joinAndSync(passport, joinCode);
+    },
+
+    /** Sets up the initial UI elements during boot. */
+    _bootUI(passport, joinCode) {
         const panel = document.getElementById('sidelinePanel');
         if (panel) panel.classList.add('sl-booting');
 
@@ -472,69 +494,70 @@ const PlayerMode = {
         const codeEl = document.getElementById('slSessionCode');
         if (codeEl && joinCode) codeEl.textContent = joinCode;
 
-        if (!joinCode) {
-            if (panel) panel.classList.remove('sl-booting');
-            this._promptForCode();
-            return;
+        if (joinCode) {
+            try { localStorage.setItem('cs_player_room_code', joinCode); } catch {}
         }
+    },
 
-        const hasName = !!(passport.playerName && passport.playerName.trim());
-        if (hasName) {
-            this._showWelcomeBack(passport.playerName, joinCode);
-            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
-        } else {
-            this.setStatus('pending', 'Almost there…', 'Enter your name to join');
-            this._showNameEntry();
-            const name = await this._promptName();
-            if (!name) {
-                if (panel) panel.classList.remove('sl-booting');
-                return;
-            }
-            Passport.rename(name);
-            this._renderIdentity(Passport.get());
-            this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
+    /** Handles the name entry flow for a new player. */
+    async _handleNewPlayerName() {
+        this.setStatus('pending', 'Almost there…', 'Enter your name to join');
+        this._showNameEntry();
+        const name = await this._promptName();
+        if (!name) {
+            document.getElementById('sidelinePanel')?.classList.remove('sl-booting');
+            return null;
         }
+        Passport.rename(name);
+        this._renderIdentity(Passport.get());
+        this.setStatus('pending', `Hey ${name}!`, 'Connecting to court…');
+        return name;
+    },
 
+    /** The core logic for connecting to a session and fetching state. */
+    async _joinAndSync(passport, joinCode) {
+        const panel = document.getElementById('sidelinePanel');
+
+        // Shortcut: If already approved in this browser session, go straight to live view.
         if (this._isApprovedInSession(joinCode)) {
             if (panel) panel.classList.remove('sl-booting');
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
             this._subscribeAndPoll(joinCode, passport);
             return;
         }
-
+        
+        // Start polling and show a loading state.
         this._subscribeAndPoll(joinCode, passport);
         this._showSearchingSpinner();
 
-        let upsertResult = null;
-        try {
-            upsertResult = await this._memberUpsert(Passport.get(), joinCode);
-        } catch (err) {
+        // Upsert member record to get current status from DB.
+        const upsertResult = await this._memberUpsert(Passport.get(), joinCode).catch(err => {
             console.error('[PlayerMode.boot] member-upsert threw:', err);
-        }
+            return null;
+        });
 
-        if (panel) panel.classList.remove('sl-booting');
+        panel?.classList.remove('sl-booting');
         this._clearSearchingSpinner();
 
+        // Handle failed session lookup.
         if (!upsertResult) {
-            this.setStatus('pending',
-                'Court not found',
-                'The session may have ended. Check the room code.');
+            this.setStatus('pending', 'Court not found', 'The session may have ended. Check the room code.');
             console.error('[CourtSide] Session lookup failed for room:', joinCode);
             this._promptForCode();
             return;
         }
 
+        // Self-healing: If DB says we're 'active' (stale state), force a new join request.
         if (upsertResult.status === 'active') {
-            // If the DB thinks we are 'active', it could be stale state from a
-            // previous session (e.g. player left without host getting the signal).
-            // To be safe, always force a new join request. This ensures the host
-            // gets a fresh notification and can re-approve the player, which
-            // correctly resets their status to 'pending' and then 'active',
-            // fixing any desync.
-            await this._submitJoinRequest(Passport.get(), joinCode, { force: true });
+            await this._submitJoinRequest(Passport.get(), joinCode, {
+                force: true,
+                statusMessage: 'Re-syncing with host...',
+                statusSubMessage: 'Your status was out of sync. Sending a new request.'
+            });
             return;
         }
 
+        // Legacy token verification (can likely be removed in the future)
         const savedToken = this._loadToken(joinCode);
         if (savedToken) {
             const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
@@ -547,8 +570,10 @@ const PlayerMode = {
             }
         }
 
+        // Standard flow: submit a new join request.
         await this._submitJoinRequest(Passport.get(), joinCode);
     },
+
 
     // ─────────────────────────────────────────────────────────────────────────
     // QUEUED STATE
@@ -909,7 +934,9 @@ const PlayerMode = {
     },
 
     async _submitJoinRequest(passport, joinCode, options = {}) {
-        this.setStatus('pending', 'Request sent!', 'Waiting for host to approve… 🏀');
+        const { force = false, statusMessage, statusSubMessage } = options;
+
+        this.setStatus('pending', statusMessage || 'Request sent!', statusSubMessage || 'Waiting for host to approve… 🏀');
         console.log('[PlayerMode] Joining with UUID:', passport.playerUUID);
         try {
             const res = await fetch('/api/play-request', {
@@ -919,7 +946,7 @@ const PlayerMode = {
                     room_code:   joinCode,
                     name:        passport.playerName,
                     player_uuid: passport.playerUUID,
-                    force:       options.force || false,
+                    force:       force,
                 }),
             });
 

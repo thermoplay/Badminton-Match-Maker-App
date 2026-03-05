@@ -35,6 +35,12 @@ async function sbFetch(path, options = {}) {
     return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
 }
 
+async function hashKey(key) {
+    if (!key) return null;
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'PATCH') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -49,17 +55,27 @@ export default async function handler(req, res) {
     const code = String(room_code).trim().toUpperCase();
     const uuid = String(player_uuid).trim();
 
+    // --- Input Validation ---
+    if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+        return res.status(400).json({ error: 'Invalid room code format' });
+    }
+    if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
+        return res.status(400).json({ error: 'Invalid player UUID format' });
+    }
+    // ------------------------
+
     // ── Verify operator_key ─────────────────────────────────────────────────
     // Never trust the client for host identity — always cross-check the DB.
+    // Hash the incoming raw key and compare it to the stored hash.
     const sessionCheck = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`
+        `/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key_hash&limit=1`
     );
 
     if (!sessionCheck.ok || !sessionCheck.data?.length) {
         return res.status(404).json({ error: 'Session not found' });
     }
 
-    if (sessionCheck.data[0].operator_key !== operator_key) {
+    if (sessionCheck.data[0].operator_key_hash !== await hashKey(operator_key)) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 
