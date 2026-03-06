@@ -73,13 +73,6 @@ function generateOperatorKey() {
         .map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function hashKey(key) {
-    const enc = new TextEncoder();
-    const buf = await crypto.subtle.digest('SHA-256', enc.encode(key));
-    return Array.from(new Uint8Array(buf))
-        .map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 // ---------------------------------------------------------------------------
 // CREATE SESSION
 // ---------------------------------------------------------------------------
@@ -89,12 +82,11 @@ async function createOnlineSession() {
     try {
         const roomCode = generateRoomCode();
         const opKey    = generateOperatorKey();
-        const opKeyHash = await hashKey(opKey);
         const result   = await apiCall('session-create', {
             method: 'POST',
             body: {
                 room_code: roomCode,
-                operator_key_hash: opKeyHash,
+                operator_key: opKey,
                 squad,
                 current_matches: currentMatches,
                 player_queue: playerQueue
@@ -102,6 +94,7 @@ async function createOnlineSession() {
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
         currentRoomCode = roomCode;
+        const opKeyHash = result.data.operator_key_hash; // Server returns the hash
         operatorKey     = opKey;
         operatorKeyHash = opKeyHash;
         isOperator      = true;
@@ -118,7 +111,7 @@ async function createOnlineSession() {
         _updatePlayerCount();
     } catch (e) {
         console.error('CourtSide: create failed', e);
-        showSyncStatus('Failed to create session. Check your connection.', 'error');
+        showSyncStatus('Failed to create session. Check connection or try again.', 'error');
         Haptic.error();
     }
 }

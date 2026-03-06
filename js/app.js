@@ -1878,6 +1878,49 @@ function spectateOnly() {
 
 
 // =============================================================================
+// LANDING PAGE
+// =============================================================================
+
+function showLandingPage() {
+    if (document.getElementById('landingPage')) return;
+    const div = document.createElement('div');
+    div.id = 'landingPage';
+    div.className = 'actionMenu'; // Reuse modal style
+    div.style.zIndex = '9000';
+    div.style.background = 'var(--bg)'; // Opaque background
+    div.innerHTML = `
+        <div class="menu-card" style="padding:40px 24px; max-width:360px; border:none; box-shadow:none; background:transparent;">
+            <div style="font-family:var(--font-display); font-size:3.5rem; font-weight:900; font-style:italic; line-height:0.9; margin-bottom:10px; color:var(--text);">
+                COURTSIDE<span style="color:var(--accent);">PRO</span>
+            </div>
+            <p style="color:var(--text-muted); margin-bottom:40px; font-size:0.9rem; letter-spacing:1px; text-transform:uppercase; font-weight:600;">
+                Badminton Match Maker
+            </p>
+            <button class="btn-main" onclick="closeLandingPage()" style="width:100%; margin-bottom:16px; height:60px; font-size:1.2rem; box-shadow:0 0 30px var(--accent-dim);">
+                Host Session
+            </button>
+            <button class="btn-main" onclick="goToPlayerMode()" style="width:100%; background:var(--surface2); color:var(--text); height:60px; font-size:1.2rem; border:1px solid var(--border);">
+                Join as Player
+            </button>
+        </div>
+    `;
+    document.body.appendChild(div);
+}
+
+window.closeLandingPage = function() {
+    const el = document.getElementById('landingPage');
+    if (el) {
+        el.style.transition = 'opacity 0.3s';
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 300);
+    }
+};
+
+window.goToPlayerMode = function() {
+    window.location.href = '?role=player';
+};
+
+// =============================================================================
 // initApp
 // =============================================================================
 
@@ -1940,6 +1983,11 @@ async function initApp() {
 
     if (typeof tryAutoRejoin === 'function') {
         await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
+    }
+
+    // Show landing if no data and not in a session
+    if (squad.length === 0 && !isOnlineSession && !urlParams.get('join')) {
+        showLandingPage();
     }
 }
 

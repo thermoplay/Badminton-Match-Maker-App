@@ -10,7 +10,7 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
     const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 8000);
+    const timeout    = setTimeout(() => controller.abort(), 15000);
     try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
             headers: {
@@ -31,6 +31,12 @@ async function sbFetch(path, options = {}) {
         if (e.name === 'AbortError') throw new Error('Supabase request timed out');
         throw e;
     }
+}
+
+async function hashKey(key) {
+    if (!key) return null;
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function cleanupStaleSessions() {
@@ -55,9 +61,15 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Server misconfiguration' });
     }
 
-    const { room_code, operator_key_hash, squad, current_matches, player_queue } = req.body;
+    const { room_code, operator_key, operator_key_hash, squad, current_matches, player_queue } = req.body;
 
-    if (!room_code || !operator_key_hash) {
+    // Hash the raw key if provided, otherwise use the pre-hashed one (for future compatibility)
+    let finalHash = operator_key_hash;
+    if (!finalHash && operator_key) {
+        finalHash = await hashKey(operator_key);
+    }
+
+    if (!room_code || !finalHash) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -73,7 +85,7 @@ export default async function handler(req, res) {
             method: 'POST',
             body: {
                 room_code,
-                operator_key_hash: operator_key_hash || null,
+                operator_key_hash: finalHash,
                 squad:             squad           || [],
                 current_matches:   current_matches || [],
                 player_queue:      player_queue    || [],
@@ -89,7 +101,7 @@ export default async function handler(req, res) {
             });
         }
 
-        return res.status(200).json({ room_code, created: true });
+        return res.status(200).json({ room_code, created: true, operator_key_hash: finalHash });
 
     } catch (e) {
         console.error('[session-create] Error:', e.message);
