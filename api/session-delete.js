@@ -20,10 +20,12 @@ async function sbFetch(path, options = {}) {
     return { ok: res.ok, status: res.status };
 }
 
-async function hashKey(key) {
+import { createHash } from 'crypto';
+
+function hashKey(key) {
     if (!key) return null;
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    // Use standard Node.js crypto module for better serverless compatibility
+    return createHash('sha256').update(key).digest('hex');
 }
 
 export default async function handler(req, res) {
@@ -45,7 +47,7 @@ export default async function handler(req, res) {
     if (!checkData || checkData.length === 0) {
         return res.status(404).json({ error: 'Session not found or already deleted' });
     }
-    if (checkData[0].operator_key_hash !== await hashKey(operator_key)) {
+    if (checkData[0].operator_key_hash !== hashKey(operator_key)) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 

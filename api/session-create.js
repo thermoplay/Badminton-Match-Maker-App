@@ -34,10 +34,12 @@ async function sbFetch(path, options = {}) {
     }
 }
 
-async function hashKey(key) {
+import { createHash } from 'crypto';
+
+function hashKey(key) {
     if (!key) return null;
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    // Use standard Node.js crypto module for better serverless compatibility
+    return createHash('sha256').update(key).digest('hex');
 }
 
 async function cleanupStaleSessions() {
@@ -67,7 +69,7 @@ export default async function handler(req, res) {
     // Hash the raw key if provided, otherwise use the pre-hashed one (for future compatibility)
     let finalHash = operator_key_hash;
     if (!finalHash && operator_key) {
-        finalHash = await hashKey(operator_key);
+        finalHash = hashKey(operator_key);
     }
 
     if (!room_code || !finalHash) {
