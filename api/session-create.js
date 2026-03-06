@@ -10,7 +10,8 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
     const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 15000);
+    // Fix: Reduce timeout to 9s to ensure we catch it before Vercel's 10s hard limit
+    const timeout    = setTimeout(() => controller.abort(), 9000);
     try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
             headers: {
@@ -78,7 +79,7 @@ export default async function handler(req, res) {
     }
 
     // Run cleanup in parallel — doesn't block the response
-    await cleanupStaleSessions();
+    cleanupStaleSessions();
 
     try {
         const result = await sbFetch('/sessions', {

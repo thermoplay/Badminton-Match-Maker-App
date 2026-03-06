@@ -605,7 +605,9 @@ function closeOverlay() {
 // ---------------------------------------------------------------------------
 
 function generateQR() {
-    const token = btoa(JSON.stringify({ squad, currentMatches }));
+    // Fix: Use unicode-safe encoding so emojis don't crash btoa
+    const json  = JSON.stringify({ squad, currentMatches });
+    const token = window.btoa(unescape(encodeURIComponent(json)));
     if (token.length > 2500) {
         alert('Data is too large for a QR code. Please use the "Copy Sync Token" button instead.');
         return;
@@ -625,9 +627,12 @@ function generateQR() {
 }
 
 function copySyncToken() {
-    const text = isOnlineSession
-        ? currentRoomCode
-        : btoa(JSON.stringify({ squad, currentMatches }));
+    let text = currentRoomCode;
+    if (!isOnlineSession) {
+        // Fix: Unicode-safe encoding
+        const json = JSON.stringify({ squad, currentMatches });
+        text = window.btoa(unescape(encodeURIComponent(json)));
+    }
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
@@ -774,7 +779,9 @@ function importSyncToken() {
     const val = document.getElementById('syncInput').value.trim();
     if (!val) return;
     try {
-        const data = JSON.parse(atob(val));
+        // Fix: Unicode-safe decoding
+        const json = decodeURIComponent(escape(window.atob(val)));
+        const data = JSON.parse(json);
         if (!data.squad) throw new Error('Missing squad data');
         squad = data.squad;
         currentMatches = data.currentMatches || [];
