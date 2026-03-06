@@ -47,13 +47,21 @@ async function cleanupStaleSessions() {
 }
 
 export default async function handler(req, res) {
+    // 1. Handle CORS (Cross-Origin Resource Sharing)
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
+    if (req.method === 'OPTIONS') return res.status(200).end();
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
     if (!SUPABASE_URL || !SUPABASE_KEY) {
         console.error('[session-create] Missing env vars');
-        return res.status(500).json({ error: 'Server misconfiguration' });
+        return res.status(500).json({ error: 'Server Error: Missing SUPABASE_URL or KEY' });
     }
 
     const { room_code, operator_key, operator_key_hash, squad, current_matches, player_queue } = req.body;
@@ -73,7 +81,7 @@ export default async function handler(req, res) {
     }
 
     // Run cleanup in parallel — doesn't block the response
-    cleanupStaleSessions();
+    try { cleanupStaleSessions(); } catch (err) { console.warn('Cleanup failed', err); }
 
     try {
         const result = await sbFetch('/sessions', {

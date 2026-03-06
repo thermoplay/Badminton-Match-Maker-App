@@ -111,7 +111,7 @@ async function createOnlineSession() {
         _updatePlayerCount();
     } catch (e) {
         console.error('CourtSide: create failed', e);
-        showSyncStatus('Failed to create session. Check connection or try again.', 'error');
+        showSyncStatus(e.message || 'Failed to create session. Check connection.', 'error');
         Haptic.error();
     }
 }
