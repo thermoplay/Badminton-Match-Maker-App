@@ -34,14 +34,6 @@ const hdrs = () => ({
     'Prefer':        'return=representation',
 });
 
-import { createHash } from 'crypto';
-
-function hashKey(key) {
-    if (!key) return null;
-    // Use standard Node.js crypto module for better serverless compatibility
-    return createHash('sha256').update(key).digest('hex');
-}
-
 async function sbFetch(path, options = {}) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
         headers: { ...hdrs(), ...(options.headers || {}) },
@@ -199,7 +191,7 @@ export default async function handler(req, res) {
             if (!sessionRes.ok || !sessionRes.data?.[0]) {
                 return res.status(404).json({ error: 'Session not found' });
             }
-            const opKeyHash = hashKey(String(operator_key));
+            const opKeyHash = String(operator_key);
             if (opKeyHash !== sessionRes.data[0].operator_key_hash) {
                 return res.status(403).json({ error: 'Invalid operator key' });
             }

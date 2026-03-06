@@ -35,14 +35,6 @@ async function sbFetch(path, options = {}) {
     return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
 }
 
-import { createHash } from 'crypto';
-
-function hashKey(key) {
-    if (!key) return null;
-    // Use standard Node.js crypto module for better serverless compatibility
-    return createHash('sha256').update(key).digest('hex');
-}
-
 export default async function handler(req, res) {
     if (req.method !== 'PATCH') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -77,7 +69,7 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: 'Session not found' });
     }
 
-    if (sessionCheck.data[0].operator_key_hash !== hashKey(operator_key)) {
+    if (sessionCheck.data[0].operator_key_hash !== operator_key) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 
