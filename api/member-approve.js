@@ -62,14 +62,14 @@ export default async function handler(req, res) {
     // Never trust the client for host identity — always cross-check the DB.
     // Hash the incoming raw key and compare it to the stored hash.
     const sessionCheck = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key_hash&limit=1`
+        `/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`
     );
 
     if (!sessionCheck.ok || !sessionCheck.data?.length) {
         return res.status(404).json({ error: 'Session not found' });
     }
 
-    if (sessionCheck.data[0].operator_key_hash !== operator_key) {
+    if (sessionCheck.data[0].operator_key !== operator_key) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 

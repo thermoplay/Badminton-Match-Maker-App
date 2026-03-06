@@ -88,7 +88,7 @@ export default async function handler(req, res) {
             method: 'POST',
             body: {
                 room_code,
-                operator_key_hash: finalHash,
+                operator_key:      finalHash,
                 squad:             squad           || [],
                 current_matches:   current_matches || [],
                 player_queue:      player_queue    || [],
@@ -104,7 +104,7 @@ export default async function handler(req, res) {
             });
         }
 
-        return res.status(200).json({ room_code, created: true, operator_key_hash: finalHash });
+        return res.status(200).json({ room_code, created: true, operator_key: finalHash });
 
     } catch (e) {
         console.error('[session-create] Error:', e.message);

@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     }
 
     // Verify key server-side first
-    const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key_hash&limit=1`, {
+    const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
     });
     const checkData = await checkRes.json();
@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     if (!checkData || checkData.length === 0) {
         return res.status(404).json({ error: 'Session not found or already deleted' });
     }
-    if (checkData[0].operator_key_hash !== operator_key) {
+    if (checkData[0].operator_key !== operator_key) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 

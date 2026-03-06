@@ -94,7 +94,7 @@ async function createOnlineSession() {
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
         currentRoomCode = roomCode;
-        const opKeyHash = result.data.operator_key_hash; // Server returns the hash
+        const opKeyHash = result.data.operator_key; // Server returns the key
         operatorKey     = opKey;
         operatorKeyHash = opKeyHash;
         isOperator      = true;
@@ -138,7 +138,7 @@ async function joinOnlineSession(roomCode) {
         const savedHash  = localStorage.getItem('cs_op_key_hash');
         currentRoomCode = code;
         isOnlineSession = true;
-        if (savedCode === code && savedHash && savedHash === session.operator_key_hash) {
+        if (savedCode === code && savedHash && savedHash === session.operator_key) {
             isOperator      = true;
             operatorKey     = savedOpKey;
             operatorKeyHash = savedHash;
@@ -933,7 +933,7 @@ async function tryAutoRejoin() {
         currentRoomCode = savedCode;
         isOnlineSession = true;
         const savedHash = localStorage.getItem('cs_op_key_hash');
-        if (savedHash && savedHash === session.operator_key_hash) {
+        if (savedHash && savedHash === session.operator_key) {
             isOperator      = true;
             operatorKey     = localStorage.getItem('cs_operator_key');
             operatorKeyHash = savedHash;

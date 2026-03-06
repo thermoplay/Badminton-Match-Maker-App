@@ -42,14 +42,14 @@ export default async function handler(req, res) {
 
     // Verify operator_key server-side — never trust the client
     const checkResult = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key_hash&limit=1`
+        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`
     );
 
     if (!checkResult.ok || !checkResult.data || checkResult.data.length === 0) {
         return res.status(404).json({ error: 'Session not found' });
     }
 
-    if (checkResult.data[0].operator_key_hash !== operator_key) {
+    if (checkResult.data[0].operator_key !== operator_key) {
         // Wrong key — refuse silently (don't tell them why — makes brute force harder)
         return res.status(403).json({ error: 'Unauthorized' });
     }

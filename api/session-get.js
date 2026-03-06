@@ -57,9 +57,8 @@ export default async function handler(req, res) {
             last_active:        session.last_active,
             uuid_map:           session.uuid_map         || {},
             approved_players:   session.approved_players || {},
-            // Return the stored hash. The client can verify identity by hashing
-            // its own key and comparing, without ever seeing the raw key.
-            operator_key_hash:  session.operator_key_hash,
+            // Return the stored key. The client can verify identity by comparing it.
+            operator_key:       session.operator_key,
             // round_history is intentionally not returned to keep payloads small.
         }
     });
