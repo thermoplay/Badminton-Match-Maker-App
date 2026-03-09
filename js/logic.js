@@ -41,18 +41,12 @@ function calculateOdds(teamA, teamB) {
 // ---------------------------------------------------------------------------
 // PER-COURT ADVANCEMENT — fires when host taps "Next Game" on one court
 // ---------------------------------------------------------------------------
-
-async function processCourtResult(mIdx) {
-    const match = currentMatches[mIdx];
-    if (!match || match.winnerTeamIndex === null) {
-        alert('Select a winner first.');
-        return;
-    }
-
-    // Stamp the finished time on this match before snapshotting
-    match.endedAt = Date.now();
-
-    // Snapshot for undo
+/**
+ * Creates a snapshot of the current state for the undo history.
+ * @param {object} finishedMatch - The match that just ended.
+ */
+function _createRoundSnapshot(finishedMatch) {
+    finishedMatch.endedAt = Date.now();
     const snapshot = {
         squadSnapshot: squad.map(p => ({ ...p })),
         matches:       currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
@@ -61,71 +55,92 @@ async function processCourtResult(mIdx) {
     };
     roundHistory.push(snapshot);
     if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
+}
 
-    // Apply ELO for this court only
+/**
+ * Applies ELO, checks achievements, signals results, and rotates players for a finished match.
+ * @param {object} match - The completed match object.
+ * @param {number} mIdx - The index of the match.
+ */
+async function _processFinishedMatch(match, mIdx) {
     applyELOForMatch(match);
-
-    // Check for any newly unlocked achievements from this match
     if (window.checkAndAwardAchievements) {
         await checkAndAwardAchievements(match, squad);
     }
-
-    // Dispatch win signals BEFORE updating currentMatches so we capture the finished game's winner.
-    // We pass true to skipBroadcast because we will broadcast the NEW state manually at the end.
-    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx, true);
-
-    // Rotate just this court's players back into the queue
-    rotateCourtPlayers(match);
-
-    // Pull the next 4 from the queue for this court.
-    // Exclude players on OTHER courts only — the current court's players
-    // have already rotated back into the queue and are eligible again.
-    const onCourtNow = new Set(
-        currentMatches
-            .filter((_, i) => i !== mIdx)
-            .flatMap(m => m.teams.flat())
-    );
-    const next4 = pullNextFromQueue(onCourtNow);
-    if (next4.length < 4) {
-        // Not enough players — remove this court slot and collapse
-        currentMatches.splice(mIdx, 1);
-        rebuildMatchCardIndices();
-        renderQueueStrip();
-        checkNextButtonState();
-        updateUndoButton();
-        saveToDisk();
-        if (typeof broadcastGameState === 'function') broadcastGameState();
-        return;
+    if (typeof dispatchWinSignals === 'function') {
+        dispatchWinSignals(mIdx, true); // skipBroadcast = true
     }
+    rotateCourtPlayers(match);
+}
 
-    // Build new match for this court
+/**
+ * Handles the case where there are not enough players for the next match on a court.
+ * @param {number} mIdx - The index of the court/match being removed.
+ */
+function _handleInsufficientPlayersForNextMatch(mIdx) {
+    currentMatches.splice(mIdx, 1);
+    rebuildMatchCardIndices();
+    _finalizeCourtResultUpdate();
+}
+
+/**
+ * Generates a new match for a court and renders its card in the DOM.
+ * @param {number} mIdx - The index of the court to update.
+ * @param {Array<object>} next4 - The four players for the new match.
+ */
+function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     const newMatch = buildMatchFromPlayers(next4);
     currentMatches[mIdx] = newMatch;
 
-    // Replace this card in the DOM.
-    // IMPORTANT: use newMatch.teams not next4.slice() — buildMatchFromPlayers
-    // re-sorts p4 and picks the best split, so stored team assignment may
-    // differ from raw queue order. The broadcast must match what is in state.
-    const tA    = newMatch.teams[0].map(n => findP(n)).filter(Boolean);
-    const tB    = newMatch.teams[1].map(n => findP(n)).filter(Boolean);
+    const tA = newMatch.teams[0].map(n => findP(n)).filter(Boolean);
+    const tB = newMatch.teams[1].map(n => findP(n)).filter(Boolean);
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
         cardEl.outerHTML = buildMatchCardHTML(mIdx, tA, tB, newMatch.odds, newMatch.startedAt);
-        // Add replace animation class after swap
         const newCardEl = document.getElementById(`match-${mIdx}`);
         if (newCardEl) {
             newCardEl.classList.add('card-replace');
             newCardEl.classList.remove('card-entering');
         }
     }
+}
 
+/**
+ * Finalizes the court result update by refreshing UI, saving state, and broadcasting.
+ */
+function _finalizeCourtResultUpdate() {
     renderQueueStrip();
     checkNextButtonState();
     updateUndoButton();
-
     saveToDisk();
     if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.bump();
+}
+
+async function processCourtResult(mIdx) {
+    const match = currentMatches[mIdx];
+    if (!match || match.winnerTeamIndex === null) {
+        alert('Select a winner first.');
+        return;
+    }
+
+    _createRoundSnapshot(match);
+    await _processFinishedMatch(match, mIdx);
+
+    const onCourtNow = new Set(
+        currentMatches
+            .filter((_, i) => i !== mIdx)
+            .flatMap(m => m.teams.flat())
+    );
+    const next4 = pullNextFromQueue(onCourtNow);
+
+    if (next4.length < 4) {
+        _handleInsufficientPlayersForNextMatch(mIdx);
+        return;
+    }
+
+    _generateAndRenderNextMatchForCourt(mIdx, next4);
+    _finalizeCourtResultUpdate();
 }
 
 // ---------------------------------------------------------------------------
