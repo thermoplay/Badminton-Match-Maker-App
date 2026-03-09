@@ -308,66 +308,6 @@ const SidelineView = {
 const VictoryCard = { show() {}, hide() {}, share() {} };
 
 // =============================================================================
-// INVITE QR — shows session join QR on player's phone
-// =============================================================================
-
-const InviteQR = {
-    _overlay: null,
-
-    show(roomCode) {
-        if (!roomCode) { alert('No active session to share.'); return; }
-
-        if (this._overlay) this._overlay.remove();
-
-        const joinUrl = `${window.location.origin}${window.location.pathname}?join=${roomCode}&role=player`;
-
-        this._overlay = document.createElement('div');
-        this._overlay.className = 'sl-invite-overlay';
-        this._overlay.innerHTML = `
-            <div class="sl-invite-card">
-                <div class="sl-invite-header">
-                    <div class="sl-invite-title">INVITE TO COURT</div>
-                    <button class="sl-invite-close" onclick="InviteQR.hide()">✕</button>
-                </div>
-                <div class="sl-invite-sub">Scan to join this session</div>
-                <canvas id="inviteQrCanvas" class="sl-invite-canvas"></canvas>
-                <div class="sl-invite-code">${roomCode}</div>
-                <div class="sl-invite-hint">Players who scan will see the player view</div>
-            </div>
-        `;
-        document.body.appendChild(this._overlay);
-        requestAnimationFrame(() => this._overlay.classList.add('sl-invite-open'));
-
-        this._overlay.addEventListener('click', e => {
-            if (e.target === this._overlay) this.hide();
-        });
-
-        if (window.QRCode) {
-            QRCode.toCanvas(document.getElementById('inviteQrCanvas'), joinUrl, {
-                width:  220,
-                margin: 2,
-                color: { dark: '#0a0a0f', light: '#ffffff' },
-            }, err => { if (err) console.error('InviteQR: QR gen failed', err); });
-        } else {
-            const canvas = document.getElementById('inviteQrCanvas');
-            if (canvas) {
-                canvas.style.display = 'none';
-                const txt = document.createElement('div');
-                txt.className = 'sl-invite-url';
-                txt.textContent = joinUrl;
-                canvas.parentNode.insertBefore(txt, canvas.nextSibling);
-            }
-        }
-    },
-
-    hide() {
-        if (!this._overlay) return;
-        this._overlay.classList.remove('sl-invite-open');
-        setTimeout(() => { this._overlay?.remove(); this._overlay = null; }, 300);
-    },
-};
-
-// =============================================================================
 // PLAYER MODE — boot controller for ?role=player  v6
 // =============================================================================
 
@@ -1095,36 +1035,20 @@ const PlayerMode = {
         }
     },
     _promptForCode() {
-        this.setStatus('pending', 'Ready to Join', 'Scan the QR code on the host screen');
+        this.setStatus('pending', 'Ready to Join', 'Enter room code to join');
         const el = document.getElementById('slCurrentMatches');
         if (el) el.innerHTML = `
             <div class="sl-code-entry" style="text-align:center; padding: 2rem 1.5rem;">
-                <div style="font-size:3rem; margin-bottom:1rem; opacity:0.8;">📷</div>
-                <div class="sl-code-label" style="margin-bottom:0.75rem; font-size:0.9rem;">SCAN TO JOIN</div>
-                <div style="font-size:0.85rem; color:var(--text-muted); line-height:1.5; margin-bottom:1.5rem;">
-                    Open your camera app and scan the QR code on the host device to enter the court.
-                </div>
-                <button id="slScanBtn" class="sl-code-btn" onclick="PlayerMode._startInAppScanner(this)">
-                    Open Camera Scanner
-                </button>
-                <div id="sl-scanner-wrapper" style="margin-top:1rem; overflow:hidden; border-radius:12px; display:none;">
-                    <div id="sl-scanner-reader" style="width:100%"></div>
-                    <button class="sl-code-btn" style="margin-top:12px; background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3);" onclick="PlayerMode._stopInAppScanner()">
-                        Cancel
-                    </button>
-                </div>
-
-                <div style="display:flex; align-items:center; gap:10px; margin:1.5rem 0;">
-                    <hr style="flex:1; border:none; border-top:1px solid var(--border);">
-                    <span style="font-size:0.7rem; color:var(--text-muted);">OR</span>
-                    <hr style="flex:1; border:none; border-top:1px solid var(--border);">
-                </div>
+                <div class="sl-code-label" style="margin-bottom:0.75rem; font-size:0.9rem;">ENTER ROOM CODE</div>
                 <input type="text" id="slManualCodeInput" placeholder="ENTER CODE"
                     class="sl-code-input"
                     style="margin-bottom: 0.625rem;"
                     autocomplete="off" autocorrect="off" maxlength="9">
                 <button id="slJoinManualCodeBtn" class="sl-code-btn">
                     Join with Code
+                </button>
+                <button class="sl-back-btn" onclick="window.location.href=window.location.origin + window.location.pathname">
+                    ← Back to Host View
                 </button>
             </div>`;
 
@@ -1135,96 +1059,6 @@ const PlayerMode = {
         });
     },
  
-    async _startInAppScanner(btn) {
-        if (btn) {
-            btn.textContent = 'Loading Camera...';
-            btn.disabled = true;
-        }
-
-        if (!window.Html5Qrcode) {
-            try {
-                await new Promise((resolve, reject) => {
-                    const script = document.createElement('script');
-                    script.src = "https://unpkg.com/html5-qrcode";
-                    script.onload = resolve;
-                    script.onerror = reject;
-                    document.head.appendChild(script);
-                });
-            } catch (e) {
-                alert('Could not load scanner library. Check internet connection.');
-                if (btn) { btn.textContent = 'Open Camera Scanner'; btn.disabled = false; }
-                return;
-            }
-        }
-
-        const wrapper = document.getElementById('sl-scanner-wrapper');
-        if (wrapper) wrapper.style.display = 'block';
-        if (btn) btn.style.display = 'none';
-
-        this._html5QrCode = new Html5Qrcode("sl-scanner-reader");
-        const config = {
-            fps: 10,
-            // qrbox removed to allow full-screen scanning (more reliable)
-            experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-        };
-        
-        this._html5QrCode.start({ facingMode: "environment" }, config,
-            (decodedText) => {
-                let code = null;
-                let isUrl = false;
-                try {
-                    const url = new URL(decodedText);
-                    isUrl = true;
-                    code = url.searchParams.get('join');
-                } catch (e) {}
-                
-                // Fallback: look for the code pattern anywhere in the text
-                if (!code) {
-                    const match = decodedText.match(/[A-Z0-9]{4}-?[A-Z0-9]{4}/i);
-                    if (match) code = match[0];
-                }
-
-                if (code) {
-                    this._html5QrCode.stop().then(() => {
-                        this._html5QrCode.clear();
-                        this._html5QrCode = null;
-                        PlayerMode.boot(Passport.get(), code);
-                    }).catch(err => console.error(err));
-                } else if (isUrl) {
-                    this._html5QrCode.stop().then(() => {
-                        this._html5QrCode.clear();
-                        this._html5QrCode = null;
-                        window.location.href = decodedText;
-                    }).catch(err => console.error(err));
-                }
-            },
-            (errorMessage) => { /* ignore */ }
-        ).catch(err => {
-            console.error("Error starting scanner", err);
-            alert("Camera access failed. Please ensure permissions are granted.");
-            this._stopInAppScanner();
-        });
-    },
-
-    async _stopInAppScanner() {
-        if (this._html5QrCode) {
-            try {
-                await this._html5QrCode.stop();
-                this._html5QrCode.clear();
-            } catch (e) { /* ignore if not running */ }
-            this._html5QrCode = null;
-        }
-        const wrapper = document.getElementById('sl-scanner-wrapper');
-        if (wrapper) wrapper.style.display = 'none';
-        
-        const btn = document.getElementById('slScanBtn');
-        if (btn) {
-            btn.style.display = 'block';
-            btn.textContent = 'Open Camera Scanner';
-            btn.disabled = false;
-        }
-    },
-
     _promptName() {
         return new Promise(resolve => {
             let input = document.getElementById('slNameEntryInput');
@@ -1775,4 +1609,3 @@ function _roundRectFill(ctx, x, y, w, h, r) {
 window.Passport = Passport;
 window.SidelineView = SidelineView;
 window.PlayerMode = PlayerMode;
-window.InviteQR = InviteQR;

@@ -93,6 +93,14 @@ async function createOnlineSession() {
             },
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
+
+        // BUG FIX: Clear local history from previous sessions when starting fresh.
+        if (typeof window.roundHistory !== 'undefined') {
+            window.roundHistory = [];
+            if (typeof window.updateUndoButton === 'function') window.updateUndoButton();
+            if (typeof window.saveToDisk === 'function') window.saveToDisk();
+        }
+
         currentRoomCode = roomCode;
         const opKeyHash = result.data.operator_key; // Server returns the key
         operatorKey     = opKey;

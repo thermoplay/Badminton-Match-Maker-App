@@ -6,7 +6,6 @@
 // =============================================================================
 
 let passport  = null;
-let inviteQR  = null;
 let supabase  = null;
 
 // ---------------------------------------------------------------------------
@@ -171,23 +170,13 @@ function deletePlayer() {
         message: 'This will remove the player from the squad and all current matches. This action cannot be undone.',
         confirmText: 'Yes, Delete Player',
         isDestructive: true,
-        onConfirm: () => {
-            const removedName = p.name;
-            const removedUUID = p.uuid || null;
-
-            squad.splice(selectedPlayerIndex, 1);
-            currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
-            playerQueue = playerQueue.filter(n => n !== removedName);
-
-            closeMenu();
-            renderSquad();
-            rebuildMatchCardIndices(); // Use this to safely re-render matches
-            checkNextButtonState();
-            saveToDisk();
-
-            if (isOnlineSession && typeof _broadcast === 'function') {
-                _broadcast('player_removed', { playerName: removedName, playerUUID: removedUUID });
+        onConfirm: async () => {
+            // BUG FIX: Centralize removal logic. This function handles state,
+            // animation, and the required API call to update the database.
+            if (typeof removePlayerFromSession === 'function') {
+                await removePlayerFromSession(p.uuid, p.name);
             }
+            closeMenu();
         }
     });
 }
@@ -239,8 +228,8 @@ async function removePlayerFromSession(playerUUID, playerName) {
         // Ensure queue is clean
         if (typeof window.initQueue === 'function') window.initQueue();
 
-        if (window.playRequests && removedUUID) {
-            const pendingRequest = window.playRequests.find(r => r.player_uuid === removedUUID);
+        if (typeof playRequests !== 'undefined' && removedUUID) {
+            const pendingRequest = playRequests.find(r => r.player_uuid === removedUUID);
             if (pendingRequest && typeof denyPlayRequest === 'function') {
                 denyPlayRequest(pendingRequest.id);
             }
@@ -494,6 +483,8 @@ function showOverlay(type) {
                     <div id="qrcode" style="display:flex;justify-content:center;margin:0 auto 8px;"></div>
                     <button class="btn-main" style="width:100%; margin-top:16px; background:var(--accent); color:#000;"
                         onclick="copySyncToken()">Copy Room Code</button>
+                    <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
+                        onclick="copyInviteLink()">Copy Invite Link</button>
                     ${isOperator ? `
                         <button class="btn-main" style="width:100%; margin-top:10px; background:rgba(239,68,68,0.1); color:#ef4444;"
                             onclick="endAndDeleteSession(); closeOverlay();">End Session</button>
@@ -643,7 +634,19 @@ function copySyncToken() {
     }
 }
 
-function fallbackCopy(text) {
+function copyInviteLink() {
+    if (!currentRoomCode) return;
+    const url = window.location.origin + window.location.pathname + '?join=' + currentRoomCode + '&role=player';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url)
+            .then(() => showSessionToast('🔗 Invite link copied!'))
+            .catch(() => fallbackCopy(url, '🔗 Invite link copied!'));
+    } else {
+        fallbackCopy(url, '🔗 Invite link copied!');
+    }
+}
+
+function fallbackCopy(text, msg = '📋 Token copied!') {
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
@@ -653,7 +656,7 @@ function fallbackCopy(text) {
     ta.select();
     try {
         document.execCommand('copy');
-        showSessionToast('📋 Token copied!');
+        showSessionToast(msg);
     } catch (e) {
         alert('Could not copy automatically. Please copy the token manually.');
     }
@@ -1946,10 +1949,6 @@ async function initApp() {
     }
 
     window._passport = passport;
-
-    if (typeof InviteQR !== 'undefined') {
-        inviteQR = InviteQR;
-    }
 
     if (typeof _installPassportIWTPOverride === 'function') {
         _installPassportIWTPOverride();

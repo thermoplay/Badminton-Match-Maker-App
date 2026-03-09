@@ -81,7 +81,7 @@ export default async function handler(req, res) {
     }
 
     // Run cleanup in parallel — doesn't block the response
-    try { cleanupStaleSessions(); } catch (err) { console.warn('Cleanup failed', err); }
+    cleanupStaleSessions().catch(err => console.warn('Cleanup failed', err));
 
     try {
         const result = await sbFetch('/sessions', {
