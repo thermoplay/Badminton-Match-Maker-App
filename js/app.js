@@ -145,20 +145,56 @@ function addPlayer() {
 
 function editPlayerName() {
     const p = squad[selectedPlayerIndex];
+    if (!p) return;
     const oldName = p.name;
-    const newName = prompt('Edit Name:', p.name);
-    if (newName && newName.trim()) {
-        p.name = newName.trim();
-        currentMatches.forEach(m => {
-            m.teams = m.teams.map(team =>
-                team.map(n => (n === oldName ? p.name : n))
-            );
-        });
-        closeMenu();
-        renderSquad();
-        renderSavedMatches();
-        saveToDisk();
-    }
+
+    closeMenu(); // Close the long-press menu first
+
+    showInputModal({
+        title: 'Edit Player Name',
+        initialValue: p.name,
+        confirmText: 'Save Name',
+        onConfirm: (newName) => {
+            const trimmedNewName = newName.trim();
+            if (!trimmedNewName) return;
+
+            // Check for name collision (case-insensitive, but not against the player's own old name)
+            if (squad.some(player => player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
+                alert('A player with this name already exists.');
+                return;
+            }
+
+            p.name = trimmedNewName;
+
+            // Update name in current matches
+            currentMatches.forEach(m => {
+                m.teams = m.teams.map(team =>
+                    team.map(n => (n === oldName ? p.name : n))
+                );
+            });
+
+            // Update name in player queue
+            playerQueue = playerQueue.map(n => (n === oldName ? p.name : n));
+
+            // Update name in all history objects (teammate/opponent) for ALL players
+            squad.forEach(squadPlayer => {
+                if (squadPlayer.teammateHistory && oldName in squadPlayer.teammateHistory) {
+                    squadPlayer.teammateHistory[p.name] = squadPlayer.teammateHistory[oldName];
+                    delete squadPlayer.teammateHistory[oldName];
+                }
+                if (squadPlayer.opponentHistory && oldName in squadPlayer.opponentHistory) {
+                    squadPlayer.opponentHistory[p.name] = squadPlayer.opponentHistory[oldName];
+                    delete squadPlayer.opponentHistory[oldName];
+                }
+            });
+
+            renderSquad();
+            renderSavedMatches();
+            renderQueueStrip();
+            saveToDisk();
+            if (typeof broadcastGameState === 'function') broadcastGameState();
+        }
+    });
 }
 
 function deletePlayer() {
@@ -196,84 +232,64 @@ function toggleRestingState() {
  * @param {string} playerName - The name of the player leaving.
  */
 async function removePlayerFromSession(playerUUID, playerName) {
-    if (!playerUUID && !playerName) return;
-
-    let playerIndex = -1;
-
-    if (playerUUID) {
-        playerIndex = squad.findIndex(p => p.uuid === playerUUID);
-    }
-    // Fallback to name if not found by UUID (e.g., older client)
-    if (playerIndex === -1 && playerName) {
-        playerIndex = squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
-    }
-
-    if (playerIndex === -1) return; // Player not in squad
-
-    const removedName = squad[playerIndex].name;
-    const removedUUID = squad[playerIndex].uuid || null;
-
-    const chipEl = document.querySelector(`.player-chip[data-uuid="${removedUUID}"]`);
-
-    const performRemoval = async () => {
-        // Re-find index in case of race conditions
-        const pIndex = squad.findIndex(p => p.uuid === removedUUID);
-        if (pIndex === -1) return;
-
-        squad.splice(pIndex, 1);
-
-        currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
-        playerQueue = playerQueue.filter(n => n !== removedName);
-
-        // Ensure queue is clean
-        if (typeof window.initQueue === 'function') window.initQueue();
-
-        if (typeof playRequests !== 'undefined' && removedUUID) {
-            const pendingRequest = playRequests.find(r => r.player_uuid === removedUUID);
-            if (pendingRequest && typeof denyPlayRequest === 'function') {
-                denyPlayRequest(pendingRequest.id);
-            }
-        }
-
-        if (window._approvedPlayers) {
-            if (removedUUID) delete window._approvedPlayers[removedUUID];
-            if (removedName) delete window._approvedPlayers[removedName];
-        }
-
-        renderSquad();
-        rebuildMatchCardIndices();
-        renderQueueStrip();
-        checkNextButtonState();
-        saveToDisk();
-
-        if (typeof broadcastGameState === 'function') broadcastGameState();
-
-        if (isOperator && removedUUID && currentRoomCode && operatorKey) {
-            try {
-                await fetch('/api/play-request', {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        room_code: currentRoomCode,
-                        player_uuid: removedUUID,
-                        operator_key: operatorKey
-                    })
-                });
-            } catch (e) { console.error('[CourtSide] Failed to remove member from DB session', e); }
-        }
-
-        showSessionToast(`👋 ${removedName} left the session.`);
-        Haptic.bump();
-    };
-
-    if (chipEl) {
-        chipEl.classList.add('player-chip-removing');
-        // Wait for animation to finish before removing from state and re-rendering
-        setTimeout(performRemoval, 350);
-    } else {
-        // Fallback for when element isn't found (e.g., player is inactive)
-        await performRemoval();
-    }
+     if (!playerUUID && !playerName) return;
+ 
+     let pIndex = -1;
+     if (playerUUID) {
+         pIndex = squad.findIndex(p => p.uuid === playerUUID);
+     }
+     if (pIndex === -1 && playerName) {
+         pIndex = squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
+     }
+ 
+     if (pIndex === -1) return; // Player not in squad
+ 
+     const removedName = squad[pIndex].name;
+     const removedUUID = squad[pIndex].uuid || null;
+ 
+     squad.splice(pIndex, 1);
+ 
+     currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
+     playerQueue = playerQueue.filter(n => n !== removedName);
+ 
+     if (typeof window.initQueue === 'function') window.initQueue();
+ 
+     if (typeof playRequests !== 'undefined' && removedUUID) {
+         const pendingRequest = playRequests.find(r => r.player_uuid === removedUUID);
+         if (pendingRequest && typeof denyPlayRequest === 'function') {
+             denyPlayRequest(pendingRequest.id);
+         }
+     }
+ 
+     if (window._approvedPlayers) {
+         if (removedUUID) delete window._approvedPlayers[removedUUID];
+         if (removedName) delete window._approvedPlayers[removedName];
+     }
+ 
+     renderSquad();
+     rebuildMatchCardIndices();
+     renderQueueStrip();
+     checkNextButtonState();
+     saveToDisk();
+ 
+     if (typeof broadcastGameState === 'function') broadcastGameState();
+ 
+     if (isOperator && removedUUID && currentRoomCode && operatorKey) {
+         try {
+             await fetch('/api/play-request', {
+                 method: 'DELETE',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({
+                     room_code: currentRoomCode,
+                     player_uuid: removedUUID,
+                     operator_key: operatorKey
+                 })
+             });
+         } catch (e) { console.error('[CourtSide] Failed to remove member from DB session', e); }
+     }
+ 
+     showSessionToast(`👋 ${removedName} left the session.`);
+     Haptic.bump();
 }
 window.removePlayerFromSession = removePlayerFromSession;
 
@@ -283,21 +299,59 @@ window.removePlayerFromSession = removePlayerFromSession;
 
 function renderSquad() {
     const container = document.getElementById('squadList');
-    const chips = squad.map((p, i) => {
+    if (!container) return;
+
+    const existingChips = new Map();
+    container.querySelectorAll('.player-chip').forEach(chip => {
+        const uuid = chip.dataset.uuid;
+        if (uuid) existingChips.set(uuid, chip);
+    });
+
+    squad.forEach(p => {
         const isNew = p.games === 0 && p.wins === 0;
-        return `
-        <div class="player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''}"
-             data-uuid="${p.uuid}"
-             onmousedown="startPress(${i})"
-             onmouseup="endPress(${i})"
-             ontouchstart="startPress(${i})"
-             ontouchend="endPress(${i})"
-             oncontextmenu="return false;">
+        const chipContent = `
             ${Avatar.html(p.name)}
             <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
-        </div>
-    `});
-    container.innerHTML = chips.join('');
+        `;
+        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''}`;
+
+        let chip = existingChips.get(p.uuid);
+
+        if (chip) {
+            // Chip exists, update it if necessary
+            if (chip.className !== chipClasses) {
+                chip.className = chipClasses;
+            }
+            // A simple check on the name span's content is enough to trigger a refresh of the chip's innerHTML.
+            const currentNameHTML = chip.querySelector('.chip-name')?.innerHTML || '';
+            const newNameHTML = `${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}`;
+            if (currentNameHTML !== newNameHTML) {
+                chip.innerHTML = chipContent;
+            }
+            existingChips.delete(p.uuid);
+        } else {
+            // Chip does not exist, create it
+            const newChip = document.createElement('div');
+            newChip.className = chipClasses;
+            newChip.dataset.uuid = p.uuid;
+            newChip.innerHTML = chipContent;
+            newChip.onmousedown = () => startPress(p.uuid);
+            newChip.onmouseup = () => endPress(p.uuid);
+            newChip.ontouchstart = () => startPress(p.uuid);
+            newChip.ontouchend = () => endPress(p.uuid);
+            newChip.oncontextmenu = () => false;
+            container.appendChild(newChip);
+        }
+    });
+
+    // Any chips left in existingChips are for players who have been removed
+    existingChips.forEach(chip => {
+        chip.classList.add('player-chip-removing');
+        // Remove the element from the DOM after the animation finishes
+        chip.addEventListener('animationend', () => {
+            chip.remove();
+        }, { once: true });
+    });
 }
 
 function checkNextButtonState() {
@@ -343,28 +397,33 @@ function setCourts(n) {
 // LONG-PRESS MENU
 // ---------------------------------------------------------------------------
 
-function startPress(i) {
+function startPress(uuid) {
     isLongPress = false;
     pressTimer = setTimeout(() => {
         isLongPress = true;
         Haptic.bump();
-        openMenu(i);
+        openMenu(uuid);
     }, 600);
 }
 
-function endPress(i) {
+function endPress(uuid) {
     clearTimeout(pressTimer);
-    if (!isLongPress && !squad[i].active) {
-        Haptic.tap();
-        squad[i].active = true;
-        renderSquad();
-        saveToDisk();
+    if (!isLongPress) {
+        const player = squad.find(p => p.uuid === uuid);
+        if (player && !player.active) {
+            Haptic.tap();
+            player.active = true;
+            renderSquad();
+            saveToDisk();
+        }
     }
 }
 
-function openMenu(i) {
-    selectedPlayerIndex = i;
-    const p = squad[i];
+function openMenu(uuid) {
+    const playerIndex = squad.findIndex(p => p.uuid === uuid);
+    if (playerIndex === -1) return;
+    selectedPlayerIndex = playerIndex;
+    const p = squad[playerIndex];
     const menu = document.getElementById('actionMenu');
     if (!menu) return;
 

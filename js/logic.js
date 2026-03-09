@@ -410,20 +410,30 @@ function rotateQueue() {
 //    teammates and opponents (full session history, weighted scoring).
 // 4. Render match cards and the queue strip below them.
 
-function generateMatches() {
+/**
+ * Validates if matches can be generated and prepares the state and UI.
+ * @returns {Array<object>|null} The pool of active players, or null if validation fails.
+ */
+function _prepareForMatchGeneration() {
     const activePool = squad.filter(p => p.active);
     if (activePool.length < 4) {
         alert('Requires at least 4 active players.');
-        return;
+        return null;
     }
 
     initQueue();
-
     currentMatches = [];
     document.getElementById('matchContainer').innerHTML = '';
+    return activePool;
+}
 
-    // Cap courts to what the active pool can support (need 4 players per court)
-    const maxCourts  = Math.floor(activePool.length / 4);
+/**
+ * Determines how many courts can be run based on available players.
+ * @param {Array<object>} activePool - The pool of active players.
+ * @returns {number} The number of courts to generate.
+ */
+function _determineCourtCount(activePool) {
+    const maxCourts = Math.floor(activePool.length / 4);
     const courtCount = Math.min(activeCourts, maxCourts);
 
     if (activeCourts > maxCourts && typeof showSessionToast === 'function') {
@@ -431,30 +441,54 @@ function generateMatches() {
             `⚠️ Need ${activeCourts * 4} players for ${activeCourts} courts — only ${maxCourts} court${maxCourts !== 1 ? 's' : ''} generated with ${activePool.length} active players`
         );
     }
+    return courtCount;
+}
 
+/**
+ * Builds all match objects for the given number of courts.
+ * @param {number} courtCount - The number of courts to generate matches for.
+ * @returns {Array<object>} An array of data objects for rendering the match cards.
+ */
+function _createMatchesForCourts(courtCount) {
     const matchData = [];
-    // Track who's already assigned this session start (multi-court uniqueness)
     const assignedThisRound = new Set();
 
     for (let i = 0; i < courtCount; i++) {
         const p4 = pullNextFromQueue(assignedThisRound);
         if (p4.length < 4) break;
-        // Mark these 4 as assigned so next court's candidate pool excludes them
+
         p4.forEach(p => assignedThisRound.add(p.name));
         const match = buildMatchFromPlayers(p4);
         currentMatches.push(match);
-        // tA/tB for rendering come from match.teams after buildMatchFromPlayers sorts them
+
         const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
-        matchData.push({ idx: i, tA, tB, odds: match.odds });
+        matchData.push({ idx: i, tA, tB, odds: match.odds, startedAt: match.startedAt });
     }
+    return matchData;
+}
 
+/**
+ * Renders the UI and saves the state after matches are generated.
+ * @param {Array<object>} matchData - Data for the match cards to be rendered.
+ */
+function _renderAndFinalizeGeneration(matchData) {
     renderAllMatchCards(matchData);
     renderQueueStrip();
     checkNextButtonState();
     renderSquad();
     saveToDisk();
     Haptic.bump();
+}
+
+function generateMatches() {
+    const activePool = _prepareForMatchGeneration();
+    if (!activePool) return;
+
+    const courtCount = _determineCourtCount(activePool);
+    const matchData = _createMatchesForCourts(courtCount);
+
+    _renderAndFinalizeGeneration(matchData);
 }
 
 // ---------------------------------------------------------------------------

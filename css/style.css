@@ -1211,6 +1211,27 @@ input:focus {
 
 .btn-cancel:hover { color: var(--text); }
 
+/* Input field for custom input modals */
+.input-modal-field {
+    width: 100%;
+    background: var(--bg2);
+    border: 1.5px solid var(--border);
+    color: var(--text);
+    padding: 13px 15px;
+    border-radius: 12px;
+    outline: none;
+    font-size: 16px;
+    font-family: var(--font-body);
+    font-weight: 500;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    margin: 16px 0;
+    text-align: center;
+}
+
+.input-modal-field:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+}
 /* ---------------------------------------------------------------------------
    QR & SYNC
    --------------------------------------------------------------------------- */
