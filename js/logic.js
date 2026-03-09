@@ -62,10 +62,12 @@ function _createRoundSnapshot(finishedMatch) {
  * @param {object} match - The completed match object.
  * @param {number} mIdx - The index of the match.
  */
-async function _processFinishedMatch(match, mIdx) {
+function _processFinishedMatch(match, mIdx) {
     applyELOForMatch(match);
     if (window.checkAndAwardAchievements) {
-        await checkAndAwardAchievements(match, squad);
+        // Fire and forget: check for achievements in the background
+        // without blocking the UI update for the next game.
+        checkAndAwardAchievements(match, squad);
     }
     if (typeof dispatchWinSignals === 'function') {
         dispatchWinSignals(mIdx, true); // skipBroadcast = true
@@ -125,7 +127,7 @@ async function processCourtResult(mIdx) {
     }
 
     _createRoundSnapshot(match);
-    await _processFinishedMatch(match, mIdx);
+    _processFinishedMatch(match, mIdx);
 
     const onCourtNow = new Set(
         currentMatches
@@ -533,7 +535,7 @@ function renderQueueStrip() {
         </div>
         <div class="queue-strip-list">
             ${waiting.map((p, idx) => `
-                <div class="queue-item">
+                <div class="queue-item" draggable="true" data-name="${escapeHTML(p.name)}">
                     <span class="queue-pos">${idx + 1}</span>
                     ${Avatar.html(p.name)}
                     <span class="queue-name">${escapeHTML(p.name)}</span>
@@ -881,3 +883,73 @@ function confirmTeamBuilder() {
     tickTimers();
     setInterval(tickTimers, 1000);
 })();
+
+// ---------------------------------------------------------------------------
+// QUEUE DRAG & DROP
+// ---------------------------------------------------------------------------
+
+let _dragSrcEl = null;
+
+function setupQueueDragAndDrop() {
+    const items = document.querySelectorAll('.queue-item');
+    items.forEach(item => {
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragenter', handleDragEnter);
+        item.addEventListener('dragover', handleDragOver);
+        item.addEventListener('dragleave', handleDragLeave);
+        item.addEventListener('drop', handleDrop);
+        item.addEventListener('dragend', handleDragEnd);
+    });
+}
+
+function handleDragStart(e) {
+    this.style.opacity = '0.4';
+    _dragSrcEl = this;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', this.dataset.name);
+}
+
+function handleDragOver(e) {
+    if (e.preventDefault) e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    return false;
+}
+
+function handleDragEnter(e) {
+    this.classList.add('queue-over');
+}
+
+function handleDragLeave(e) {
+    this.classList.remove('queue-over');
+}
+
+function handleDrop(e) {
+    if (e.stopPropagation) e.stopPropagation();
+    const srcName = e.dataTransfer.getData('text/plain');
+    const destName = this.dataset.name;
+    if (srcName && destName && srcName !== destName) {
+        reorderPlayerQueue(srcName, destName);
+    }
+    return false;
+}
+
+function handleDragEnd(e) {
+    this.style.opacity = '1';
+    document.querySelectorAll('.queue-item').forEach(item => {
+        item.classList.remove('queue-over');
+    });
+}
+
+function reorderPlayerQueue(srcName, destName) {
+    const srcIdx = playerQueue.indexOf(srcName);
+    if (srcIdx === -1) return;
+    playerQueue.splice(srcIdx, 1);
+    const destIdx = playerQueue.indexOf(destName);
+    if (destIdx !== -1) playerQueue.splice(destIdx, 0, srcName);
+    else playerQueue.push(srcName);
+    
+    renderQueueStrip();
+    saveToDisk();
+    if (typeof broadcastGameState === 'function') broadcastGameState();
+    Haptic.success();
+}

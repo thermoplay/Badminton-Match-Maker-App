@@ -677,6 +677,14 @@ input:focus {
     border-bottom: none;
 }
 
+.queue-item[draggable="true"] {
+    cursor: grab;
+}
+.queue-item.queue-over {
+    border-top: 2px solid var(--accent);
+    background: rgba(0, 255, 163, 0.1);
+}
+
 .queue-pos {
     font-family: var(--font-display);
     font-size: 0.6rem;
