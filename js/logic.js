@@ -552,6 +552,7 @@ function renderQueueStrip() {
             el.style.animationDelay = `${i * 40}ms`;
         });
     });
+    setupQueueDragAndDrop();
 
 }
 // ---------------------------------------------------------------------------
