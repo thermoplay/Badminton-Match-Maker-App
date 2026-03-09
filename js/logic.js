@@ -789,7 +789,7 @@ function confirmTeamBuilder() {
     }
 
     closeTeamBuilder();
-    updateSideline();
+    renderQueueStrip();
     checkNextButtonState();
     saveToDisk();
     // Broadcast the updated lineup immediately so players see the correct

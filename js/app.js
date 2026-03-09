@@ -300,19 +300,6 @@ function renderSquad() {
     container.innerHTML = chips.join('');
 }
 
-function updateSideline() {
-    const activeThisRound = new Set();
-    currentMatches.forEach(m => m.teams.flat().forEach(n => activeThisRound.add(n)));
-    const idle = squad.filter(p => p.active && !activeThisRound.has(p.name));
-    document.getElementById('restingList').innerHTML = idle
-        .map(p => `
-            <div class="player-chip active sideline-chip" data-name="${escapeHTML(p.name)}">
-                ${Avatar.html(p.name)}
-                <span class="chip-name" style="font-size:0.72rem;">${escapeHTML(p.name)}</span>
-            </div>`)
-        .join('');
-}
-
 function checkNextButtonState() {
     const btn = document.getElementById('nextRoundBtn');
     if (!btn) return;
