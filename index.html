@@ -56,6 +56,23 @@
     </div>
     </div>
 
+    <template id="matchCardTemplate">
+        <div class="match-card card-entering">
+            <div class="match-header">
+                <span class="match-label"></span>
+                <button class="aura-share-btn" title="Share Aura Poster">✦ Share</button>
+                <button class="edit-teams-btn">✎ Edit</button>
+            </div>
+            <div class="team-box"><b></b></div>
+            <div class="vs-badge">VS</div>
+            <div class="team-box"><b></b></div>
+            <div class="court-next-row">
+                <span class="court-timer">0:00</span>
+                <button class="court-next-btn" disabled>Next Game →</button>
+            </div>
+        </div>
+    </template>
+
     <nav class="nav-bar" id="hostNav">
         <button class="btn-icon" onclick="showOverlay('sync')" aria-label="Sync">📲</button>
         <div class="court-selector">
