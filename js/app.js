@@ -719,10 +719,10 @@ function generateQR() {
 }
 
 function copySyncToken() {
-    let text = currentRoomCode;
+    let text = window.currentRoomCode;
     if (!isOnlineSession) {
         // Fix: Unicode-safe encoding
-        const json = JSON.stringify({ squad, currentMatches });
+        const json = JSON.stringify({ squad: StateStore.squad, currentMatches: StateStore.currentMatches });
         text = window.btoa(unescape(encodeURIComponent(json)));
     }
 
@@ -872,8 +872,8 @@ function submitBugReport() {
         '\n\n---\n' +
         'App version: Courtside Pro\n' +
         'Time: ' + new Date().toLocaleString() + '\n' +
-        'Squad size: ' + (squad?.length ?? 'N/A') + '\n' +
-        'Active courts: ' + (activeCourts ?? 'N/A')
+        'Squad size: ' + (StateStore.squad?.length ?? 'N/A') + '\n' +
+        'Active courts: ' + (StateStore.get('activeCourts') ?? 'N/A')
     );
     window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
     closeBugReportModal();
@@ -887,8 +887,8 @@ function importSyncToken() {
         const json = decodeURIComponent(escape(window.atob(val)));
         const data = JSON.parse(json);
         if (!data.squad) throw new Error('Missing squad data');
-        squad = data.squad;
-        currentMatches = data.currentMatches || [];
+        StateStore.set('squad', data.squad);
+        StateStore.set('currentMatches', data.currentMatches || []);
         saveToDisk();
         closeOverlay();
         renderSquad();
@@ -1492,7 +1492,7 @@ function _resolvePlayerForSession(name, incomingUUID) {
 
     // 1. Priority: UUID (Canonical Identity)
     if (validUUID) {
-        player = squad.find(p => p.uuid === validUUID);
+        player = StateStore.squad.find(p => p.uuid === validUUID);
         if (player) {
             // Update name if changed
             if (player.name !== name) {
@@ -1505,11 +1505,11 @@ function _resolvePlayerForSession(name, incomingUUID) {
 
     // 2. If not found by UUID, treat as NEW.
     //    Check for name collisions and auto-rename.
-    let collision = squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
+    let collision = StateStore.squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
     let counter = 1;
     while (collision) {
         finalName = `${name} (${counter})`;
-        collision = squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
+        collision = StateStore.squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
         counter++;
     }
 
@@ -1519,7 +1519,7 @@ function _resolvePlayerForSession(name, incomingUUID) {
         uuid: validUUID || _generateUUID(),
     };
     migratePlayer(player);
-    squad.push(player);
+    StateStore.squad.push(player);
     
     return player;
 }
