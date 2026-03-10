@@ -416,7 +416,7 @@ function checkNextButtonState() {
     btn.style.pointerEvents = canProceed ? 'auto'    : 'none';
     btn.style.cursor        = canProceed ? 'pointer' : 'default';
     btn.style.background    = canProceed ? 'var(--accent)' : '#2a2a3a';
-    btn.textContent         = currentMatches.length === 0 ? 'Start Session' : 'Running…';
+    btn.textContent         = StateStore.currentMatches.length === 0 ? 'Start Session' : 'Running…';
 }
 
 function setCourts(n) {
@@ -441,8 +441,9 @@ function setCourts(n) {
         });
         generateMatches();
     } else {
-        activeCourts = currentMatches.length || 1;
-        if (input) input.value = activeCourts;
+        const restoredCourts = StateStore.currentMatches.length || 1;
+        StateStore.set('activeCourts', restoredCourts);
+        if (input) input.value = restoredCourts;
         saveToDisk();
     }
 }
@@ -990,9 +991,9 @@ function renderStatsTab(tab) {
 
     const tabs = `
         <div class="stats-tabs">
-            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}"
+            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
                 onclick="renderStatsTab('performance')">Performance</button>
-            <button class="stats-tab ${tab === 'history' ? 'active' : ''}"
+            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
                 onclick="renderStatsTab('history')">History</button>
             <button class="stats-tab"
                 onclick="renderLeaderboardTab()">Leaderboard</button>
@@ -1000,8 +1001,8 @@ function renderStatsTab(tab) {
     `;
 
     if (tab === 'performance') {
-        const sorted   = [...squad].sort((a, b) => b.rating - a.rating);
-        const topCount = Math.max(1, Math.ceil(squad.length * 0.3));
+        const sorted   = [...StateStore.squad].sort((a, b) => b.rating - a.rating);
+        const topCount = Math.max(1, Math.ceil(StateStore.squad.length * 0.3));
         const peak     = sorted.slice(0, topCount).sort((a, b) => a.name.localeCompare(b.name));
         const active   = sorted.slice(topCount).sort((a, b) => a.name.localeCompare(b.name));
         const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
@@ -1009,7 +1010,7 @@ function renderStatsTab(tab) {
         const renderGroup = (label, list) => {
             if (list.length === 0) return '';
             const cards = list.map((p, i) => {
-                const sqIdx = squad.indexOf(p);
+                const sqIdx = StateStore.squad.indexOf(p);
                 return `
                 <div class="stats-card" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
                     <div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' 🔥' : ''}</div>
@@ -1027,7 +1028,7 @@ function renderStatsTab(tab) {
         content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
 
     } else {
-        if (roundHistory.length === 0) {
+        if (StateStore.roundHistory.length === 0) {
             content.innerHTML = tabs + `
                 <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
                     No rounds played yet this session.
@@ -1035,8 +1036,8 @@ function renderStatsTab(tab) {
             return;
         }
 
-        const rounds = [...roundHistory].reverse().map((round, i) => {
-            const roundNum = roundHistory.length - i;
+        const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
+            const roundNum = StateStore.roundHistory.length - i;
             const games = round.matches.map((m, gi) => {
                 const winIdx  = m.winnerTeamIndex;
                 const loseIdx = winIdx === 0 ? 1 : 0;
@@ -1205,7 +1206,7 @@ async function sharePlayerCard() {
 // ---------------------------------------------------------------------------
 
 async function shareAuraPoster(matchIdx) {
-    const m = currentMatches[matchIdx];
+    const m = StateStore.currentMatches[matchIdx];
     if (!m) return;
 
     if (typeof generateShareableImage === 'function') {
@@ -1552,8 +1553,8 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     window._approvedPlayers = window._approvedPlayers || {};
     window._approvedPlayers[validUUID || player.name] = { token, name: player.name, uuid: validUUID, approvedAt: Date.now() };
 
-    if (!playerQueue.includes(player.name)) {
-        playerQueue.push(player.name);
+    if (!StateStore.playerQueue.includes(player.name)) {
+        StateStore.playerQueue.push(player.name);
     }
 
     renderSquad();
@@ -1702,7 +1703,7 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false) {
     const label   = `Game ${mIdx + 1}`;
 
     const resolveUUID = (name) => {
-        const member = squad.find(p => p.name === name);
+        const member = StateStore.squad.find(p => p.name === name);
         return member?.uuid || uuidMap[name] || null;
     };
 
