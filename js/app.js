@@ -933,32 +933,40 @@ function escapeHTML(str) {
 // ---------------------------------------------------------------------------
 
 function updateUndoButton() {
-    let btn = document.getElementById('undoRoundBtn');
+    const btn = document.getElementById('undoRoundBtn');
     if (!btn) return;
-    btn.style.display  = roundHistory.length > 0 ? 'inline-flex' : 'none';
+    btn.style.display  = StateStore.roundHistory.length > 0 ? 'inline-flex' : 'none';
 }
 
 function undoLastRound() {
-    if (roundHistory.length === 0) return;
+    if (StateStore.roundHistory.length === 0) return;
     if (!confirm('Undo the last round? This will reverse all ELO changes.')) return;
 
-    const snapshot = roundHistory.pop();
+    const snapshot = StateStore.roundHistory.pop();
 
-    squad = snapshot.squadSnapshot.map(s => ({ ...s }));
-    currentMatches = snapshot.matches.map(m => ({ ...m, winnerTeamIndex: null }));
-    if (snapshot.queueSnapshot) playerQueue = [...snapshot.queueSnapshot];
+    // Restore state from the snapshot using the StateStore
+    StateStore.setState({
+        squad: snapshot.squadSnapshot.map(s => ({ ...s })),
+        currentMatches: snapshot.matches.map(m => ({ ...m, winnerTeamIndex: null })),
+        playerQueue: snapshot.queueSnapshot ? [...snapshot.queueSnapshot] : StateStore.playerQueue,
+    });
 
     renderSquad();
     rebuildMatchCardIndices();
     renderQueueStrip();
 
+    // Re-apply winner selections to the newly restored currentMatches in the store
     snapshot.matches.forEach((m, i) => {
         if (m.winnerTeamIndex !== null) {
-            const boxes = document.querySelectorAll(`#match-${i} .team-box`);
-            if (boxes[m.winnerTeamIndex]) {
+            const card = document.getElementById(`match-${i}`);
+            const boxes = card?.querySelectorAll('.team-box');
+            if (boxes && boxes[m.winnerTeamIndex]) {
                 boxes[m.winnerTeamIndex].classList.add('selected');
             }
-            currentMatches[i].winnerTeamIndex = m.winnerTeamIndex;
+            // Also update the state store's match object
+            if (StateStore.currentMatches[i]) {
+                StateStore.currentMatches[i].winnerTeamIndex = m.winnerTeamIndex;
+            }
         }
     });
 
@@ -967,7 +975,6 @@ function undoLastRound() {
     saveToDisk();
     if (isOnlineSession && isOperator) {
         pushStateToSupabase();
-        // Broadcast undo state immediately so players see the reverted matches
         if (typeof broadcastGameState === 'function') broadcastGameState();
     }
     Haptic.bump();
@@ -1295,11 +1302,13 @@ function showIWTPExisting() {
     Haptic.tap();
     const list = document.getElementById('iwtpPlayerList');
     if (!list) return;
-    if (StateStore.squad.length === 0) {
+    // Use window.squad for player-side logic, as StateStore is for the host.
+    const currentSquad = window.squad || [];
+    if (currentSquad.length === 0) {
         list.innerHTML = `<p class="iwtp-empty">No players yet.<br>Ask the host to add players first.</p>`;
         return;
     }
-    list.innerHTML = StateStore.squad.map(p => `
+    list.innerHTML = currentSquad.map(p => `
         <button class="iwtp-player-chip" onclick="confirmSpectateAs('${escapeHTML(p.name)}')">
             ${Avatar.html(p.name)}
             <span>${escapeHTML(p.name)}</span>
