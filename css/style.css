@@ -11,7 +11,7 @@
    - Nav: Frosted glass effect with border glow
    ============================================================================= */
 
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,700;0,800;0,900;1,800;1,900&family=DM+Sans:wght@400;500;600;700&display=swap');
+/* Font loaded via <link> in HTML for performance */
 
 /* ---------------------------------------------------------------------------
    VARIABLES
@@ -31,6 +31,18 @@
     --border-accent: rgba(0, 255, 163, 0.25);
     --red:          #ff3b5c;
     --safe-bottom:  env(safe-area-inset-bottom, 0px);
+
+    /* Z-Index Scale (Maintainability) */
+    --z-nav:        1000;
+    --z-badge:      1500;
+    --z-overlay:    2000;
+    --z-ticker:     2500;
+    --z-menu:       3000;
+    --z-sheet:      3500;
+    --z-banner:     4000;
+    --z-toast:      5000;
+    --z-panel:      6000;
+    --z-modal:      9999;
 
     /* Typography scale */
     --font-display: 'Barlow Condensed', system-ui, sans-serif;
@@ -467,11 +479,12 @@ input:focus {
     -webkit-user-select: none;
     letter-spacing: 0.2px;
     animation: chipIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+    contain: content; /* Performance: isolates layout/paint */
 }
 
 @keyframes chipIn {
-    from { opacity: 0; transform: scale(0.8) translateY(10px); filter: blur(3px); }
-    to   { opacity: 1; transform: scale(1) translateY(0);      filter: blur(0);   }
+    from { opacity: 0; transform: scale(0.8) translateY(10px); }
+    to   { opacity: 1; transform: scale(1) translateY(0);      }
 }
 
 .player-chip.active {
@@ -756,6 +769,7 @@ input:focus {
     border: 1px solid var(--border);
     animation: cardDrop 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
     box-shadow: 0 4px 30px rgba(0,0,0,0.4);
+    contain: content; /* Performance: isolates layout/paint */
 }
 
 /* Game label + odds row — spans all 3 columns, centered */
@@ -818,8 +832,8 @@ input:focus {
 }
 
 @keyframes cardDrop {
-    from { opacity: 0; transform: translateY(24px) scale(0.97); filter: blur(4px); }
-    to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+    from { opacity: 0; transform: translateY(24px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .team-box {
@@ -933,7 +947,7 @@ input:focus {
     justify-content: center;
     align-items: stretch;
     gap: 10px;
-    z-index: 1000;
+    z-index: var(--z-nav);
     isolation: isolate;
     background: rgba(10, 10, 15, 0.88);
     backdrop-filter: blur(20px) saturate(1.5);
@@ -1013,7 +1027,7 @@ input:focus {
             rgba(255,255,255,0.012) 40px,
             rgba(255,255,255,0.012) 41px
         );
-    z-index: 2000;
+    z-index: var(--z-overlay);
     padding: 36px 20px calc(36px + var(--safe-bottom));
     transform: translateY(100%);
     display: flex;
@@ -1147,7 +1161,7 @@ input:focus {
     position: fixed;
     inset: 0;
     background: rgba(10, 10, 15, 0.92);
-    z-index: 3000;
+    z-index: var(--z-menu);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1283,7 +1297,7 @@ input:focus {
     position: fixed;
     inset: 0;
     background: rgba(10, 10, 15, 0.92);
-    z-index: 3500;
+    z-index: var(--z-sheet);
     align-items: flex-end;
     justify-content: center;
     backdrop-filter: blur(10px);
@@ -1606,7 +1620,7 @@ input:focus {
     position: fixed;
     inset: 0;
     pointer-events: none;
-    z-index: 9999;
+    z-index: var(--z-modal);
 }
 
 /* =============================================================================
@@ -1632,7 +1646,7 @@ input:focus {
     font-weight: 900;
     letter-spacing: 1.5px;
     white-space: nowrap;
-    z-index: 1500;
+    z-index: var(--z-badge);
     opacity: 0.7;
     transition: opacity 0.2s;
     max-width: 110px;
@@ -1769,7 +1783,7 @@ body.spectator-mode::before {
     letter-spacing: 3px;
     text-align: center;
     padding: 6px;
-    z-index: 4000;
+    z-index: var(--z-banner);
     border-bottom: 1px solid rgba(96,165,250,0.2);
 }
 
@@ -1790,7 +1804,7 @@ body.spectator-mode::before {
     white-space: nowrap;
     opacity: 0;
     transition: opacity 0.3s, transform 0.3s;
-    z-index: 5000;
+    z-index: var(--z-toast);
     pointer-events: none;
     box-shadow: 0 4px 20px rgba(0,0,0,0.4);
 }
@@ -1844,14 +1858,14 @@ body.spectator-mode::before {
     letter-spacing: 3px;
     text-align: center;
     padding: 7px;
-    z-index: 4000;
+    z-index: var(--z-banner);
     border-bottom: 1px solid rgba(96, 165, 250, 0.2);
     animation: spectatorBannerIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes spectatorBannerIn {
     from { opacity: 0; transform: translateY(-100%); }
-    to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Push content down so banner doesn't overlap header */
@@ -1907,7 +1921,7 @@ body.spectator-mode #overlay,
 body.spectator-mode #actionMenu,
 body.spectator-mode #teamBuilderModal {
     pointer-events: auto;
-    z-index: 2000;
+    z-index: var(--z-overlay);
 }
 
 /* =============================================================================
@@ -2219,7 +2233,7 @@ header {
 #playerCardModal {
     position: fixed;
     inset: 0;
-    z-index: 5000;
+    z-index: var(--z-toast);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2732,7 +2746,7 @@ header {
 .iwtp-sheet {
     position: fixed;
     bottom: 0; left: 0; right: 0;
-    z-index: 3500;
+    z-index: var(--z-sheet);
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -2843,7 +2857,7 @@ header {
     letter-spacing: 1px;
     padding: 8px 16px;
     border-radius: 20px;
-    z-index: 3000;
+    z-index: var(--z-menu);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -2856,7 +2870,7 @@ header {
 .play-requests-modal {
     position: fixed;
     inset: 0;
-    z-index: 5000;
+    z-index: var(--z-toast);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2939,7 +2953,7 @@ header {
 .join-notif {
     position: fixed;
     top: 0; left: 0; right: 0;
-    z-index: 9000;
+    z-index: var(--z-modal);
     display: flex;
     justify-content: center;
     pointer-events: none;
@@ -3051,7 +3065,7 @@ header {
     border: 1px solid rgba(0,255,163,0.25);
     border-radius: 20px;
     padding: 0.4rem 1rem;
-    z-index: 2500;
+    z-index: var(--z-ticker);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     white-space: nowrap;
@@ -3290,7 +3304,7 @@ button:active,
 .iwtp-sheet {
     position: fixed;
     bottom: 0; left: 0; right: 0;
-    z-index: 3500;
+    z-index: var(--z-sheet);
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -3571,7 +3585,7 @@ button:active,
 .sl-panel {
     position: fixed;
     inset: 0;
-    z-index: 6000;
+    z-index: var(--z-panel);
     background: var(--bg);
     background-image: repeating-linear-gradient(
         -45deg, transparent, transparent 40px,
@@ -3806,7 +3820,7 @@ button:active,
 .sl-modal {
     position: fixed;
     inset: 0;
-    z-index: 9999;
+    z-index: var(--z-modal);
     background: rgba(10,10,15,0.85);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
@@ -4204,7 +4218,7 @@ button:active,
 .victory-overlay {
     position: fixed;
     inset: 0;
-    z-index: 9999;
+    z-index: var(--z-modal);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -4621,7 +4635,7 @@ button:active,
     background: rgba(10,10,15,0.92);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    z-index: 9999;
+    z-index: var(--z-modal);
     display: flex;
     align-items: flex-end;
     padding-bottom: env(safe-area-inset-bottom, 0);
@@ -4923,8 +4937,8 @@ button:active,
 
 /* Single court replacement — flash effect */
 @keyframes cardReplace {
-    0%   { opacity: 0; transform: translateY(16px) scale(0.97); filter: blur(2px); }
-    100% { opacity: 1; transform: translateY(0)    scale(1);    filter: blur(0); }
+    0%   { opacity: 0; transform: translateY(16px) scale(0.97); }
+    100% { opacity: 1; transform: translateY(0)    scale(1);    }
 }
 
 .match-card.card-replace {

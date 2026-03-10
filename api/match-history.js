@@ -38,8 +38,21 @@ export default async function handler(req, res) {
 
         // --- Archive a completed match/round ---
         if (type === 'match_result') {
-            const { room_code, timestamp, matches } = req.body;
-            if (!room_code || !matches) return res.status(400).json({ error: 'Missing fields for match_result' });
+            const { room_code, operator_key, timestamp, matches } = req.body;
+            if (!room_code || !matches || !operator_key) {
+                return res.status(400).json({ error: 'Missing fields for match_result' });
+            }
+
+            // Verify operator key to ensure only the host can archive results
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
+            if (!sessionRes.ok || !sessionRes.data?.[0]) {
+                // Silently fail if session not found, could be an old request
+                return res.status(404).json({ error: 'Session not found' });
+            }
+            if (sessionRes.data[0].operator_key !== operator_key) {
+                // Invalid key
+                return res.status(403).json({ error: 'Invalid operator key' });
+            }
 
             const rows = [];
             matches.forEach(m => {
@@ -58,20 +71,6 @@ export default async function handler(req, res) {
 
             const result = await sb('/match_history', { method: 'POST', body: rows });
             return res.status(result.ok ? 200 : 500).json({ archived: rows.length });
-        }
-
-        // --- Unlock a new achievement for a player ---
-        if (type === 'achievement_unlock') {
-            const { player_uuid, achievement_id } = req.body;
-            if (!player_uuid || !achievement_id) return res.status(400).json({ error: 'Missing fields for achievement_unlock' });
-
-            const result = await sb('/player_achievements', {
-                method: 'POST',
-                body: { player_uuid, achievement_id },
-                // Don't fail if the achievement is already there
-                prefer: 'resolution=ignore-duplicates,return=minimal'
-            });
-            return res.status(result.ok ? 201 : 500).json({ ok: result.ok });
         }
 
         return res.status(400).json({ error: 'Invalid POST type specified' });

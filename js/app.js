@@ -150,7 +150,7 @@ function editPlayerName() {
 
     closeMenu(); // Close the long-press menu first
 
-    showInputModal({
+    UIManager.prompt({
         title: 'Edit Player Name',
         initialValue: p.name,
         confirmText: 'Save Name',
@@ -201,7 +201,7 @@ function deletePlayer() {
     const p = squad[selectedPlayerIndex];
     if (!p) return;
 
-    showConfirmationModal({
+    UIManager.confirm({
         title: `Delete ${p.name}?`,
         message: 'This will remove the player from the squad and all current matches. This action cannot be undone.',
         confirmText: 'Yes, Delete Player',
@@ -225,72 +225,87 @@ function toggleRestingState() {
     saveToDisk();
 }
 
-/**
- * Removes a player from the session. Called by the host when a 'player_leaving'
- * broadcast event is received from a player.
- * @param {string} playerUUID - The UUID of the player leaving.
- * @param {string} playerName - The name of the player leaving.
- */
-async function removePlayerFromSession(playerUUID, playerName) {
-     if (!playerUUID && !playerName) return;
- 
-     let pIndex = -1;
-     if (playerUUID) {
-         pIndex = squad.findIndex(p => p.uuid === playerUUID);
-     }
-     if (pIndex === -1 && playerName) {
-         pIndex = squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
-     }
- 
-     if (pIndex === -1) return; // Player not in squad
- 
-     const removedName = squad[pIndex].name;
-     const removedUUID = squad[pIndex].uuid || null;
- 
-     squad.splice(pIndex, 1);
- 
-     currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
-     playerQueue = playerQueue.filter(n => n !== removedName);
- 
-     if (typeof window.initQueue === 'function') window.initQueue();
- 
-     if (typeof playRequests !== 'undefined' && removedUUID) {
-         const pendingRequest = playRequests.find(r => r.player_uuid === removedUUID);
-         if (pendingRequest && typeof denyPlayRequest === 'function') {
-             denyPlayRequest(pendingRequest.id);
-         }
-     }
- 
-     if (window._approvedPlayers) {
-         if (removedUUID) delete window._approvedPlayers[removedUUID];
-         if (removedName) delete window._approvedPlayers[removedName];
-     }
- 
-     renderSquad();
-     rebuildMatchCardIndices();
-     renderQueueStrip();
-     checkNextButtonState();
-     saveToDisk();
- 
-     if (typeof broadcastGameState === 'function') broadcastGameState();
- 
-     if (isOperator && removedUUID && currentRoomCode && operatorKey) {
-         try {
-             await fetch('/api/play-request', {
-                 method: 'DELETE',
-                 headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify({
-                     room_code: currentRoomCode,
-                     player_uuid: removedUUID,
-                     operator_key: operatorKey
-                 })
-             });
-         } catch (e) { console.error('[CourtSide] Failed to remove member from DB session', e); }
-     }
- 
-     showSessionToast(`👋 ${removedName} left the session.`);
-     Haptic.bump();
+/** Removes a player from all local state arrays (squad, matches, queue). */
+function _removePlayerFromLocalState(playerIndex) {
+    const removedPlayer = squad[playerIndex];
+    const removedName = removedPlayer.name;
+    const removedUUID = removedPlayer.uuid || null;
+
+    squad.splice(playerIndex, 1);
+    currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
+    playerQueue = playerQueue.filter(n => n !== removedName);
+
+    if (window._approvedPlayers) {
+        if (removedUUID) delete window._approvedPlayers[removedUUID];
+        if (removedName) delete window._approvedPlayers[removedName];
+    }
+
+    if (typeof playRequests !== 'undefined' && removedUUID) {
+        const pendingRequest = playRequests.find(r => r.player_uuid === removedUUID);
+        if (pendingRequest && typeof denyPlayRequest === 'function') {
+            denyPlayRequest(pendingRequest.id);
+        }
+    }
+
+    return { removedName, removedUUID };
 }
+
+/** Updates all relevant UI components after a player has been removed. */
+function _updateUIAfterPlayerRemoval() {
+    renderSquad();
+    rebuildMatchCardIndices();
+    renderQueueStrip();
+    checkNextButtonState();
+    if (typeof window.initQueue === 'function') window.initQueue();
+}
+
+/** Sends a request to the backend to permanently remove the player from the session_members table. */
+async function _removePlayerFromRemoteDB(playerUUID) {
+    if (!isOperator || !playerUUID || !currentRoomCode || !operatorKey) return;
+    try {
+        await fetch('/api/play-request', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                room_code: currentRoomCode,
+                player_uuid: playerUUID,
+                operator_key: operatorKey
+            })
+        });
+    } catch (e) {
+        console.error('[CourtSide] Failed to remove member from DB session', e);
+    }
+}
+
+/** Orchestrates the removal of a player from the session. */
+async function removePlayerFromSession(playerUUID, playerName) {
+    if (!playerUUID && !playerName) return;
+
+    let pIndex = -1;
+    if (playerUUID) {
+        pIndex = squad.findIndex(p => p.uuid === playerUUID);
+    }
+    if (pIndex === -1 && playerName) {
+        pIndex = squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
+    }
+
+    if (pIndex === -1) return; // Player not in squad
+
+    const { removedName, removedUUID } = _removePlayerFromLocalState(pIndex);
+
+    _updateUIAfterPlayerRemoval();
+    saveToDisk();
+
+    if (typeof broadcastGameState === 'function') {
+        broadcastGameState();
+    }
+
+    await _removePlayerFromRemoteDB(removedUUID);
+
+    showSessionToast(`👋 ${removedName} left the session.`);
+    Haptic.bump();
+}
+
 window.removePlayerFromSession = removePlayerFromSession;
 
 // ---------------------------------------------------------------------------
@@ -845,53 +860,13 @@ function importSyncToken() {
     }
 }
 
-function showConfirmationModal({ title, message, confirmText, isDestructive, onConfirm }) {
-    // Remove existing modal if any
-    document.getElementById('confirmationModal')?.remove();
-
-    const modal = document.createElement('div');
-    modal.id = 'confirmationModal';
-    modal.className = 'actionMenu'; // Reuse styles from actionMenu
-    modal.style.zIndex = '10000'; // Ensure it's on top of all overlays, including player view (z-index: 6000)
-
-    const confirmBtnClass = isDestructive ? 'btn-main btn-danger' : 'btn-main';
-
-    modal.innerHTML = `
-        <div class="menu-card">
-            <h2>${escapeHTML(title)}</h2>
-            <p>${escapeHTML(message)}</p>
-            <button id="confirmBtn" class="${confirmBtnClass} menu-btn">${escapeHTML(confirmText)}</button>
-            <button id="cancelBtn" class="btn-cancel">Cancel</button>
-        </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    const confirmBtn = document.getElementById('confirmBtn');
-    const cancelBtn = document.getElementById('cancelBtn');
-    
-    const close = () => modal.remove();
-
-    confirmBtn.onclick = () => {
-        close();
-        onConfirm();
-    };
-
-    cancelBtn.onclick = close;
-    
-    // Also close if clicking the backdrop
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) close();
-    });
-}
-
 function eraseAllData() {
     localStorage.clear();
     location.reload();
 }
 
 function confirmEraseAllData() {
-    showConfirmationModal({
+    UIManager.confirm({
         title: 'Wipe All Data?',
         message: 'This will permanently delete all players, matches, and session history. This action cannot be undone.',
         confirmText: 'Yes, Wipe Everything',

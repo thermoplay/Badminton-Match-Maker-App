@@ -1020,6 +1020,7 @@ async function archiveRoundToSupabase(snapshot) {
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
                 room_code: currentRoomCode,
+                operator_key: operatorKey,
                 timestamp: snapshot.timestamp,
                 matches:   snapshot.matches,
                 squad:     snapshot.squadSnapshot,
