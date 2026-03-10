@@ -225,6 +225,36 @@ function toggleRestingState() {
     saveToDisk();
 }
 
+function _autoAddHostToSquad() {
+    // This function runs on app start for the host.
+    // If the host has a player passport from a previous session,
+    // and they aren't already in the current squad, add them automatically.
+    if (!passport || !passport.playerName) return;
+
+    const hostName = passport.playerName;
+    const hostUUID = passport.playerUUID;
+
+    // Check if a player with this UUID or name already exists.
+    const hostIsInSquad = squad.some(p => (p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase());
+
+    if (!hostIsInSquad) {
+        const hostAsPlayer = migratePlayer({ // Use migratePlayer to ensure all fields are present
+            name: hostName,
+            uuid: hostUUID,
+        });
+        
+        squad.unshift(hostAsPlayer); // Add to the front of the squad list
+        
+        if (!playerQueue.includes(hostName)) {
+            playerQueue.unshift(hostName); // Also add to front of queue
+        }
+        
+        saveToDisk();
+        renderSquad(); // Re-render the squad list to show the new player
+        showSessionToast(`👋 Welcome, ${hostName}! You've been added to the squad.`);
+    }
+}
+
 /** Removes a player from all local state arrays (squad, matches, queue). */
 function _removePlayerFromLocalState(playerIndex) {
     const removedPlayer = squad[playerIndex];
@@ -2007,6 +2037,9 @@ async function initApp() {
     } catch (e) {
         console.error('[CourtSide] initApp: loadFromDisk failed', e);
     }
+
+    // If the user has a passport from playing, auto-add them to their own squad.
+    _autoAddHostToSquad();
 
     if (typeof tryAutoRejoin === 'function') {
         await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
