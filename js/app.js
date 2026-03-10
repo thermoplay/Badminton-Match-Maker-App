@@ -181,7 +181,7 @@ function editPlayerName() {
             StateStore.set('playerQueue', StateStore.playerQueue.map(n => (n === oldName ? p.name : n)));
 
             // Update name in all history objects (teammate/opponent) for ALL players
-            squad.forEach(squadPlayer => {
+            StateStore.squad.forEach(squadPlayer => {
                 if (squadPlayer.teammateHistory && oldName in squadPlayer.teammateHistory) {
                     squadPlayer.teammateHistory[p.name] = squadPlayer.teammateHistory[oldName];
                     delete squadPlayer.teammateHistory[oldName];
@@ -356,6 +356,8 @@ function renderSquad() {
         if (uuid) existingChips.set(uuid, chip);
     });
 
+    const fragment = document.createDocumentFragment();
+
     StateStore.squad.forEach(p => {
         const isNew = p.games === 0 && p.wins === 0;
         const chipContent = `
@@ -384,14 +386,17 @@ function renderSquad() {
             newChip.className = chipClasses;
             newChip.dataset.uuid = p.uuid;
             newChip.innerHTML = chipContent;
-            newChip.onmousedown = () => startPress(p.uuid);
-            newChip.onmouseup = () => endPress(p.uuid);
-            newChip.ontouchstart = () => startPress(p.uuid);
-            newChip.ontouchend = () => endPress(p.uuid);
-            newChip.oncontextmenu = () => false;
-            container.appendChild(newChip);
+            newChip.addEventListener('mousedown', () => startPress(p.uuid));
+            newChip.addEventListener('mouseup', () => endPress(p.uuid));
+            newChip.addEventListener('touchstart', () => startPress(p.uuid));
+            newChip.addEventListener('touchend', () => endPress(p.uuid));
+            newChip.addEventListener('contextmenu', (e) => e.preventDefault());
+            fragment.appendChild(newChip);
         }
     });
+
+    // Append all new chips in a single DOM operation for performance.
+    container.appendChild(fragment);
 
     // Any chips left in existingChips are for players who have been removed
     existingChips.forEach(chip => {
@@ -1290,11 +1295,11 @@ function showIWTPExisting() {
     Haptic.tap();
     const list = document.getElementById('iwtpPlayerList');
     if (!list) return;
-    if (squad.length === 0) {
+    if (StateStore.squad.length === 0) {
         list.innerHTML = `<p class="iwtp-empty">No players yet.<br>Ask the host to add players first.</p>`;
         return;
     }
-    list.innerHTML = squad.map(p => `
+    list.innerHTML = StateStore.squad.map(p => `
         <button class="iwtp-player-chip" onclick="confirmSpectateAs('${escapeHTML(p.name)}')">
             ${Avatar.html(p.name)}
             <span>${escapeHTML(p.name)}</span>

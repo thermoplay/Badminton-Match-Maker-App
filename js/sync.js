@@ -644,6 +644,12 @@ function applyRemoteState(session) {
     }
 
     StateStore.setState({ squad: loadedSquad, currentMatches: loadedMatches, playerQueue: loadedQueue, activeCourts: loadedCourts });
+    // Also update window globals for player view, which doesn't use StateStore
+    if (!isOperator) {
+        window.squad = loadedSquad;
+        window.currentMatches = loadedMatches;
+    }
+
     // round_history is no longer synced to DB — keep local undo history intact
     // roundHistory stays as-is on rejoin
 
