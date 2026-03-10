@@ -5100,3 +5100,44 @@ button:active,
     color: var(--text-muted);
     line-height: 1.3;
 }
+
+/* =============================================================================
+   UI MANAGER MODAL SYSTEM
+   ============================================================================= */
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 10, 15, 0.8);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: calc(var(--z-modal) - 1); /* Below the modal content */
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+.modal-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.modal-container {
+    position: fixed;
+    z-index: var(--z-modal);
+    opacity: 0;
+    transform: scale(0.95);
+    transition: opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+}
+
+.modal-container.visible {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+}
+
+.modal-container.modal-type-card {
+    /* The menu-card inside provides the actual styling */
+}
+

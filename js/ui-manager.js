@@ -38,8 +38,8 @@ const UIManager = {
     show(contentHTML, type = 'sheet') {
         this._init();
         this._modal.innerHTML = contentHTML;
-        // Add 'actionMenu' class for style compatibility with the old implementation
-        this._modal.className = `modal-container actionMenu modal-type-${type}`;
+        // The UIManager now has its own styles, no need to borrow from actionMenu
+        this._modal.className = `modal-container modal-type-${type}`;
         document.body.classList.add('modal-open');
         this._backdrop.classList.add('visible');
         this._modal.classList.add('visible');
