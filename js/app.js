@@ -1970,10 +1970,35 @@ function showLandingPage() {
 
 window.closeLandingPage = function() {
     const el = document.getElementById('landingPage');
-    if (el) {
+    if (!el) return;
+
+    const doClose = () => {
         el.style.transition = 'opacity 0.3s';
         el.style.opacity = '0';
         setTimeout(() => el.remove(), 300);
+    };
+
+    // If the host has no name, prompt them before starting.
+    if (passport && !passport.playerName) {
+        UIManager.prompt({
+            title: 'Enter Your Name',
+            initialValue: '',
+            confirmText: 'Start Hosting',
+            onConfirm: (name) => {
+                if (name && name.trim()) {
+                    // Create the host's passport and add them to the squad.
+                    Passport.rename(name.trim());
+                    passport = Passport.get(); // Re-fetch passport
+                    _autoAddHostToSquad(); // This will now find and add them
+                    doClose();
+                } else {
+                    doClose(); // Close without adding if they cancel.
+                }
+            }
+        });
+    } else {
+        // Host already has a name, _autoAddHostToSquad should have already run.
+        doClose();
     }
 };
 
