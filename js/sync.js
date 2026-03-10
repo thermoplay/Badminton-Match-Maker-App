@@ -88,9 +88,9 @@ async function createOnlineSession() {
             body: {
                 room_code: roomCode,
                 operator_key: opKey,
-                squad,
-                current_matches: currentMatches,
-                player_queue: playerQueue
+                squad: StateStore.squad,
+                current_matches: StateStore.currentMatches,
+                player_queue: StateStore.playerQueue
             },
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
@@ -187,11 +187,11 @@ function pushStateToSupabase() {
                 body: {
                     room_code:        currentRoomCode,
                     operator_key:     operatorKey,
-                    squad,
-                    current_matches:  currentMatches,
+                    squad:            StateStore.squad,
+                    current_matches:  StateStore.currentMatches,
                     // round_history intentionally excluded — undo is local only,
                     // removing this cuts DB payload size significantly
-                    player_queue:     playerQueue,
+                    player_queue:     StateStore.playerQueue,
                     uuid_map:         window._sessionUUIDMap  || {},
                     approved_players: window._approvedPlayers || {},
                 },
@@ -226,8 +226,8 @@ function broadcastApproval(playerUUID, playerName, token) {
         playerUUID,
         playerName,
         token,
-        squad,
-        current_matches: currentMatches,
+        squad: StateStore.squad,
+        current_matches: StateStore.currentMatches,
     });
 }
 
@@ -240,7 +240,7 @@ function broadcastGameState() {
     if (!isOperator || !isOnlineSession) return;
     // Serialize matches with explicit teamA/teamB keys so the player view never
     // has to infer team assignment from position or sort order.
-    const safeMatches = currentMatches.map(m => ({
+    const safeMatches = StateStore.currentMatches.map(m => ({
         ...m,
         teams: [
             Array.isArray(m.teams[0]) ? [...m.teams[0]] : [],
@@ -248,7 +248,7 @@ function broadcastGameState() {
         ],
     }));
     _broadcast('game_state', {
-        squad,
+        squad: StateStore.squad,
         current_matches: safeMatches,
         next_up: (document.getElementById('nextUpNames')?.textContent || '').trim(),
     });
@@ -458,9 +458,9 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     const trimmed = newName.trim();
 
     // 1. Find player by UUID (stored on squad member at approval) — rename-safe
-    let player = squad.find(p => p.uuid === playerUUID);
+    let player = StateStore.squad.find(p => p.uuid === playerUUID);
     // 2. Fallback: find by oldName if uuid not yet on squad member
-    if (!player) player = squad.find(p => p.name === oldName);
+    if (!player) player = StateStore.squad.find(p => p.name === oldName);
 
     if (!player) return;  // player not in squad yet, ignore
 
@@ -478,8 +478,8 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
 
     // Update active matches if the player is currently in a game
     let matchUpdated = false;
-    if (window.currentMatches) {
-        window.currentMatches.forEach(m => {
+    if (StateStore.currentMatches) {
+        StateStore.currentMatches.forEach(m => {
             m.teams.forEach((team, tIdx) => {
                 if (team.includes(prevName)) {
                     m.teams[tIdx] = team.map(n => n === prevName ? trimmed : n);
@@ -628,28 +628,30 @@ function applyRemoteState(session) {
         return;
     }
     _lastRemoteUpdate = ts || Date.now();
-    const prevCount = currentMatches.length;
+    const prevCount = StateStore.currentMatches.length;
 
     // Globals FIRST — no render reads stale data
-    squad          = (session.squad           || []);
-    currentMatches = session.current_matches  || [];
-    // round_history is no longer synced to DB — keep local undo history intact
-    // roundHistory stays as-is on rejoin
-    playerQueue    = (session.player_queue    || [])
-        .filter(name => squad.find(p => p.name === name)); // drop stale names
+    const loadedSquad = session.squad || [];
+    const loadedMatches = session.current_matches || [];
+    const loadedQueue = (session.player_queue || []).filter(name => loadedSquad.find(p => p.name === name));
+    let loadedCourts = 1;
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
-        activeCourts = session.active_courts;
+        loadedCourts = session.active_courts;
         setTimeout(() => {
             const courtInput = document.getElementById('courtCountInput');
-            if (courtInput) courtInput.value = activeCourts;
+            if (courtInput) courtInput.value = loadedCourts;
         }, 0);
     }
+
+    StateStore.setState({ squad: loadedSquad, currentMatches: loadedMatches, playerQueue: loadedQueue, activeCourts: loadedCourts });
+    // round_history is no longer synced to DB — keep local undo history intact
+    // roundHistory stays as-is on rejoin
 
     // Migrate: remote squad rows may come from an older client that didn't
     // save rating / consecutiveGames / forcedRest. migratePlayer() is defined
     // in app.js and backfills any missing fields so calculateOdds never sees
     // undefined.rating regardless of where the data came from.
-    if (typeof migratePlayer === 'function') squad.forEach(migratePlayer);
+    if (typeof migratePlayer === 'function') StateStore.squad.forEach(migratePlayer);
     window._sessionUUIDMap  = session.uuid_map         || {};
     window._approvedPlayers = session.approved_players || {};
 
@@ -669,7 +671,7 @@ function applyRemoteState(session) {
         updateUndoButton();
         if (typeof checkIWTPSmartRecognition === 'function') checkIWTPSmartRecognition();
     }
-    if (currentMatches.length > 0 && currentMatches.length !== prevCount) Haptic.bump();
+    if (StateStore.currentMatches.length > 0 && StateStore.currentMatches.length !== prevCount) Haptic.bump();
     _updatePlayerCount();
 }
 
@@ -759,7 +761,7 @@ function _updatePlayerCount() {
         count = memberEntries.filter(m => m.status === 'active').length;
     } else {
         // Fallback: use local squad length (always accurate on the host side)
-        count = (typeof squad !== 'undefined' ? squad : []).length;
+        count = (typeof StateStore.squad !== 'undefined' ? StateStore.squad : []).length;
     }
 
     let countEl = document.getElementById('sessionPlayerCount');

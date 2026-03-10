@@ -8,15 +8,8 @@
 let passport  = null;
 let supabase  = null;
 
-// ---------------------------------------------------------------------------
-// STATE
-// ---------------------------------------------------------------------------
-let squad = [];
-let currentMatches = [];
-let playerQueue   = [];
-let activeCourts  = 1;
-let roundHistory  = [];
-let previousRoundSnapshot = null;
+// Global state is now managed by StateStore
+
 let selectedPlayerIndex = null;
 let pressTimer = null;
 let isLongPress = false;
@@ -27,8 +20,15 @@ let isLongPress = false;
 
 function saveToDisk() {
     // Cap roundHistory to last 10 entries — enough for undo, keeps localStorage lean
-    const historySlice = roundHistory.slice(-10);
-    localStorage.setItem('cs_pro_vault', JSON.stringify({ squad, currentMatches, roundHistory: historySlice, playerQueue, activeCourts }));
+    const historySlice = StateStore.roundHistory.slice(-10);
+    const stateToSave = {
+        squad: StateStore.squad,
+        currentMatches: StateStore.currentMatches,
+        roundHistory: historySlice,
+        playerQueue: StateStore.playerQueue,
+        activeCourts: StateStore.get('activeCourts'),
+    };
+    localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
 }
 
 // ---------------------------------------------------------------------------
@@ -56,23 +56,29 @@ function loadFromDisk() {
     if (saved) {
         try {
             const data = JSON.parse(saved);
-            squad          = data.squad        || [];
-            roundHistory   = data.roundHistory || [];
+            const loadedSquad = data.squad || [];
+            loadedSquad.forEach(migratePlayer);
 
-            squad.forEach(migratePlayer);
-
-            const squadPlayerNames = new Set(squad.map(p => p.name));
-            currentMatches = (data.currentMatches || []).filter(m =>
+            const squadPlayerNames = new Set(loadedSquad.map(p => p.name));
+            const loadedMatches = (data.currentMatches || []).filter(m =>
                 m.teams.flat().every(name => squadPlayerNames.has(name))
             );
 
-            playerQueue  = (data.playerQueue || [])
-                .filter(name => squad.find(p => p.name === name));
-            activeCourts = (Number.isInteger(data.activeCourts) && data.activeCourts >= 1)
+            const loadedQueue = (data.playerQueue || []).filter(name => loadedSquad.find(p => p.name === name));
+            const loadedCourts = (Number.isInteger(data.activeCourts) && data.activeCourts >= 1)
                 ? data.activeCourts : 1;
+
+            StateStore.setState({
+                squad: loadedSquad,
+                roundHistory: data.roundHistory || [],
+                currentMatches: loadedMatches,
+                playerQueue: loadedQueue,
+                activeCourts: loadedCourts,
+            });
+
             setTimeout(() => {
                 const courtInput = document.getElementById('courtCountInput');
-                if (courtInput) courtInput.value = activeCourts;
+                if (courtInput) courtInput.value = loadedCourts;
             }, 0);
 
             renderSquad();
@@ -80,9 +86,7 @@ function loadFromDisk() {
             renderQueueStrip();
         } catch (e) {
             console.error('CourtSide: Failed to parse saved data.', e);
-            squad          = [];
-            currentMatches = [];
-            roundHistory   = [];
+            StateStore.setState({ squad: [], currentMatches: [], roundHistory: [] });
         }
     }
     checkNextButtonState();
@@ -90,10 +94,10 @@ function loadFromDisk() {
 }
 
 function renderSavedMatches() {
-    if (currentMatches.length === 0) return;
+    if (StateStore.currentMatches.length === 0) return;
     const container = document.getElementById('matchContainer');
     container.innerHTML = '';
-    currentMatches.forEach((m, i) => {
+    StateStore.currentMatches.forEach((m, i) => {
         const tAObjects = m.teams[0].map(n => findP(n));
         const tBObjects = m.teams[1].map(n => findP(n));
         if (tAObjects.some(p => !p) || tBObjects.some(p => !p)) return;
@@ -115,12 +119,12 @@ function addPlayer() {
     const el = document.getElementById('playerName');
     const name = el.value.trim();
     if (!name) return;
-    if (squad.find(p => p.name.toLowerCase() === name.toLowerCase())) {
+    if (StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase())) {
         alert('Player already exists!');
         el.value = '';
         return;
     }
-    squad.push({
+    StateStore.squad.push({
         name,
         uuid:             _generateUUID(),
         active:           true,
@@ -136,7 +140,7 @@ function addPlayer() {
         achievements:      [],
     });
     el.value = '';
-    if (!playerQueue.includes(name)) playerQueue.push(name);
+    if (!StateStore.playerQueue.includes(name)) StateStore.playerQueue.push(name);
     renderSquad();
     renderQueueStrip();
     checkNextButtonState();
@@ -144,7 +148,7 @@ function addPlayer() {
 }
 
 function editPlayerName() {
-    const p = squad[selectedPlayerIndex];
+    const p = StateStore.squad[selectedPlayerIndex];
     if (!p) return;
     const oldName = p.name;
 
@@ -159,7 +163,7 @@ function editPlayerName() {
             if (!trimmedNewName) return;
 
             // Check for name collision (case-insensitive, but not against the player's own old name)
-            if (squad.some(player => player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
+            if (StateStore.squad.some(player => player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
                 alert('A player with this name already exists.');
                 return;
             }
@@ -167,14 +171,14 @@ function editPlayerName() {
             p.name = trimmedNewName;
 
             // Update name in current matches
-            currentMatches.forEach(m => {
+            StateStore.currentMatches.forEach(m => {
                 m.teams = m.teams.map(team =>
                     team.map(n => (n === oldName ? p.name : n))
                 );
             });
 
             // Update name in player queue
-            playerQueue = playerQueue.map(n => (n === oldName ? p.name : n));
+            StateStore.set('playerQueue', StateStore.playerQueue.map(n => (n === oldName ? p.name : n)));
 
             // Update name in all history objects (teammate/opponent) for ALL players
             squad.forEach(squadPlayer => {
@@ -198,7 +202,7 @@ function editPlayerName() {
 }
 
 function deletePlayer() {
-    const p = squad[selectedPlayerIndex];
+    const p = StateStore.squad[selectedPlayerIndex];
     if (!p) return;
 
     UIManager.confirm({
@@ -218,7 +222,7 @@ function deletePlayer() {
 }
 
 function toggleRestingState() {
-    squad[selectedPlayerIndex].active = !squad[selectedPlayerIndex].active;
+    StateStore.squad[selectedPlayerIndex].active = !StateStore.squad[selectedPlayerIndex].active;
     closeMenu();
     renderSquad();
     checkNextButtonState();
@@ -235,7 +239,7 @@ function _autoAddHostToSquad() {
     const hostUUID = passport.playerUUID;
 
     // Check if a player with this UUID or name already exists.
-    const hostIsInSquad = squad.some(p => (p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase());
+    const hostIsInSquad = StateStore.squad.some(p => (p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase());
 
     if (!hostIsInSquad) {
         const hostAsPlayer = migratePlayer({ // Use migratePlayer to ensure all fields are present
@@ -243,10 +247,10 @@ function _autoAddHostToSquad() {
             uuid: hostUUID,
         });
         
-        squad.unshift(hostAsPlayer); // Add to the front of the squad list
+        StateStore.squad.unshift(hostAsPlayer); // Add to the front of the squad list
         
-        if (!playerQueue.includes(hostName)) {
-            playerQueue.unshift(hostName); // Also add to front of queue
+        if (!StateStore.playerQueue.includes(hostName)) {
+            StateStore.playerQueue.unshift(hostName); // Also add to front of queue
         }
         
         saveToDisk();
@@ -257,13 +261,13 @@ function _autoAddHostToSquad() {
 
 /** Removes a player from all local state arrays (squad, matches, queue). */
 function _removePlayerFromLocalState(playerIndex) {
-    const removedPlayer = squad[playerIndex];
+    const removedPlayer = StateStore.squad[playerIndex];
     const removedName = removedPlayer.name;
     const removedUUID = removedPlayer.uuid || null;
 
-    squad.splice(playerIndex, 1);
-    currentMatches = currentMatches.filter(m => !m.teams.flat().includes(removedName));
-    playerQueue = playerQueue.filter(n => n !== removedName);
+    StateStore.squad.splice(playerIndex, 1);
+    StateStore.set('currentMatches', StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedName)));
+    StateStore.set('playerQueue', StateStore.playerQueue.filter(n => n !== removedName));
 
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];
@@ -313,10 +317,10 @@ async function removePlayerFromSession(playerUUID, playerName) {
 
     let pIndex = -1;
     if (playerUUID) {
-        pIndex = squad.findIndex(p => p.uuid === playerUUID);
+        pIndex = StateStore.squad.findIndex(p => p.uuid === playerUUID);
     }
     if (pIndex === -1 && playerName) {
-        pIndex = squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
+        pIndex = StateStore.squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
     }
 
     if (pIndex === -1) return; // Player not in squad
@@ -352,7 +356,7 @@ function renderSquad() {
         if (uuid) existingChips.set(uuid, chip);
     });
 
-    squad.forEach(p => {
+    StateStore.squad.forEach(p => {
         const isNew = p.games === 0 && p.wins === 0;
         const chipContent = `
             ${Avatar.html(p.name)}
@@ -402,7 +406,7 @@ function renderSquad() {
 function checkNextButtonState() {
     const btn = document.getElementById('nextRoundBtn');
     if (!btn) return;
-    const canProceed = currentMatches.length === 0;
+    const canProceed = StateStore.currentMatches.length === 0;
     btn.style.opacity       = canProceed ? '1'       : '0.4';
     btn.style.pointerEvents = canProceed ? 'auto'    : 'none';
     btn.style.cursor        = canProceed ? 'pointer' : 'default';
@@ -414,21 +418,21 @@ function setCourts(n) {
     const val = Math.max(1, parseInt(n) || 1);
     const input = document.getElementById('courtCountInput');
     if (input) input.value = val;
-    if (activeCourts === val) return;
-    activeCourts = val;
+    if (StateStore.get('activeCourts') === val) return;
+    StateStore.set('activeCourts', val);
     saveToDisk();
 
-    if (currentMatches.length === 0) {
-        if (typeof showSessionToast === 'function') showSessionToast(`🏀 ${activeCourts} court${activeCourts > 1 ? 's' : ''} set`);
+    if (StateStore.currentMatches.length === 0) {
+        if (typeof showSessionToast === 'function') showSessionToast(`🏀 ${val} court${val > 1 ? 's' : ''} set`);
         return;
     }
 
-    if (confirm(`Apply ${activeCourts} court${activeCourts > 1 ? 's' : ''} now? This will reset the current round.`)) {
-        currentMatches = [];
+    if (confirm(`Apply ${val} court${val > 1 ? 's' : ''} now? This will reset the current round.`)) {
+        StateStore.set('currentMatches', []);
         document.getElementById('matchContainer').innerHTML = '';
-        const onCourt = squad.filter(p => p.active);
+        const onCourt = StateStore.squad.filter(p => p.active);
         onCourt.forEach(p => {
-            if (!playerQueue.includes(p.name)) playerQueue.unshift(p.name);
+            if (!StateStore.playerQueue.includes(p.name)) StateStore.playerQueue.unshift(p.name);
         });
         generateMatches();
     } else {
@@ -454,7 +458,7 @@ function startPress(uuid) {
 function endPress(uuid) {
     clearTimeout(pressTimer);
     if (!isLongPress) {
-        const player = squad.find(p => p.uuid === uuid);
+        const player = StateStore.squad.find(p => p.uuid === uuid);
         if (player && !player.active) {
             Haptic.tap();
             player.active = true;
@@ -465,14 +469,14 @@ function endPress(uuid) {
 }
 
 function openMenu(uuid) {
-    const playerIndex = squad.findIndex(p => p.uuid === uuid);
+    const playerIndex = StateStore.squad.findIndex(p => p.uuid === uuid);
     if (playerIndex === -1) return;
     selectedPlayerIndex = playerIndex;
-    const p = squad[playerIndex];
+    const p = StateStore.squad[playerIndex];
     const menu = document.getElementById('actionMenu');
     if (!menu) return;
 
-    const onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
     const isPlaying = onCourt.has(p.name);
 
     menu.innerHTML = `
@@ -510,12 +514,13 @@ function closeMenu() {
 }
 
 function movePlayerToFront() {
-    const p = squad[selectedPlayerIndex];
+    const p = StateStore.squad[selectedPlayerIndex];
     if (!p) return;
     
     // Remove from current spot in queue and add to front
-    playerQueue = playerQueue.filter(n => n !== p.name);
-    playerQueue.unshift(p.name);
+    const newQueue = StateStore.playerQueue.filter(n => n !== p.name);
+    newQueue.unshift(p.name);
+    StateStore.set('playerQueue', newQueue);
     
     closeMenu();
     renderQueueStrip();
@@ -1191,141 +1196,18 @@ async function shareAuraPoster(matchIdx) {
     const m = currentMatches[matchIdx];
     if (!m) return;
 
-    const tA = (m.teams[0] || []).join(' & ');
-    const tB = (m.teams[1] || []).join(' & ');
-
-    try {
-        const W = 1080, H = 1920;
-        const canvas = document.createElement('canvas');
-        canvas.width  = W;
-        canvas.height = H;
-        const ctx = canvas.getContext('2d');
-
-        ctx.fillStyle = '#08080e';
-        ctx.fillRect(0, 0, W, H);
-
-        const glow1 = ctx.createRadialGradient(W/2, 380, 0, W/2, 380, 680);
-        glow1.addColorStop(0,   'rgba(0,255,163,0.13)');
-        glow1.addColorStop(0.5, 'rgba(0,255,163,0.04)');
-        glow1.addColorStop(1,   'rgba(0,255,163,0)');
-        ctx.fillStyle = glow1;
-        ctx.fillRect(0, 0, W, H);
-
-        const glow2 = ctx.createRadialGradient(W/2, H-200, 0, W/2, H-200, 500);
-        glow2.addColorStop(0, 'rgba(0,200,120,0.10)');
-        glow2.addColorStop(1, 'rgba(0,200,120,0)');
-        ctx.fillStyle = glow2;
-        ctx.fillRect(0, 0, W, H);
-
-        if (typeof _drawGrain       === 'function') _drawGrain(ctx, W, H, 0.018);
-        if (typeof _drawCourtLines  === 'function') _drawCourtLines(ctx, W, H);
-        if (typeof _drawSilhouettes === 'function') _drawSilhouettes(ctx, W, H);
-
-        ctx.save();
-        ctx.shadowColor = 'rgba(0,255,163,0.6)';
-        ctx.shadowBlur  = 28;
-        ctx.fillStyle   = '#00ffa3';
-        ctx.font        = 'bold 52px "Arial Narrow", Arial, sans-serif';
-        ctx.textAlign   = 'center';
-        ctx.fillText('THE COURTSIDE', W/2, 168);
-        ctx.restore();
-
-        const lineGrad = ctx.createLinearGradient(W/2-220, 0, W/2+220, 0);
-        lineGrad.addColorStop(0,   'rgba(0,255,163,0)');
-        lineGrad.addColorStop(0.5, 'rgba(0,255,163,0.5)');
-        lineGrad.addColorStop(1,   'rgba(0,255,163,0)');
-        ctx.strokeStyle = lineGrad;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(W/2-220, 188); ctx.lineTo(W/2+220, 188);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(W/2-52, 225, 8, 0, Math.PI*2);
-        ctx.fillStyle = '#00ffa3';
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.45)';
-        ctx.font = '500 26px Arial, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText('LIVE NOW', W/2-30, 232);
-        ctx.textAlign = 'center';
-
-        const divGrad = ctx.createLinearGradient(80, 310, W-80, 310);
-        divGrad.addColorStop(0,   'rgba(0,255,163,0)');
-        divGrad.addColorStop(0.3, 'rgba(0,255,163,0.4)');
-        divGrad.addColorStop(0.7, 'rgba(0,255,163,0.4)');
-        divGrad.addColorStop(1,   'rgba(0,255,163,0)');
-        ctx.strokeStyle = divGrad;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(80, 310); ctx.lineTo(W-80, 310);
-        ctx.stroke();
-
-        const midY = H * 0.46;
-        if (typeof _drawTeamBlock === 'function') {
-            ctx.save(); ctx.textAlign = 'center';
-            _drawTeamBlock(ctx, W/2, midY - 260, tA, '#ffffff', W);
-            ctx.restore();
-        } else {
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 88px "Arial Narrow", Arial, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(tA, W/2, midY - 260);
-        }
-
-        ctx.beginPath();
-        ctx.arc(W/2, midY, 88, 0, Math.PI*2);
-        ctx.strokeStyle = 'rgba(0,255,163,0.15)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(W/2, midY, 72, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fill();
-        ctx.fillStyle = '#00ffa3';
-        ctx.font = 'bold 58px "Arial Narrow", Arial, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('VS', W/2, midY + 20);
-
-        if (typeof _drawTeamBlock === 'function') {
-            ctx.save(); ctx.textAlign = 'center';
-            _drawTeamBlock(ctx, W/2, midY + 160, tB, '#ffffff', W);
-            ctx.restore();
-        } else {
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 88px "Arial Narrow", Arial, sans-serif';
-            ctx.fillText(tB, W/2, midY + 220);
-        }
-
-        ctx.fillStyle = 'rgba(255,255,255,0.2)';
-        ctx.font = '500 28px Arial, sans-serif';
-        ctx.fillText('@thecourtsidepro', W/2, H - 80);
-
-        canvas.toBlob(async (blob) => {
-            if (!blob) { showSessionToast('Could not generate poster'); return; }
-            const file = new File([blob], 'courtside-aura.png', { type: 'image/png' });
-            try {
-                if (navigator.share && navigator.canShare({ files: [file] })) {
-                    await navigator.share({
-                        title: 'CourtSide Pro',
-                        text:  tA + ' vs ' + tB + ' - who you got?',
-                        files: [file],
-                    });
-                } else {
-                    const a = document.createElement('a');
-                    a.href     = URL.createObjectURL(blob);
-                    a.download = 'courtside-aura.png';
-                    a.click();
-                }
-                if (typeof Haptic !== 'undefined') Haptic.success();
-            } catch (shareErr) {
-                if (shareErr.name !== 'AbortError') showSessionToast('Could not share poster');
-            }
-        }, 'image/png');
-
-    } catch (e) {
-        console.error('Aura poster failed:', e);
-        showSessionToast('Could not generate poster');
+    if (typeof generateShareableImage === 'function') {
+        generateShareableImage({
+            teamA: (m.teams[0] || []).join(' & '),
+            teamB: (m.teams[1] || []).join(' & '),
+            title: 'LIVE NOW'
+        }).catch(e => {
+            console.error('Aura poster failed:', e);
+            showSessionToast('Could not generate poster');
+        });
+    } else {
+        console.error('generateShareableImage function not found.');
+        showSessionToast('Share function is unavailable.');
     }
 }
 
@@ -2071,7 +1953,7 @@ async function initApp() {
     }
 
     // Show landing if no data and not in a session
-    if (squad.length === 0 && !isOnlineSession && !urlParams.get('join')) {
+    if (StateStore.squad.length === 0 && !isOnlineSession && !urlParams.get('join')) {
         showLandingPage();
     }
 }

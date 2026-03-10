@@ -11,7 +11,7 @@
 
 /** Finds a player object by name. Returns undefined if not found. */
 function findP(name) {
-    return squad.find(p => p.name === name);
+    return StateStore.squad.find(p => p.name === name);
 }
 
 // ---------------------------------------------------------------------------
@@ -48,12 +48,12 @@ function calculateOdds(teamA, teamB) {
 function _createRoundSnapshot(finishedMatch) {
     finishedMatch.endedAt = Date.now();
     const snapshot = {
-        squadSnapshot: squad.map(p => ({ ...p })),
-        matches:       currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
-        queueSnapshot: [...playerQueue],
+        squadSnapshot: StateStore.squad.map(p => ({ ...p })),
+        matches:       StateStore.currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
+        queueSnapshot: [...StateStore.playerQueue],
         timestamp:     Date.now(),
     };
-    roundHistory.push(snapshot);
+    StateStore.roundHistory.push(snapshot);
     if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
 }
 
@@ -67,7 +67,7 @@ function _processFinishedMatch(match, mIdx) {
     if (window.checkAndAwardAchievements) {
         // Fire and forget: check for achievements in the background
         // without blocking the UI update for the next game.
-        checkAndAwardAchievements(match, squad);
+        checkAndAwardAchievements(match, StateStore.squad);
     }
     if (typeof dispatchWinSignals === 'function') {
         dispatchWinSignals(mIdx, true); // skipBroadcast = true
@@ -80,7 +80,7 @@ function _processFinishedMatch(match, mIdx) {
  * @param {number} mIdx - The index of the court/match being removed.
  */
 function _handleInsufficientPlayersForNextMatch(mIdx) {
-    currentMatches.splice(mIdx, 1);
+    StateStore.currentMatches.splice(mIdx, 1);
     rebuildMatchCardIndices();
     _finalizeCourtResultUpdate();
 }
@@ -92,7 +92,7 @@ function _handleInsufficientPlayersForNextMatch(mIdx) {
  */
 function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     const newMatch = buildMatchFromPlayers(next4);
-    currentMatches[mIdx] = newMatch;
+    StateStore.currentMatches[mIdx] = newMatch;
 
     const tA = newMatch.teams[0].map(n => findP(n)).filter(Boolean);
     const tB = newMatch.teams[1].map(n => findP(n)).filter(Boolean);
@@ -118,7 +118,7 @@ function _finalizeCourtResultUpdate() {
 }
 
 async function processCourtResult(mIdx) {
-    const match = currentMatches[mIdx];
+    const match = StateStore.currentMatches[mIdx];
     if (!match || match.winnerTeamIndex === null) {
         alert('Select a winner first.');
         return;
@@ -128,7 +128,7 @@ async function processCourtResult(mIdx) {
     _processFinishedMatch(match, mIdx);
 
     const onCourtNow = new Set(
-        currentMatches
+        StateStore.currentMatches
             .filter((_, i) => i !== mIdx)
             .flatMap(m => m.teams.flat())
     );
@@ -149,7 +149,7 @@ async function processCourtResult(mIdx) {
 
 function processAndNext() {
     // If courts are already live, this button is disabled — do nothing
-    if (currentMatches.length > 0) return;
+    if (StateStore.currentMatches.length > 0) return;
     generateMatches();
 }
 
@@ -180,7 +180,7 @@ function applyELOForMatch(m) {
 
 // Legacy alias — kept for undo path
 function applyELOResults() {
-    currentMatches.forEach(m => applyELOForMatch(m));
+    StateStore.currentMatches.forEach(m => applyELOForMatch(m));
 }
 
 // ---------------------------------------------------------------------------
@@ -206,17 +206,18 @@ function applyELOResults() {
 // ---------------------------------------------------------------------------
 
 function initQueue() {
-    const activeNames = squad.filter(p => p.active).map(p => p.name);
+    const activeNames = StateStore.squad.filter(p => p.active).map(p => p.name);
 
     // Keep existing queue order for names already in it — only append newcomers
-    const inQueue  = new Set(playerQueue);
+    const inQueue  = new Set(StateStore.playerQueue);
     const newNames = activeNames.filter(n => !inQueue.has(n));
 
     // Remove names no longer in the active squad
-    playerQueue = playerQueue.filter(n => squad.find(p => p.name === n && p.active));
+    const newQueue = StateStore.playerQueue.filter(n => StateStore.squad.find(p => p.name === n && p.active));
 
-    // Append newcomers at the back
-    playerQueue.push(...newNames);
+    // Append newcomers at the back and update the store
+    newQueue.push(...newNames);
+    StateStore.set('playerQueue', newQueue);
 }
 
 // ---------------------------------------------------------------------------
@@ -228,17 +229,19 @@ function initQueue() {
 // Rotate a single court's players back into the queue
 function rotateCourtPlayers(m) {
     const allNames = m.teams.flat();
+    let newQueue = StateStore.playerQueue;
     // Remove from wherever they currently sit
-    playerQueue = playerQueue.filter(n => !allNames.includes(n));
+    newQueue = newQueue.filter(n => !allNames.includes(n));
 
     if (m.winnerTeamIndex === null) {
-        playerQueue.push(...allNames);
-        return;
+        newQueue.push(...allNames);
+    } else {
+        const winIdx  = m.winnerTeamIndex;
+        const loseIdx = winIdx === 0 ? 1 : 0;
+        // Losers back first (shorter wait), winners after (slight rest)
+        newQueue.push(...m.teams[loseIdx], ...m.teams[winIdx]);
     }
-    const winIdx  = m.winnerTeamIndex;
-    const loseIdx = winIdx === 0 ? 1 : 0;
-    // Losers back first (shorter wait), winners after (slight rest)
-    playerQueue.push(...m.teams[loseIdx], ...m.teams[winIdx]);
+    StateStore.set('playerQueue', newQueue);
 }
 
 // ---------------------------------------------------------------------------
@@ -303,11 +306,11 @@ function getCandidatePool(onCourt) {
     const poolSet  = new Set();
     const poolSize = 4 * POOL_FACTOR;
 
-    for (const name of playerQueue) {
+    for (const name of StateStore.playerQueue) {
         if (pool.length >= poolSize) break;
         if (onCourt.has(name)) continue;
         if (poolSet.has(name))  continue;
-        const p = squad.find(s => s.name === name && s.active);
+        const p = StateStore.squad.find(s => s.name === name && s.active);
         if (!p) continue;
         pool.push(p);
         poolSet.add(name);
@@ -333,7 +336,7 @@ function pickBestGroup(pool) {
 // Pull the best 4 from the queue front for one court.
 // onCourt = Set of names already assigned this round (multi-court guard).
 function pullNextFromQueue(onCourt) {
-    if (!onCourt) onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    if (!onCourt) onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
     const pool = getCandidatePool(onCourt);
     return pickBestGroup(pool);
 }
@@ -382,7 +385,7 @@ function buildMatchFromPlayers(p4) {
 function rebuildMatchCardIndices() {
     const container = document.getElementById('matchContainer');
     container.innerHTML = '';
-    currentMatches.forEach((m, i) => {
+    StateStore.currentMatches.forEach((m, i) => {
         const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
         if (tA.length === 2 && tB.length === 2) {
@@ -399,7 +402,7 @@ function rebuildMatchCardIndices() {
 
 // Legacy alias for undo — rotates ALL courts at once
 function rotateQueue() {
-    currentMatches.forEach(m => rotateCourtPlayers(m));
+    StateStore.currentMatches.forEach(m => rotateCourtPlayers(m));
 }
 
 // ---------------------------------------------------------------------------
@@ -417,14 +420,14 @@ function rotateQueue() {
  * @returns {Array<object>|null} The pool of active players, or null if validation fails.
  */
 function _prepareForMatchGeneration() {
-    const activePool = squad.filter(p => p.active);
+    const activePool = StateStore.squad.filter(p => p.active);
     if (activePool.length < 4) {
         alert('Requires at least 4 active players.');
         return null;
     }
 
     initQueue();
-    currentMatches = [];
+    StateStore.set('currentMatches', []);
     document.getElementById('matchContainer').innerHTML = '';
     return activePool;
 }
@@ -436,9 +439,9 @@ function _prepareForMatchGeneration() {
  */
 function _determineCourtCount(activePool) {
     const maxCourts = Math.floor(activePool.length / 4);
-    const courtCount = Math.min(activeCourts, maxCourts);
+    const courtCount = Math.min(StateStore.get('activeCourts'), maxCourts);
 
-    if (activeCourts > maxCourts && typeof showSessionToast === 'function') {
+    if (StateStore.get('activeCourts') > maxCourts && typeof showSessionToast === 'function') {
         showSessionToast(
             `⚠️ Need ${activeCourts * 4} players for ${activeCourts} courts — only ${maxCourts} court${maxCourts !== 1 ? 's' : ''} generated with ${activePool.length} active players`
         );
@@ -461,7 +464,7 @@ function _createMatchesForCourts(courtCount) {
 
         p4.forEach(p => assignedThisRound.add(p.name));
         const match = buildMatchFromPlayers(p4);
-        currentMatches.push(match);
+        StateStore.currentMatches.push(match);
 
         const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
@@ -508,11 +511,11 @@ function renderQueueStrip() {
     }
 
     // Players currently on a court
-    const onCourt = new Set(currentMatches.flatMap(m => m.teams.flat()));
+    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
 
     // Queue: active players not on court, in queue order
-    const waiting = playerQueue
-        .map(name => squad.find(p => p.name === name))
+    const waiting = StateStore.playerQueue
+        .map(name => StateStore.squad.find(p => p.name === name))
         .filter(p => p && p.active && !onCourt.has(p.name));
 
     if (waiting.length === 0) {
@@ -523,7 +526,7 @@ function renderQueueStrip() {
     // Only show NEXT badges when there are genuinely open court slots right now.
     // openSlots = courts that need players = (total spots) - (players already on court)
     // If all courts are busy, openSlots = 0 and nobody gets a badge.
-    const openSlots = Math.max(0, activeCourts * 4 - onCourt.size);
+    const openSlots = Math.max(0, StateStore.get('activeCourts') * 4 - onCourt.size);
 
     strip.style.display = 'block';
     strip.classList.remove('animating');
@@ -623,7 +626,7 @@ function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now()) {
 function setWinner(mIdx, tIdx) {
     const boxes = document.querySelectorAll(`#match-${mIdx} .team-box`);
     boxes.forEach((box, i) => box.classList.toggle('selected', i === tIdx));
-    currentMatches[mIdx].winnerTeamIndex = tIdx;
+    StateStore.currentMatches[mIdx].winnerTeamIndex = tIdx;
 
     Haptic.tap();
 
@@ -660,7 +663,7 @@ let builderSelected  = null;  // { team: 0|1, name: string } — player being sw
  */
 function openTeamBuilder(mIdx) {
     builderMatchIdx = mIdx;
-    builderTeams    = currentMatches[mIdx].teams.map(t => [...t]); // deep copy
+    builderTeams    = StateStore.currentMatches[mIdx].teams.map(t => [...t]); // deep copy
     builderSelected = null;
     renderTeamBuilder();
     document.getElementById('teamBuilderModal').style.display = 'flex';
@@ -678,14 +681,14 @@ function closeTeamBuilder() {
  * Called after every swap or shuffle.
  */
 function renderTeamBuilder() {
-    const m = currentMatches[builderMatchIdx];
+    const m = StateStore.currentMatches[builderMatchIdx];
 
     // All names currently in this game
     const inGame = new Set([...builderTeams[0], ...builderTeams[1]]);
 
     // Sideline = active players NOT in any game at all
-    const allInGames = new Set(currentMatches.flatMap(match => match.teams.flat()));
-    const sideline = squad.filter(p =>
+    const allInGames = new Set(StateStore.currentMatches.flatMap(match => match.teams.flat()));
+    const sideline = StateStore.squad.filter(p =>
         (p.active && !allInGames.has(p.name)) ||
         // also allow swapping players already in THIS game (they're shown in teams, not sideline)
         (p.active && inGame.has(p.name) && !builderTeams[0].includes(p.name) && !builderTeams[1].includes(p.name))
@@ -836,12 +839,12 @@ function confirmTeamBuilder() {
 
     // Update the match in state
     const newOdds = calculateOdds(tAObjs, tBObjs);
-    currentMatches[mIdx].teams = [
+    StateStore.currentMatches[mIdx].teams = [
         builderTeams[0],
         builderTeams[1]
     ];
-    currentMatches[mIdx].odds = newOdds;
-    currentMatches[mIdx].winnerTeamIndex = null; // Reset winner since teams changed
+    StateStore.currentMatches[mIdx].odds = newOdds;
+    StateStore.currentMatches[mIdx].winnerTeamIndex = null; // Reset winner since teams changed
 
     // Re-render just this card by replacing it in the DOM
     const cardEl = document.getElementById(`match-${mIdx}`);
@@ -917,12 +920,14 @@ function handleDragEnd(e) {
 }
 
 function reorderPlayerQueue(srcName, destName) {
-    const srcIdx = playerQueue.indexOf(srcName);
+    const newQueue = [...StateStore.playerQueue];
+    const srcIdx = newQueue.indexOf(srcName);
     if (srcIdx === -1) return;
-    playerQueue.splice(srcIdx, 1);
-    const destIdx = playerQueue.indexOf(destName);
-    if (destIdx !== -1) playerQueue.splice(destIdx, 0, srcName);
-    else playerQueue.push(srcName);
+    newQueue.splice(srcIdx, 1);
+    const destIdx = newQueue.indexOf(destName);
+    if (destIdx !== -1) newQueue.splice(destIdx, 0, srcName);
+    else newQueue.push(srcName);
+    StateStore.set('playerQueue', newQueue);
     
     renderQueueStrip();
     saveToDisk();
