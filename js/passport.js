@@ -26,7 +26,9 @@ const Passport = {
     },
 
     save(data) {
-        try { localStorage.setItem(PASSPORT_KEY, JSON.stringify(data)); } catch { }
+        try {
+            localStorage.setItem(PASSPORT_KEY, JSON.stringify(data));
+        } catch (e) { console.error('[Passport] Failed to save to localStorage:', e); }
     },
 
     init(name = null) {

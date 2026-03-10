@@ -215,8 +215,22 @@ export default async function handler(req, res) {
         // --- ACTION 2: Host dismisses a pending join request ---
         // This deletes a row from `play_requests` using its unique ID.
         // It's called when the host approves or denies a join notification.
-        if (id) {
-            const r = await sbFetch(`/play_requests?id=eq.${id}`, { method: 'DELETE' });
+        if (id && room_code && operator_key) {
+            const code = String(room_code).trim().toUpperCase();
+
+            // Verify operator key
+            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
+            if (!sessionRes.ok || !sessionRes.data?.[0]) {
+                // Don't fail hard, maybe session ended. Just say ok.
+                return res.status(200).json({ ok: true, message: 'Session not found, request likely stale.' });
+            }
+            const opKeyHash = String(operator_key);
+            if (opKeyHash !== sessionRes.data[0].operator_key) {
+                return res.status(403).json({ error: 'Invalid operator key' });
+            }
+
+            // Also filter by room_code for extra security
+            const r = await sbFetch(`/play_requests?id=eq.${id}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
             return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
         }
 

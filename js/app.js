@@ -1687,7 +1687,7 @@ async function denyPlayRequest(id) {
         await fetch('/api/play-request', {
             method:  'DELETE',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ id, room_code: currentRoomCode }),
+            body:    JSON.stringify({ id, room_code: currentRoomCode, operator_key: operatorKey }),
         });
         await pollPlayRequests();
         showPlayRequests();
