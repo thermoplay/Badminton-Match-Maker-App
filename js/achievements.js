@@ -121,13 +121,15 @@ async function unlockAchievement(player_uuid, achievement_id) {
     }
 
     try {
-        await fetch('/api/match-history', {
+        // Use the new, secure endpoint
+        await fetch('/api/achievement-unlock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                type: 'achievement_unlock',
                 player_uuid: player_uuid,
-                achievement_id: achievement_id
+                achievement_id: achievement_id,
+                room_code: window.currentRoomCode,
+                operator_key: window.operatorKey, // operatorKey exposed by sync.js
             })
         });
     } catch (e) {

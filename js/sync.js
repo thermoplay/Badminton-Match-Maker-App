@@ -37,6 +37,7 @@ function _syncState() {
     window.isOnlineSession = isOnlineSession;
     window.isOperator      = isOperator;
     window.currentRoomCode = currentRoomCode;
+    window.operatorKey     = operatorKey;
 }
 
 // session_members realtime state
