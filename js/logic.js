@@ -561,12 +561,16 @@ function renderQueueStrip() {
 
 function renderAllMatchCards(matchData) {
     const container = document.getElementById('matchContainer');
-    // Stagger entrance animation per card
-    const html = matchData.map(({ idx, tA, tB, odds, startedAt }) =>
-        buildMatchCardHTML(idx, tA, tB, odds, startedAt)
-    ).join('');
-    container.innerHTML = html;
-    // Trigger staggered entrance by removing card-entering class per card
+    container.innerHTML = ''; // Clear existing content
+
+    const fragment = document.createDocumentFragment();
+    matchData.forEach(({ idx, tA, tB, odds, startedAt }) => {
+        const cardElement = buildMatchCard(idx, tA, tB, odds, startedAt);
+        fragment.appendChild(cardElement);
+    });
+    container.appendChild(fragment);
+
+    // Trigger staggered entrance animation
     requestAnimationFrame(() => {
         container.querySelectorAll('.card-entering').forEach((el, i) => {
             setTimeout(() => el.classList.remove('card-entering'), i * 80);
@@ -574,37 +578,42 @@ function renderAllMatchCards(matchData) {
     });
 }
 
+// Note: Other functions like _generateAndRenderNextMatchForCourt, rebuildMatchCardIndices, and confirmTeamBuilder
+// should also be updated to use `appendChild` or `replaceWith(buildMatchCard(...))` instead of innerHTML/outerHTML.
 function renderMatchCard(idx, tA, tB, odds) {
     const container = document.getElementById('matchContainer');
-    container.insertAdjacentHTML('beforeend', buildMatchCardHTML(idx, tA, tB, odds));
+    container.appendChild(buildMatchCard(idx, tA, tB, odds));
 }
 
-function buildMatchCardHTML(idx, tA, tB, odds, startedAt = Date.now()) {
-    const hA = odds[0] > odds[1] ? 'highlight' : '';
-    const hB = odds[1] > odds[0] ? 'highlight' : '';
+function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now()) {
+    const template = document.getElementById('matchCardTemplate');
+    if (!template) {
+        console.error('Match Card Template not found in DOM!');
+        return document.createElement('div'); // Return empty div to prevent crash
+    }
 
-    return `
-        <div class="match-card card-entering" id="match-${idx}" data-started="${startedAt}">
-            <div class="match-header">
-                <span class="match-label">Court ${idx + 1}</span>
-                <button class="aura-share-btn" onclick="shareAuraPoster(${idx})" title="Share Aura Poster">✦ Share</button>
-                <button class="edit-teams-btn" onclick="openTeamBuilder(${idx})">✎ Edit</button>
-            </div>
-            <div class="team-box" onclick="setWinner(${idx}, 0)">
-                <b>${escapeHTML(tA[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tA[1].name)}</b>
-            </div>
-            <div class="vs-badge">VS</div>
-            <div class="team-box" onclick="setWinner(${idx}, 1)">
-                <b>${escapeHTML(tB[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tB[1].name)}</b>
-            </div>
-            <div class="court-next-row" id="court-next-${idx}">
-                <span class="court-timer" id="timer-${idx}">0:00</span>
-                <button class="court-next-btn" onclick="processCourtResult(${idx})" disabled>
-                    Next Game →
-                </button>
-            </div>
-        </div>
-    `;
+    const card = template.content.cloneNode(true).firstElementChild;
+
+    card.id = `match-${idx}`;
+    card.dataset.started = startedAt;
+
+    card.querySelector('.match-label').textContent = `Court ${idx + 1}`;
+    card.querySelector('.aura-share-btn').onclick = () => shareAuraPoster(idx);
+    card.querySelector('.edit-teams-btn').onclick = () => openTeamBuilder(idx);
+
+    const teamBoxes = card.querySelectorAll('.team-box');
+    teamBoxes[0].querySelector('b').innerHTML = `${escapeHTML(tA[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tA[1].name)}`;
+    teamBoxes[0].onclick = () => setWinner(idx, 0);
+
+    teamBoxes[1].querySelector('b').innerHTML = `${escapeHTML(tB[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tB[1].name)}`;
+    teamBoxes[1].onclick = () => setWinner(idx, 1);
+
+    const nextRow = card.querySelector('.court-next-row');
+    nextRow.id = `court-next-${idx}`;
+    nextRow.querySelector('.court-timer').id = `timer-${idx}`;
+    nextRow.querySelector('.court-next-btn').onclick = () => processCourtResult(idx);
+
+    return card;
 }
 
 // ---------------------------------------------------------------------------
@@ -849,41 +858,6 @@ function confirmTeamBuilder() {
     if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.success();
 }
-// =============================================================================
-// COURT TIMER ENGINE
-// Updates all visible court timers every second.
-// Reads data-started attribute set on each .match-card at render time.
-// =============================================================================
-
-(function initCourtTimers() {
-    function formatTime(ms) {
-        const totalSecs = Math.floor(ms / 1000);
-        const mins = Math.floor(totalSecs / 60);
-        const secs = totalSecs % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    }
-
-    function tickTimers() {
-        const now = Date.now();
-        document.querySelectorAll('.match-card[data-started]').forEach(card => {
-            const started = parseInt(card.dataset.started, 10);
-            if (!started) return;
-            const elapsed = now - started;
-            const timerEl = card.querySelector('.court-timer');
-            if (!timerEl) return;
-
-            timerEl.textContent = formatTime(elapsed);
-
-            // Turn amber after 10 mins, red after 15 mins
-            timerEl.classList.toggle('timer-warn',  elapsed > 10 * 60 * 1000);
-            timerEl.classList.toggle('timer-alert', elapsed > 15 * 60 * 1000);
-        });
-    }
-
-    // Start ticking immediately and then every second
-    tickTimers();
-    setInterval(tickTimers, 1000);
-})();
 
 // ---------------------------------------------------------------------------
 // QUEUE DRAG & DROP

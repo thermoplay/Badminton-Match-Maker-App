@@ -26,6 +26,30 @@ const Passport = {
     },
 
     save(data) {
+// buildMatchCardHTML
+return `
+    ...
+    <div class="team-box" onclick="setWinner(${idx}, 0)">...</div>
+    ...
+`;
+// In your initApp() or similar
+document.getElementById('matchContainer').addEventListener('click', (event) => {
+    const teamBox = event.target.closest('.team-box');
+    if (teamBox) {
+        const matchCard = event.target.closest('.match-card');
+        const matchIndex = parseInt(matchCard.id.split('-')[1], 10);
+        const teamIndex = Array.from(matchCard.querySelectorAll('.team-box')).indexOf(teamBox);
+        setWinner(matchIndex, teamIndex);
+    }
+    // ... handle other clicks like .edit-teams-btn here
+});
+
+// And in buildMatchCardHTML, you would remove the onclick
+return `
+    ...
+    <div class="team-box">...</div>
+    ...
+`;
         try {
             localStorage.setItem(PASSPORT_KEY, JSON.stringify(data));
         } catch (e) { console.error('[Passport] Failed to save to localStorage:', e); }
@@ -176,30 +200,6 @@ const SidelineView = {
                     </button>` : ''}
                 </div>`;
         }).join('');
-
-        // Start live timer ticks
-        this._tickMatchTimers();
-    },
-
-    _tickMatchTimers() {
-        if (this._timerInterval) clearInterval(this._timerInterval);
-        const container = document.getElementById('slCurrentMatches');
-        if (!container) return;
-        this._timerInterval = setInterval(() => {
-            const matches = window.currentMatches || [];
-            matches.forEach((m, i) => {
-                if (!m.startedAt) return;
-                const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
-                const mins = Math.floor(elapsed / 60);
-                const secs = elapsed % 60;
-                const el = container.querySelector(`.sl-match-card:nth-child(${i + 1}) .sl-court-timer`);
-                if (el) {
-                    el.textContent = `⏱ ${mins}:${String(secs).padStart(2, '0')}`;
-                    el.classList.toggle('sl-timer-warn',  elapsed > 10 * 60);
-                    el.classList.toggle('sl-timer-alert', elapsed > 15 * 60);
-                }
-            });
-        }, 1000);
     },
 
     _renderNextUp() {
