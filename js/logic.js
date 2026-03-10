@@ -98,12 +98,10 @@ function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     const tB = newMatch.teams[1].map(n => findP(n)).filter(Boolean);
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
-        cardEl.outerHTML = buildMatchCardHTML(mIdx, tA, tB, newMatch.odds, newMatch.startedAt);
-        const newCardEl = document.getElementById(`match-${mIdx}`);
-        if (newCardEl) {
-            newCardEl.classList.add('card-replace');
-            newCardEl.classList.remove('card-entering');
-        }
+        const newCardEl = buildMatchCard(mIdx, tA, tB, newMatch.odds, newMatch.startedAt);
+        newCardEl.classList.add('card-replace');
+        newCardEl.classList.remove('card-entering');
+        cardEl.replaceWith(newCardEl);
     }
 }
 
@@ -388,9 +386,11 @@ function rebuildMatchCardIndices() {
         const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
         if (tA.length === 2 && tB.length === 2) {
-            container.insertAdjacentHTML('beforeend', buildMatchCardHTML(i, tA, tB, m.odds, m.startedAt));
+            const cardEl = buildMatchCard(i, tA, tB, m.odds, m.startedAt);
+            cardEl.classList.remove('card-entering'); // No animation on rebuild
+            container.appendChild(cardEl);
             if (m.winnerTeamIndex !== null) {
-                const boxes = document.querySelectorAll(`#match-${i} .team-box`);
+                const boxes = cardEl.querySelectorAll('.team-box');
                 if (boxes[m.winnerTeamIndex]) boxes[m.winnerTeamIndex].classList.add('selected');
             }
         }
@@ -846,7 +846,8 @@ function confirmTeamBuilder() {
     // Re-render just this card by replacing it in the DOM
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
-        cardEl.outerHTML = buildMatchCardHTML(mIdx, tAObjs, tBObjs, newOdds);
+        const newCardEl = buildMatchCard(mIdx, tAObjs, tBObjs, newOdds);
+        cardEl.replaceWith(newCardEl);
     }
 
     closeTeamBuilder();
