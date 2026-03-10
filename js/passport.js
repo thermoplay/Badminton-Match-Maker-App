@@ -26,30 +26,6 @@ const Passport = {
     },
 
     save(data) {
-// buildMatchCardHTML
-return `
-    ...
-    <div class="team-box" onclick="setWinner(${idx}, 0)">...</div>
-    ...
-`;
-// In your initApp() or similar
-document.getElementById('matchContainer').addEventListener('click', (event) => {
-    const teamBox = event.target.closest('.team-box');
-    if (teamBox) {
-        const matchCard = event.target.closest('.match-card');
-        const matchIndex = parseInt(matchCard.id.split('-')[1], 10);
-        const teamIndex = Array.from(matchCard.querySelectorAll('.team-box')).indexOf(teamBox);
-        setWinner(matchIndex, teamIndex);
-    }
-    // ... handle other clicks like .edit-teams-btn here
-});
-
-// And in buildMatchCardHTML, you would remove the onclick
-return `
-    ...
-    <div class="team-box">...</div>
-    ...
-`;
         try {
             localStorage.setItem(PASSPORT_KEY, JSON.stringify(data));
         } catch (e) { console.error('[Passport] Failed to save to localStorage:', e); }
