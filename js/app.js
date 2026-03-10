@@ -1363,7 +1363,8 @@ function checkIWTPSmartRecognition() {
 
     const savedName = localStorage.getItem('cs_spectator_name');
     if (savedName) {
-        const match = squad.find(p => p.name.toLowerCase() === savedName.toLowerCase());
+        // Use window.squad for player-side logic, as StateStore is for the host.
+        const match = (window.squad || []).find(p => p.name.toLowerCase() === savedName.toLowerCase());
         if (match) { confirmSpectateAs(match.name); return; }
     }
     showIWTPChoice();

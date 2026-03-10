@@ -109,8 +109,8 @@ async function unlockAchievement(player_uuid, achievement_id) {
     if (!player_uuid) return;
 
     // 1. Update local state
-    if (typeof squad !== 'undefined') {
-        const p = squad.find(p => p.uuid === player_uuid);
+    if (typeof StateStore !== 'undefined') {
+        const p = StateStore.squad.find(p => p.uuid === player_uuid);
         if (p) {
             if (!p.achievements) p.achievements = [];
             if (!p.achievements.includes(achievement_id)) {
