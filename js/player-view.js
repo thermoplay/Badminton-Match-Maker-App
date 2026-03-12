@@ -117,7 +117,7 @@ const SidelineView = {
         const el    = document.getElementById('slNextUp');
         const rowEl = document.getElementById('slNextUpRow');
         if (!el || !rowEl) return;
-        const text = window._lastNextUp || (document.getElementById('nextUpNames')?.textContent?.trim() || '');
+        const text = window._lastNextUp || '';
         if (!text) { rowEl.style.display = 'none'; return; }
 
         // Parse names and render with avatars if Avatar is available

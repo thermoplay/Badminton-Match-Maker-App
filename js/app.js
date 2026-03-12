@@ -699,7 +699,7 @@ function closeOverlay() {
 
 function generateQR() {
     // Fix: Use unicode-safe encoding so emojis don't crash btoa
-    const json  = JSON.stringify({ squad, currentMatches });
+    const json  = JSON.stringify({ squad: StateStore.squad, currentMatches: StateStore.currentMatches });
     const token = window.btoa(unescape(encodeURIComponent(json)));
     if (token.length > 2500) {
         alert('Data is too large for a QR code. Please use the "Copy Sync Token" button instead.');
@@ -1090,7 +1090,7 @@ function getPlayerTitle(p) {
 }
 
 async function openPlayerCard(idx) {
-    const p  = squad[idx];
+    const p  = StateStore.squad[idx];
     if (!p) return;
 
     const { title, icon } = getPlayerTitle(p);
@@ -1694,7 +1694,7 @@ async function handlePassportSignal(signal, passport) {
  */
 async function dispatchWinSignals(mIdx, skipBroadcast = false) {
     if (!isOperator || !currentRoomCode) return;
-    const m = currentMatches[mIdx];
+    const m = StateStore.currentMatches[mIdx];
     if (!m || m.winnerTeamIndex === null) return;
 
     const winIdx  = m.winnerTeamIndex;

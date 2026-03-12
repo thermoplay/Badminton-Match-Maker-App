@@ -35,50 +35,51 @@ const Achievements = {
  * @param {Array} squad - The global squad array.
  */
 async function checkAndAwardAchievements(match, squad) {
-    if (match.winnerTeamIndex === null) return;
+    if (match.winnerTeamIndex === null || !squad) return;
 
     const winIdx = match.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
     const winnerNames = match.teams[winIdx];
-    
+
     const findP = (name) => squad.find(p => p.name === name);
     const winners = winnerNames.map(findP).filter(Boolean);
     const allPlayersInMatch = match.teams.flat().map(findP).filter(Boolean);
 
-    await Promise.all(allPlayersInMatch.map(async (player) => {
-           if (!player.uuid) return; // Cannot save achievements for players without a UUID (from passport)
+    // This loop can now be synchronous as we are not fetching from the DB on every check.
+    // Historical achievements are loaded into the player object when they join the session.
+    for (const player of allPlayersInMatch) {
+        if (!player.uuid) continue; // Cannot save achievements for players without a UUID.
 
-        const existingAchievements = await fetchPlayerAchievements(player.uuid);
-        const existingIds = new Set(existingAchievements.map(a => a.achievement_id));
+        const unlocked = new Set(player.achievements || []);
 
         // --- CHECK WINNER-ONLY ACHIEVEMENTS ---
         if (winners.includes(player)) {
             // Check for 'first_win'
-            if (!existingIds.has('first_win') && player.wins === 1) {
+            if (!unlocked.has('first_win') && player.wins === 1) {
                 unlockAchievement(player.uuid, 'first_win');
                 showAchievementToast(player.name, Achievements.first_win);
             }
             // Check for 'streak_3'
-            if (!existingIds.has('streak_3') && player.streak === 3) {
+            if (!unlocked.has('streak_3') && player.streak === 3) {
                 unlockAchievement(player.uuid, 'streak_3');
                 showAchievementToast(player.name, Achievements.streak_3);
             }
             // Check for 'underdog'
             const winnerTeamRating = match.teams[winIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
             const loserTeamRating = match.teams[loseIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
-            if (!existingIds.has('underdog') && winnerTeamRating < loserTeamRating) {
+            if (!unlocked.has('underdog') && winnerTeamRating < loserTeamRating) {
                 unlockAchievement(player.uuid, 'underdog');
                 showAchievementToast(player.name, Achievements.underdog);
             }
         }
-        
+
         // --- CHECK PARTICIPATION ACHIEVEMENTS ---
         // Check for 'iron_man'
-        if (!existingIds.has('iron_man') && player.sessionPlayCount === 5) {
+        if (!unlocked.has('iron_man') && player.sessionPlayCount === 5) {
             unlockAchievement(player.uuid, 'iron_man');
             showAchievementToast(player.name, Achievements.iron_man);
         }
-    }));
+    }
 }
 
 /**
