@@ -21,7 +21,12 @@ const SidelineView = {
     show() {
         this._visible = true;
         const panel = document.getElementById('sidelinePanel');
-        if (panel) { panel.style.display = 'flex'; this.refresh(); }
+        if (panel) { 
+            panel.style.display = 'flex';
+            panel.style.flexDirection = 'column'; 
+            this._initPullToRefresh();
+            this.refresh(); 
+        }
     },
 
     hide() {
@@ -211,6 +216,102 @@ const SidelineView = {
             actionsEl.appendChild(supportSection);
             profileView.appendChild(actionsEl);
         }
+    },
+
+    _initPullToRefresh() {
+        const panel = document.getElementById('sidelinePanel');
+        if (!panel || panel._ptrInit) return;
+        panel._ptrInit = true;
+
+        const indicator = document.createElement('div');
+        indicator.className = 'sl-ptr-indicator';
+        indicator.innerHTML = '<div class="sl-ptr-icon">⇣</div>';
+        panel.insertBefore(indicator, panel.firstChild);
+
+        let startY = 0;
+        let isPulling = false;
+        let hasVibrated = false;
+        const THRESHOLD = 80;
+
+        const reset = () => {
+            isPulling = false;
+            indicator.style.transition = 'height 0.3s cubic-bezier(0.22, 1, 0.36, 1)';
+            indicator.style.height = '0px';
+            setTimeout(() => {
+                indicator.style.transition = '';
+                indicator.innerHTML = '<div class="sl-ptr-icon">⇣</div>';
+            }, 300);
+        };
+
+        panel.addEventListener('touchstart', (e) => {
+            if (panel.scrollTop <= 0) {
+                startY = e.touches[0].clientY;
+                hasVibrated = false;
+            }
+        }, { passive: true });
+
+        panel.addEventListener('touchmove', (e) => {
+            const y = e.touches[0].clientY;
+            const delta = y - startY;
+
+            if (panel.scrollTop <= 0 && delta > 0) {
+                isPulling = true;
+                // Resistance curve
+                const pullHeight = Math.min(delta * 0.4, 140); 
+                
+                if (e.cancelable) e.preventDefault();
+
+                indicator.style.height = `${pullHeight}px`;
+                
+                if (pullHeight > THRESHOLD && !hasVibrated) {
+                    if (window.Haptic) Haptic.tap();
+                    hasVibrated = true;
+                } else if (pullHeight < THRESHOLD && hasVibrated) {
+                    hasVibrated = false;
+                }
+
+                const icon = indicator.querySelector('.sl-ptr-icon');
+                if (icon) {
+                    icon.style.transform = pullHeight > THRESHOLD ? 'rotate(180deg)' : 'rotate(0deg)';
+                    icon.style.opacity = Math.min(pullHeight / 40, 1);
+                }
+            } else {
+                isPulling = false;
+            }
+        }, { passive: false });
+
+        panel.addEventListener('touchend', async () => {
+            if (!isPulling) return;
+            const currentHeight = parseInt(indicator.style.height || '0', 10);
+
+            if (currentHeight > THRESHOLD) {
+                indicator.style.transition = 'height 0.2s ease';
+                indicator.style.height = '50px';
+                indicator.innerHTML = '<div class="sl-ptr-spinner"></div>';
+                
+                if (window.Haptic) Haptic.tap();
+                await this._performRefresh();
+                if (window.Haptic) Haptic.success();
+                
+                reset();
+            } else {
+                reset();
+            }
+        });
+    },
+
+    async _performRefresh() {
+        const code = window.currentRoomCode || localStorage.getItem('cs_player_room_code');
+        if (!code) return;
+        try {
+            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.session && typeof applyRemoteState === 'function') {
+                    applyRemoteState(data.session);
+                }
+            }
+        } catch (e) { console.error('Refresh failed', e); }
     },
 };
 
