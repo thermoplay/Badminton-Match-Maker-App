@@ -1380,6 +1380,7 @@ function checkIWTPSmartRecognition() {
 }
 
 let _lastSeenRequestIds = new Set();
+let _pollingInterval = null;
 
 async function pollPlayRequests() {
     if (!isOnlineSession || !isOperator || !currentRoomCode) return;
@@ -1599,9 +1600,20 @@ async function denyPlayRequest(id) {
     } catch { /* silent */ }
 }
 
+// Called by sync.js when a Realtime INSERT event occurs on play_requests table
+window.onPlayRequestInsert = function(record) {
+    if (!record) return;
+    if (!_lastSeenRequestIds.has(record.id)) {
+        _lastSeenRequestIds.add(record.id);
+        showJoinNotification(record.name, record.id, record.player_uuid || null);
+    }
+    pollPlayRequests(); // Fetch full list to ensure badge count is accurate
+};
+
 const _startPolling = () => {
+    if (_pollingInterval) clearInterval(_pollingInterval);
     pollPlayRequests();
-    setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
+    _pollingInterval = setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
 };
 window._startPolling = _startPolling;
 

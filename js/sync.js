@@ -561,6 +561,27 @@ function subscribeRealtime(roomCode) {
             },
             ref: '3',
         }));
+
+        // Channel 4: play_requests INSERTs — Instant Host Notification
+        if (isOperator) {
+            ws.send(JSON.stringify({
+                topic: `realtime:public:play_requests`,
+                event: 'phx_join',
+                payload: {
+                    config: {
+                        broadcast: { self: false },
+                        presence: { key: '' },
+                        postgres_changes: [{
+                            event: 'INSERT',
+                            schema: 'public',
+                            table: 'play_requests',
+                            filter: `room_code=eq.${roomCode}`,
+                        }],
+                    },
+                },
+                ref: '4',
+            }));
+        }
     };
 
     ws.onmessage = (msg) => {
@@ -582,6 +603,13 @@ function subscribeRealtime(roomCode) {
                     // session_members change — ALL subscribers handle this
                     if (type === 'DELETE' && old) _handleMemberChange(old, null, type);
                     else if (record) _handleMemberChange(record, old, type);
+                    return;
+                }
+
+                if (table === 'play_requests' || data.payload?.data?.table === 'play_requests') {
+                    if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
+                        window.onPlayRequestInsert(record);
+                    }
                     return;
                 }
 
