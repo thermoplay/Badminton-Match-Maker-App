@@ -167,9 +167,73 @@ const SidelineView = {
              avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
              if (window.Avatar) avatarEl.style.background = Avatar.color(passport.playerName);
         }
-        if (statsEl && me) {
-             const wr = me.games > 0 ? Math.round((me.wins / me.games) * 100) : 0;
-             statsEl.textContent = `${me.wins} Wins · ${me.games} Games · ${wr}% WR`;
+        
+        // Hide legacy text stats if present
+        if (statsEl) statsEl.style.display = 'none';
+
+        // Render Stats Deck (Session + Career)
+        const profileView = document.getElementById('slViewProfile');
+        let deck = document.getElementById('slStatsDeck');
+        
+        if (!deck && profileView) {
+            deck = document.createElement('div');
+            deck.id = 'slStatsDeck';
+            // Insert before achievements container
+            const ach = document.getElementById('slProfileAchievements');
+            if (ach) profileView.insertBefore(deck, ach);
+            else profileView.appendChild(deck);
+        }
+
+        if (deck) {
+            const career = passport.stats || { wins: 0, games: 0 };
+            const cWr = career.games > 0 ? Math.round((career.wins / career.games) * 100) : 0;
+            
+            let sWins = 0, sGames = 0, sWr = 0;
+            if (me) {
+                sWins = me.wins;
+                sGames = me.games;
+                sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
+            }
+
+            deck.innerHTML = `
+                <div class="sl-stats-deck">
+                    <div class="sl-stat-card ${!me ? 'inactive' : ''}">
+                        <div class="sl-card-label">CURRENT SESSION</div>
+                        ${me ? `
+                        <div class="sl-card-grid">
+                            <div class="sl-card-item">
+                                <div class="sl-card-val">${sWins}</div>
+                                <div class="sl-card-key">WINS</div>
+                            </div>
+                            <div class="sl-card-item">
+                                <div class="sl-card-val">${sGames}</div>
+                                <div class="sl-card-key">GAMES</div>
+                            </div>
+                            <div class="sl-card-item">
+                                <div class="sl-card-val">${sWr}%</div>
+                                <div class="sl-card-key">WIN RATE</div>
+                            </div>
+                        </div>` : `<div class="sl-card-empty">Not in a session</div>`}
+                    </div>
+
+                    <div class="sl-stat-card">
+                        <div class="sl-card-label">CAREER RECORD</div>
+                        <div class="sl-card-grid">
+                            <div class="sl-card-item">
+                                <div class="sl-card-val">${career.wins}</div>
+                                <div class="sl-card-key">WINS</div>
+                            </div>
+                            <div class="sl-card-item">
+                                <div class="sl-card-val">${career.games}</div>
+                                <div class="sl-card-key">GAMES</div>
+                            </div>
+                            <div class="sl-card-item">
+                                <div class="sl-card-val">${cWr}%</div>
+                                <div class="sl-card-key">WIN RATE</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
         }
 
         // Render Achievements List
@@ -501,13 +565,16 @@ const PlayerMode = {
             return;
         }
 
-        // Self-healing: If DB says we're 'active' (stale state), force a new join request.
+        // Seamless Reconnect: If DB says we're 'active', we are already in the session.
+        // Just sync up and enter. Don't force a new request.
         if (upsertResult.status === 'active') {
-            await this._submitJoinRequest(Passport.get(), joinCode, {
-                force: true,
-                statusMessage: 'Re-syncing with host...',
-                statusSubMessage: 'Your status was out of sync. Sending a new request.'
-            });
+            this._markApprovedInSession(joinCode);
+            this._hydrateFromUpsert(upsertResult);
+            this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, "Syncing with court...");
+            SidelineView.show();
+            // Hydrate the view immediately with session data
+            await SidelineView._performRefresh(); 
+            setTimeout(() => this._updateStatus(Passport.get()), 500);
             return;
         }
 
@@ -776,6 +843,11 @@ const PlayerMode = {
 
         if (wasInMatch && window.Haptic) {
             isWinner ? Haptic.success() : Haptic.bump();
+        }
+
+        // Record to permanent Passport history (Career Stats)
+        if (wasInMatch && typeof Passport.recordGame === 'function') {
+            Passport.recordGame(isWinner);
         }
 
         // Celebration confetti for the winner

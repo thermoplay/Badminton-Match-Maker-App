@@ -5097,6 +5097,78 @@ button:active,
 }
 
 /* =============================================================================
+   PASSPORT STATS DECK
+   ============================================================================= */
+.sl-stats-deck {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.sl-stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    animation: cardDrop 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.sl-stat-card.inactive {
+    opacity: 0.6;
+    background: var(--bg2);
+}
+
+.sl-card-label {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.sl-card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    text-align: center;
+}
+
+.sl-card-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sl-card-val {
+    font-family: var(--font-display);
+    font-size: 1.4rem;
+    font-weight: 900;
+    font-style: italic;
+    color: var(--text);
+    line-height: 1;
+}
+
+.sl-card-key {
+    font-size: 0.55rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+}
+
+.sl-card-empty {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    padding: 10px 0;
+    font-style: italic;
+}
+
+/* =============================================================================
    PULL TO REFRESH
    ============================================================================= */
 .sl-ptr-indicator {

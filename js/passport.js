@@ -33,7 +33,7 @@ const Passport = {
 
     init(name = null) {
         let p = this.get();
-        if (!p) {
+        if (!p || !p.playerUUID) {
             p = {
                 playerUUID: this._uuid(),
                 playerName: name || '',
@@ -41,6 +41,13 @@ const Passport = {
             };
             this.save(p);
         }
+        
+        // Migration: Ensure stats object exists for returning users
+        if (!p.stats) {
+            p.stats = { wins: 0, games: 0 };
+            this.save(p);
+        }
+
         return p;
     },
 
@@ -57,6 +64,15 @@ const Passport = {
         p.playerName = newName.trim();
         this.save(p);
         return p;
+    },
+
+    recordGame(isWin) {
+        const p = this.get();
+        if (!p) return;
+        if (!p.stats) p.stats = { wins: 0, games: 0 };
+        p.stats.games++;
+        if (isWin) p.stats.wins++;
+        this.save(p);
     },
 
     _uuid() {
