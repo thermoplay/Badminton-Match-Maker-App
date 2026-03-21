@@ -676,6 +676,11 @@ const PlayerMode = {
         if (wasInMatch && window.Haptic) {
             isWinner ? Haptic.success() : Haptic.bump();
         }
+
+        // Celebration confetti for the winner
+        if (isWinner && typeof Confetti !== 'undefined') {
+            Confetti.burst(window.innerWidth / 2, window.innerHeight * 0.4);
+        }
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -708,6 +713,21 @@ const PlayerMode = {
         const nextUpRaw = window._lastNextUp || '';
         const isNextUp  = myName && nextUpRaw.toLowerCase().includes(myName.toLowerCase());
 
+        // If playing, find specific court and partner details
+        let courtInfo = null;
+        if (playing) {
+            matches.forEach((m, idx) => {
+                const teamA = m.teams[0] || [];
+                const teamB = m.teams[1] || [];
+                const all = [...teamA, ...teamB];
+                if (all.some(n => n.toLowerCase() === myName.toLowerCase())) {
+                    const myTeam = teamA.some(n => n.toLowerCase() === myName.toLowerCase()) ? teamA : teamB;
+                    const partner = myTeam.find(n => n.toLowerCase() !== myName.toLowerCase());
+                    courtInfo = { num: idx + 1, partner };
+                }
+            });
+        }
+
         // Determine new status key before setting UI
         let newStatus = null;
         if (playing)                   newStatus = 'playing';
@@ -718,7 +738,7 @@ const PlayerMode = {
         // Fire haptic + banner ONLY on transition INTO 'playing'
         if (newStatus === 'playing' && this._prevStatus !== 'playing') {
             if (window.Haptic) Haptic.success();
-            _showYoureUpBanner();
+            _showYoureUpBanner(courtInfo?.num, courtInfo?.partner);
         }
 
         // Fire haptic ONLY on transition INTO 'on-deck'
@@ -732,7 +752,10 @@ const PlayerMode = {
         _renderPlayCount(passport.playerName);
 
         if (playing) {
-            this.setStatus('playing', "You're on court!", 'Give it everything 🏀');
+            const subText = courtInfo 
+                ? `Court ${courtInfo.num} ${courtInfo.partner ? '• w/ ' + courtInfo.partner : ''}`
+                : 'Give it everything 🏀';
+            this.setStatus('playing', "You're on court!", subText);
         } else if (isNextUp) {
             this.setStatus('on-deck', "You're on deck!", "Get ready — you're up next 🟡");
         } else if (inSquad && qPos >= 0) {
@@ -1005,7 +1028,7 @@ const PlayerMode = {
 // "YOU'RE UP!" BANNER — fires once on transition into playing state
 // =============================================================================
 
-function _showYoureUpBanner() {
+function _showYoureUpBanner(courtNum, partnerName) {
     // Remove any existing banner first
     document.getElementById('_csYoureUpBanner')?.remove();
 
@@ -1016,7 +1039,7 @@ function _showYoureUpBanner() {
         top:             '0',
         left:            '0',
         right:           '0',
-        zIndex:          '10000',
+        zIndex:          '99999',
         background:      'linear-gradient(135deg, #00ffa3, #00cc80)',
         color:           '#0a0a0f',
         fontFamily:      '"Inter", sans-serif',
@@ -1027,12 +1050,15 @@ function _showYoureUpBanner() {
         padding:         '18px 24px 16px',
         boxShadow:       '0 4px 24px rgba(0,255,163,0.5)',
         transform:       'translateY(-100%)',
-        transition:      'transform 0.35s cubic-bezier(0.22,1,0.36,1)',
+        transition:      'transform 0.4s cubic-bezier(0.22,1,0.36,1)',
         borderRadius:    '0 0 16px 16px',
     });
+    
+    const safePartner = partnerName ? (typeof escapeHTML === 'function' ? escapeHTML(partnerName) : partnerName) : '';
     banner.innerHTML = `
-        <div style="font-size:1.5rem;margin-bottom:4px;">🏀</div>
-        <div>YOU'RE UP — GET ON COURT!</div>
+        <div style="font-size:0.75rem; font-weight:900; letter-spacing:1px; opacity:0.8; margin-bottom:4px;">YOU'RE UP</div>
+        <div style="font-size:1.8rem; font-weight:900; line-height:1; margin-bottom:4px; font-style:italic;">COURT ${courtNum || '?'}</div>
+        ${safePartner ? `<div style="font-size:0.9rem; font-weight:600;">with ${safePartner}</div>` : ''}
     `;
     document.body.appendChild(banner);
 
@@ -1042,13 +1068,14 @@ function _showYoureUpBanner() {
     });
 
     // Slide out after 4s
-    setTimeout(() => {
+    const timer = setTimeout(() => {
         banner.style.transform = 'translateY(-100%)';
         setTimeout(() => banner.remove(), 400);
-    }, 4000);
+    }, 5000);
 
     // Tap to dismiss
     banner.addEventListener('click', () => {
+        clearTimeout(timer);
         banner.style.transform = 'translateY(-100%)';
         setTimeout(() => banner.remove(), 400);
     });
