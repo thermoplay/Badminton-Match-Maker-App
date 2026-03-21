@@ -22,100 +22,41 @@ const Haptic = {
 
 // ---------------------------------------------------------------------------
 // CONFETTI BURST
-// Pure canvas-based — no libraries. Fires from the winning team-box position.
+// Lazy-loaded wrapper for canvas-confetti (loaded from CDN on first use).
 // ---------------------------------------------------------------------------
 
-const Confetti = (() => {
-    let canvas, ctx, particles = [], raf;
-
-    const COLORS = ['#00ffa3', '#ffffff', '#00cc80', '#a0ffd6', '#00ffa344'];
-
-    function init() {
-        if (canvas) return;
-        canvas = document.createElement('canvas');
-        canvas.id = 'confettiCanvas';
-        Object.assign(canvas.style, {
-            position:       'fixed',
-            inset:          '0',
-            width:          '100%',
-            height:         '100%',
-            pointerEvents:  'none',
-            zIndex:         '9999',
-        });
-        document.body.appendChild(canvas);
-        ctx = canvas.getContext('2d');
-        resize();
-        window.addEventListener('resize', resize);
-    }
-
-    function resize() {
-        if (!canvas) return;
-        canvas.width  = window.innerWidth;
-        canvas.height = window.innerHeight;
-    }
-
-    /**
-     * Spawns a burst of confetti from a given origin point.
-     * @param {number} originX - X coordinate (pixels from left)
-     * @param {number} originY - Y coordinate (pixels from top)
-     * @param {number} count   - Number of particles (default 60)
-     */
-    function burst(originX, originY, count = 70) {
-        init();
-        for (let i = 0; i < count; i++) {
-            const angle  = (Math.random() * Math.PI * 2);
-            const speed  = 1.5 + Math.random() * 4.5;   // slower launch speed
-            const size   = 5 + Math.random() * 7;
-            // Mix rectangles and squares for variety
-            const isSquare = Math.random() > 0.6;
-            particles.push({
-                x:      originX,
-                y:      originY,
-                vx:     Math.cos(angle) * speed,
-                vy:     Math.sin(angle) * speed - 3.5, // gentler upward bias
-                rot:    Math.random() * 360,
-                rotV:   (Math.random() - 0.5) * 5,     // slower spin
-                w:      size,
-                h:      isSquare ? size : size * 0.38,
-                color:  COLORS[Math.floor(Math.random() * COLORS.length)],
-                life:   1,
-                decay:  0.006 + Math.random() * 0.006, // much slower decay = longer life
-            });
+const Confetti = {
+    async burst(x, y, count = 70) {
+        if (!window.confetti) {
+            try {
+                await new Promise((resolve, reject) => {
+                    const s = document.createElement('script');
+                    s.src = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js';
+                    s.onload = resolve;
+                    s.onerror = reject;
+                    document.head.appendChild(s);
+                });
+            } catch (e) {
+                console.warn('Confetti failed to load', e);
+                return;
+            }
         }
-        if (!raf) loop();
-    }
 
-    function loop() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        particles = particles.filter(p => p.life > 0);
+        if (!window.confetti) return;
 
-        particles.forEach(p => {
-            p.x   += p.vx;
-            p.y   += p.vy;
-            p.vy  += 0.12;   // gentler gravity — floats longer
-            p.vx  *= 0.99;   // very light air resistance
-            p.rot += p.rotV;
-            p.life -= p.decay;
+        // Convert absolute screen coords to 0-1 for library
+        const originX = x / window.innerWidth;
+        const originY = y / window.innerHeight;
 
-            ctx.save();
-            ctx.globalAlpha = Math.max(0, p.life);
-            ctx.translate(p.x, p.y);
-            ctx.rotate((p.rot * Math.PI) / 180);
-            ctx.fillStyle = p.color;
-            ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-            ctx.restore();
+        window.confetti({
+            particleCount: count,
+            origin: { x: originX, y: originY },
+            colors: ['#00ffa3', '#ffffff', '#00cc80', '#a0ffd6'],
+            disableForReducedMotion: true,
+            zIndex: 9999,
         });
-
-        if (particles.length > 0) {
-            raf = requestAnimationFrame(loop);
-        } else {
-            raf = null;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }
     }
-
-    return { burst };
-})();
+};
 
 // ---------------------------------------------------------------------------
 // AVATAR COLOR GENERATOR

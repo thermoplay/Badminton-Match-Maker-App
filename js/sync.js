@@ -142,6 +142,11 @@ async function joinOnlineSession(roomCode) {
         }
         // session-get returns { ok, session: {...} }
         const session = result.data?.session || result.data;
+        
+        if (!session) {
+            throw new Error('Invalid session data received from server.');
+        }
+
         const savedCode  = localStorage.getItem('cs_room_code');
         const savedOpKey = localStorage.getItem('cs_operator_key');
         const savedHash  = localStorage.getItem('cs_op_key_hash');

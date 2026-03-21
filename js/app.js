@@ -19,16 +19,21 @@ let isLongPress = false;
 // ---------------------------------------------------------------------------
 
 function saveToDisk() {
-    // Cap roundHistory to last 10 entries — enough for undo, keeps localStorage lean
-    const historySlice = StateStore.roundHistory.slice(-10);
-    const stateToSave = {
-        squad: StateStore.squad,
-        currentMatches: StateStore.currentMatches,
-        roundHistory: historySlice,
-        playerQueue: StateStore.playerQueue,
-        activeCourts: StateStore.get('activeCourts'),
-    };
-    localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
+    try {
+        // Cap roundHistory to last 10 entries — enough for undo, keeps localStorage lean
+        const historySlice = StateStore.roundHistory.slice(-10);
+        const stateToSave = {
+            squad: StateStore.squad,
+            currentMatches: StateStore.currentMatches,
+            roundHistory: historySlice,
+            playerQueue: StateStore.playerQueue,
+            activeCourts: StateStore.get('activeCourts'),
+        };
+        localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
+    } catch (e) {
+        console.warn('CourtSide: Failed to save to disk. Storage might be full.', e);
+        if (typeof showSessionToast === 'function') showSessionToast('⚠️ Storage warning: Data not saved locally.');
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -995,8 +1000,6 @@ function renderStatsTab(tab) {
                 onclick="renderStatsTab('performance')">Performance</button>
             <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
                 onclick="renderStatsTab('history')">History</button>
-            <button class="stats-tab"
-                onclick="renderLeaderboardTab()">Leaderboard</button>
         </div>
     `;
 
@@ -1038,8 +1041,17 @@ function renderStatsTab(tab) {
 
         const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
             const roundNum = StateStore.roundHistory.length - i;
-            const games = round.matches.map((m, gi) => {
+            
+            let timeHtml = '';
+            if (round.timestamp) {
+                const t = new Date(round.timestamp);
+                const timeStr = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                timeHtml = `<div style="font-size:0.65rem; color:var(--text-muted); margin-left:auto;">${timeStr}</div>`;
+            }
+
+            const games = (round.matches || []).map((m, gi) => {
                 const winIdx  = m.winnerTeamIndex;
+                if (winIdx === null || winIdx === undefined) return '';
                 const loseIdx = winIdx === 0 ? 1 : 0;
                 const winners = m.teams[winIdx]?.join(' & ') || '?';
                 const losers  = m.teams[loseIdx]?.join(' & ') || '?';
@@ -1051,21 +1063,61 @@ function renderStatsTab(tab) {
                             <span class="history-vs">def.</span>
                             <span class="history-loser">${escapeHTML(losers)}</span>
                         </div>
+                        ${timeHtml}
                     </div>
                 `;
             }).join('');
 
             return `
-                <div class="history-round">
+                <div class="history-round" style="animation-delay: ${i * 0.05}s">
                     <div class="history-round-label">Round ${roundNum}</div>
                     ${games}
                 </div>
             `;
         }).join('');
 
-        content.innerHTML = tabs + `<div class="history-list">${rounds}</div>`;
+        const searchBar = `
+            <div style="margin-bottom: 12px; position: relative;">
+                <input type="text" id="histSearchInput" placeholder="Search history..." 
+                    style="width:100%; padding-right: 32px;"
+                    oninput="window.filterHistory(this.value)">
+                <button id="histSearchClear" onclick="window.clearHistorySearch()" 
+                    style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1rem; padding: 8px;">
+                    ✕
+                </button>
+            </div>`;
+
+        content.innerHTML = tabs + searchBar + `<div class="history-list">${rounds}</div>`;
     }
 }
+
+window.filterHistory = function(query) {
+    const term = query.toLowerCase().trim();
+    
+    const clearBtn = document.getElementById('histSearchClear');
+    if (clearBtn) clearBtn.style.display = term ? 'block' : 'none';
+
+    const rounds = document.querySelectorAll('.history-round');
+    rounds.forEach(round => {
+        const games = round.querySelectorAll('.history-game');
+        let roundVisible = false;
+        games.forEach(game => {
+            const match = !term || game.textContent.toLowerCase().includes(term);
+            game.style.display = match ? 'flex' : 'none';
+            if (match) roundVisible = true;
+        });
+        round.style.display = roundVisible ? 'block' : 'none';
+    });
+};
+
+window.clearHistorySearch = function() {
+    const input = document.getElementById('histSearchInput');
+    if (input) {
+        input.value = '';
+        window.filterHistory('');
+        input.focus();
+    }
+};
 
 // ---------------------------------------------------------------------------
 // PLAYER CARDS
@@ -1221,59 +1273,6 @@ async function shareAuraPoster(matchIdx) {
     } else {
         console.error('generateShareableImage function not found.');
         showSessionToast('Share function is unavailable.');
-    }
-}
-
-// ---------------------------------------------------------------------------
-// WEEKLY LEADERBOARD
-// ---------------------------------------------------------------------------
-
-async function renderLeaderboardTab() {
-    const content = document.getElementById('overlayContent');
-
-    const tabs = `
-        <div class="stats-tabs">
-            <button class="stats-tab" onclick="renderStatsTab('performance')">Performance</button>
-            <button class="stats-tab" onclick="renderStatsTab('history')">History</button>
-            <button class="stats-tab active" onclick="renderLeaderboardTab()">Leaderboard</button>
-        </div>
-    `;
-
-    content.innerHTML = tabs + `<div style="text-align:center;padding:30px 0;color:var(--text-muted);font-size:0.8rem;">Loading leaderboard…</div>`;
-
-    try {
-        const res  = await fetch('/api/leaderboard-get');
-        const data = await res.json();
-
-        if (!data || !data.players || data.players.length === 0) {
-            content.innerHTML = tabs + `
-                <div style="text-align:center;padding:40px 0;color:var(--text-muted);font-size:0.85rem;">
-                    No leaderboard data yet.<br>Complete sessions to build the all-time rankings.
-                </div>`;
-            return;
-        }
-
-        const winRate = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
-        const rows = data.players
-            .sort((a, b) => b.wins - a.wins || winRate(b) - winRate(a))
-            .map((p, i) => `
-                <div class="lb-row ${i === 0 ? 'lb-top' : ''}">
-                    <span class="lb-rank">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}</span>
-                    <span class="lb-name">${escapeHTML(p.name)}</span>
-                    <span class="lb-stats">${p.wins}W · ${p.games}G · ${winRate(p)}%</span>
-                </div>
-            `).join('');
-
-        content.innerHTML = tabs + `
-            <div class="lb-subtitle">All-time across all sessions</div>
-            <div class="lb-list">${rows}</div>
-        `;
-
-    } catch (e) {
-        content.innerHTML = tabs + `
-            <div style="text-align:center;padding:40px 0;color:var(--text-muted);font-size:0.85rem;">
-                Leaderboard unavailable. Are you online?
-            </div>`;
     }
 }
 
@@ -1545,6 +1544,9 @@ async function approvePlayRequest(name, id, playerUUID = null) {
             console.error(`Failed to fetch achievements for ${player.name}`, e);
         }
     }
+
+    // Ensure player is active (in case they were previously resting)
+    player.active = true;
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};
     if (validUUID) window._sessionUUIDMap[player.name] = validUUID;
@@ -1988,4 +1990,13 @@ window.addEventListener('DOMContentLoaded', () => {
             _csShowError('App init failed: ' + (err?.message || err));
         }
     });
+});
+
+// Global Error Safety Net
+window.addEventListener('error', (event) => {
+    console.error('[CourtSide Global Error]', event.error);
+    // Only show toast if UI is ready
+    if (typeof showSessionToast === 'function' && document.body) {
+        showSessionToast('⚠️ An error occurred. Please refresh if issues persist.');
+    }
 });

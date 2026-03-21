@@ -1613,17 +1613,6 @@ input:focus {
 }
 
 /* =============================================================================
-   CONFETTI CANVAS
-   (z-index and pointer-events set inline by polish.js)
-   ============================================================================= */
-#confettiCanvas {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: var(--z-modal);
-}
-
-/* =============================================================================
    MULTIPLAYER / SESSION UI
    ============================================================================= */
 
@@ -1986,19 +1975,36 @@ header {
 
 /* Active chip — glow pulse on hover */
 .player-chip.active:hover {
-    box-shadow: 0 0 0 2px rgba(0,255,163,0.3);
+    box-shadow: 0 0 0 2px rgba(var(--accent-rgb),0.3);
     transform: translateY(-1px);
     transition: all 0.15s ease;
 }
 
 /* Next round button — breathing glow when active/ready */
 #nextRoundBtn:not([style*="0.2"]) {
+    /* The base shadow stays on the button */
+    box-shadow: 0 0 24px var(--accent-dim);
+    position: relative; /* For pseudo-element */
+    z-index: 1;
+}
+
+/* Add a pseudo-element for the animated glow */
+#nextRoundBtn:not([style*="0.2"])::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit; /* Inherit from the button */
+    z-index: -1;
+    /* This pseudo-element has the stronger shadow state */
+    box-shadow: 0 0 32px rgba(var(--accent-rgb), 0.5);
+    /* We animate its opacity to fade it in and out */
     animation: btnGlow 2.5s ease-in-out infinite;
+    pointer-events: none;
 }
 
 @keyframes btnGlow {
-    0%, 100% { box-shadow: 0 0 16px rgba(0,255,163,0.25); }
-    50%       { box-shadow: 0 0 32px rgba(0,255,163,0.5);  }
+    0%, 100% { opacity: 0; }
+    50%      { opacity: 1; }
 }
 
 /* Stats card hover lift */
@@ -2192,6 +2198,9 @@ header {
     font-weight: 800;
     font-style: italic;
     color: var(--accent);
+    background: var(--accent-dim);
+    padding: 2px 6px;
+    border-radius: 4px;
 }
 
 .history-vs {
@@ -2665,79 +2674,6 @@ header {
 }
 
 .aura-share-btn:active { transform: scale(0.92); }
-
-/* =============================================================================
-   WEEKLY LEADERBOARD
-   ============================================================================= */
-
-.lb-subtitle {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    text-align: center;
-    margin-bottom: 16px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-}
-
-.lb-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.lb-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    animation: chipIn 0.3s ease both;
-}
-
-.lb-top {
-    border-color: var(--border-accent);
-    background: var(--accent-dim);
-}
-
-.lb-rank {
-    font-size: 1rem;
-    width: 28px;
-    text-align: center;
-    flex-shrink: 0;
-    font-family: var(--font-display);
-    font-style: italic;
-    font-weight: 900;
-    color: var(--text-muted);
-}
-
-.lb-top .lb-rank { color: var(--accent); }
-
-.lb-name {
-    flex: 1;
-    font-family: var(--font-display);
-    font-weight: 900;
-    font-style: italic;
-    font-size: 0.95rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text);
-}
-
-.lb-stats {
-    font-size: 0.65rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    flex-shrink: 0;
-}
-
-.lb-top .lb-stats { color: var(--accent); }
-
-/* Three-tab stats — shrink font slightly */
-.stats-tabs .stats-tab {
-    font-size: 0.65rem;
-}
 
 /* =============================================================================
    I WANT TO PLAY SHEET
@@ -3672,13 +3608,29 @@ button:active,
 .sl-status-card[data-state="playing"] {
     border-color: var(--accent);
     background: var(--accent-dim);
-    box-shadow: 0 0 24px rgba(0,255,163,0.15);
+    box-shadow: 0 0 24px rgba(var(--accent-rgb),0.15);
+    position: relative; /* For pseudo-element */
+    z-index: 1;
+}
+
+/* Add a pseudo-element for the animated glow */
+.sl-status-card[data-state="playing"]::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 18px; /* card's 16px + 2px inset */
+    z-index: -1;
+    /* This pseudo-element has the stronger shadow state */
+    box-shadow: 0 0 32px rgba(var(--accent-rgb), 0.25);
+    border: 1.5px solid rgba(var(--accent-rgb), 0.8);
+    /* We animate its opacity to fade it in and out */
     animation: playingPulse 2.5s ease-in-out infinite;
+    pointer-events: none;
 }
 
 @keyframes playingPulse {
-    0%, 100% { box-shadow: 0 0 16px rgba(0,255,163,0.1); border-color: var(--accent); }
-    50%       { box-shadow: 0 0 32px rgba(0,255,163,0.25); border-color: rgba(0,255,163,0.8); }
+    0%, 100% { opacity: 0; }
+    50%      { opacity: 1; }
 }
 .sl-status-card[data-state="resting"] {
     border-color: #60a5fa;
@@ -4923,14 +4875,12 @@ button:active,
 .match-card.card-entering {
     opacity: 0;
     transform: translateY(20px) scale(0.98);
-    filter: blur(3px);
 }
 
 /* Transition back to visible when card-entering is removed */
 .match-card {
     transition: opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1),
                 transform 0.38s cubic-bezier(0.22, 1, 0.36, 1),
-                filter 0.38s cubic-bezier(0.22, 1, 0.36, 1),
                 border-color 0.2s,
                 box-shadow 0.2s;
 }

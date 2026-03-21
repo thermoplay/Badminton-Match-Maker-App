@@ -26,7 +26,7 @@ function calculateELODelta(playerRating, opponentAvgRating, actualScore, gamesPl
 
 function calculateOdds(teamA, teamB) {
     // Null-safe: if a player object is missing (stale data), default rating to 1200
-    const r = p => (p && p.rating != null ? p.rating : 1200);
+    const r = p => (p && p.rating != null ? Number(p.rating) : 1200);
     const rA = (r(teamA[0]) + r(teamA[1])) / 2;
     const rB = (r(teamB[0]) + r(teamB[1])) / 2;
     const expectedA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
@@ -846,10 +846,13 @@ function confirmTeamBuilder() {
     StateStore.currentMatches[mIdx].odds = newOdds;
     StateStore.currentMatches[mIdx].winnerTeamIndex = null; // Reset winner since teams changed
 
+    // Preserve the original start time so the timer doesn't reset
+    const originalStartTime = StateStore.currentMatches[mIdx].startedAt;
+
     // Re-render just this card by replacing it in the DOM
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
-        const newCardEl = buildMatchCard(mIdx, tAObjs, tBObjs, newOdds);
+        const newCardEl = buildMatchCard(mIdx, tAObjs, tBObjs, newOdds, originalStartTime);
         cardEl.replaceWith(newCardEl);
     }
 
