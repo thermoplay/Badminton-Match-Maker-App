@@ -203,6 +203,12 @@ function editPlayerName() {
             saveToDisk();
             if (typeof broadcastGameState === 'function') broadcastGameState();
         }
+
+// Expose UI functions to global scope for inline onclick handlers
+window.showPlayRequests = showPlayRequests;
+window.closePlayRequests = closePlayRequests;
+window.notifApprove = notifApprove;
+window.notifDecline = notifDecline;
     });
 }
 
@@ -1610,8 +1616,62 @@ window.onPlayRequestInsert = function(record) {
     pollPlayRequests(); // Fetch full list to ensure badge count is accurate
 };
 
+function ensureHostUI() {
+    // Only the host needs these elements
+    if (!window.isOperator) return;
+
+    // 1. Join Notification Toast (Popup)
+    if (!document.getElementById('joinNotification')) {
+        const notif = document.createElement('div');
+        notif.id = 'joinNotification';
+        notif.className = 'join-notif';
+        notif.innerHTML = `
+            <div class="join-notif-inner">
+                <div class="join-notif-label">REQUEST TO JOIN</div>
+                <div class="join-notif-name" id="joinNotifName">PLAYER</div>
+                <div class="join-notif-actions">
+                    <button class="join-notif-approve" onclick="notifApprove()">APPROVE</button>
+                    <button class="join-notif-decline" onclick="notifDecline()">DECLINE</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(notif);
+    }
+
+    // 2. Play Requests Badge (The Button)
+    if (!document.getElementById('playRequestsBadge')) {
+        const badge = document.createElement('div');
+        badge.id = 'playRequestsBadge';
+        badge.className = 'play-requests-badge';
+        badge.onclick = window.showPlayRequests;
+        badge.style.display = 'none'; 
+        badge.innerHTML = `
+            <span>REQUESTS</span>
+            <span id="playRequestsCount" style="background:#0a0a0f; color:var(--accent); padding:2px 6px; border-radius:6px; margin-left:6px; font-size:0.65rem;">0</span>
+        `;
+        document.body.appendChild(badge);
+    }
+
+    // 3. Play Requests Modal (The List)
+    if (!document.getElementById('playRequestsModal')) {
+        const modal = document.createElement('div');
+        modal.id = 'playRequestsModal';
+        modal.className = 'play-requests-modal';
+        modal.style.display = 'none';
+        modal.innerHTML = `
+            <div class="play-requests-card">
+                <div class="play-requests-title">Pending Requests</div>
+                <div id="playRequestsList" style="max-height: 300px; overflow-y: auto;"></div>
+                <button class="btn-cancel" onclick="closePlayRequests()" style="margin-top:12px;">Close</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+}
+
 const _startPolling = () => {
     if (_pollingInterval) clearInterval(_pollingInterval);
+    ensureHostUI();
     pollPlayRequests();
     _pollingInterval = setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
 };
