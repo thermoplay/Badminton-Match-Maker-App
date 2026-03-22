@@ -60,11 +60,11 @@ const UIManager = {
         document.getElementById('modalCancel').onclick = () => this.hide();
     },
 
-    prompt({ title, initialValue = '', confirmText = 'OK', onConfirm }) {
+    prompt({ title, initialValue = '', placeholder = '', confirmText = 'OK', onConfirm }) {
         const content = `
             <div class="menu-card">
                 <h2>${_escapeHTML(title)}</h2>
-                <input type="text" id="modalInput" class="input-modal-field" value="${_escapeHTML(initialValue)}">
+                <input type="text" id="modalInput" class="input-modal-field" value="${_escapeHTML(initialValue)}" placeholder="${_escapeHTML(placeholder)}">
                 <button id="modalConfirm" class="btn-main menu-btn">${_escapeHTML(confirmText)}</button>
                 <button id="modalCancel" class="btn-cancel">Cancel</button>
             </div>

@@ -249,6 +249,7 @@ async function createOnlineSession() {
             body: {
                 room_code: roomCode,
                 operator_key: opKey,
+                court_names: StateStore.get('courtNames'),
                 squad: StateStore.squad,
                 current_matches: StateStore.currentMatches,
                 player_queue: StateStore.playerQueue
@@ -373,6 +374,7 @@ function pushStateToSupabase() {
                     // removing this cuts DB payload size significantly
                     player_queue:     StateStore.playerQueue,
                     uuid_map:         window._sessionUUIDMap  || {},
+                    court_names:      StateStore.get('courtNames'),
                     approved_players: window._approvedPlayers || {},
                 },
             });
@@ -414,6 +416,7 @@ function broadcastApproval(playerUUID, playerName, token) {
         playerUUID,
         playerName,
         token,
+        courtNames: StateStore.get('courtNames'),
         squad: StateStore.squad,
         current_matches: StateStore.currentMatches,
     });
@@ -438,6 +441,7 @@ function broadcastGameState() {
     _broadcast('game_state', {
         squad: StateStore.squad,
         current_matches: safeMatches,
+        courtNames: StateStore.get('courtNames'),
         next_up: (document.getElementById('nextUpNames')?.textContent || '').trim(),
     });
 }
@@ -734,6 +738,7 @@ function applyRemoteState(session) {
         };
     });
     const loadedQueue = (session.player_queue || []).filter(name => loadedSquad.find(p => p.name === name));
+    const loadedCourtNames = session.court_names || {};
     let loadedCourts = 1;
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
         loadedCourts = session.active_courts;
@@ -743,11 +748,12 @@ function applyRemoteState(session) {
         }, 0);
     }
 
-    StateStore.setState({ squad: loadedSquad, currentMatches: loadedMatches, playerQueue: loadedQueue, activeCourts: loadedCourts });
+    StateStore.setState({ squad: loadedSquad, currentMatches: loadedMatches, playerQueue: loadedQueue, activeCourts: loadedCourts, courtNames: loadedCourtNames });
     // Also update window globals for player view, which doesn't use StateStore
     if (!isOperator) {
         window.squad = loadedSquad;
         window.currentMatches = loadedMatches;
+        window.courtNames = loadedCourtNames;
     }
 
     // round_history is no longer synced to DB — keep local undo history intact

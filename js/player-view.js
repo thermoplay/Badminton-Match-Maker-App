@@ -73,13 +73,16 @@ const SidelineView = {
         const passport = Passport.get();
         const myName   = passport?.playerName?.toLowerCase() || '';
 
+        const courtNames = window.courtNames || {};
         container.innerHTML = matches.map((m, i) => {
             const teams   = m.teams || [];
             const tA      = teams[0] || [];
             const tB      = teams[1] || [];
             const playing = myName && [...tA, ...tB].map(n => n.toLowerCase()).includes(myName);
             const odds    = (m.odds && m.odds.length === 2) ? m.odds : [50, 50];
+            const storyBadges = m.storyBadges || [];
             const winIdx  = m.winnerTeamIndex;
+            const courtName = courtNames[i] || `COURT ${i + 1}`;
             const hasWinner = winIdx !== null && winIdx !== undefined;
 
             // Timer is handled by the global TimerManager in timer.js
@@ -101,7 +104,8 @@ const SidelineView = {
             return `
                 <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}">
                     <div class="sl-match-header">
-                        <div class="sl-match-label">COURT ${i + 1}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
+                        <div class="sl-match-label">${courtName}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
+                        ${storyBadges.length ? `<div class="sl-story-badges">${storyBadges.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : ''}
                         ${(odds[0] !== 50 || odds[1] !== 50) ? `
                             <div style="display:flex;gap:4px;">
                                 <span class="sl-odds-pill ${odds[0] > odds[1] ? 'sl-odds-fav' : ''}">${odds[0]}%</span>
@@ -196,6 +200,15 @@ const SidelineView = {
             else profileView.appendChild(deck);
         }
 
+        let chemContainer = document.getElementById('slProfileChemistry');
+        if (!chemContainer && profileView) {
+            chemContainer = document.createElement('div');
+            chemContainer.id = 'slProfileChemistry';
+            const ach = document.getElementById('slProfileAchievements');
+            if (ach) profileView.insertBefore(chemContainer, ach);
+            else profileView.appendChild(chemContainer);
+        }
+
         if (deck) {
             const career = passport.stats || { wins: 0, games: 0 };
             const cWins  = career.wins || 0;
@@ -248,6 +261,33 @@ const SidelineView = {
                         </div>
                     </div>
                 </div>`;
+        }
+
+        if (chemContainer) {
+            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+            
+            if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
+                const partners = Object.entries(me.partnerStats);
+                partners.sort(([, a], [, b]) => {
+                    if (b.wins !== a.wins) return b.wins - a.wins;
+                    return b.games - a.games;
+                });
+                const best = partners[0];
+                if (best) {
+                    const [name, stats] = best;
+                    const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+                    chemContainer.innerHTML = `
+                        <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
+                        <div class="sl-chem-card">
+                            <div class="sl-chem-details">
+                                <div class="sl-chem-name">Best with: <strong>${esc(name)}</strong></div>
+                                <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                            </div>
+                        </div>`;
+                }
+            } else {
+                chemContainer.innerHTML = '';
+            }
         }
 
         // Render Achievements List
@@ -750,6 +790,7 @@ const PlayerMode = {
 
         if (payload.squad)           window.squad          = payload.squad;
         if (payload.current_matches) window.currentMatches = payload.current_matches;
+        if (payload.courtNames)      window.courtNames     = payload.courtNames;
 
         this._clearQueuedState();
 

@@ -815,6 +815,33 @@ input:focus {
     vertical-align: middle;
 }
 
+/* Make court name editable for host */
+body:not(.player-mode) .match-label {
+    cursor: pointer;
+    transition: color 0.2s;
+}
+body:not(.player-mode) .match-label:hover { color: var(--accent); }
+
+.match-story-badges {
+    display: flex;
+    gap: 4px;
+    margin: 0 8px;
+}
+
+.story-badge {
+    font-family: var(--font-body);
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    line-height: 1;
+    display: inline-block;
+}
+
 .prob-container {
     background: rgba(0,0,0,0.3);
     display: inline-flex;
@@ -854,6 +881,7 @@ input:focus {
     user-select: none;
     -webkit-user-select: none;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     position: relative;
@@ -1021,6 +1049,13 @@ input:focus {
 
 .btn-icon:hover  { border-color: var(--border-accent); background: #222232; }
 .btn-icon:active { transform: scale(0.91); }
+
+/* Mode toggle button specific style */
+.btn-icon.mode-singles {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--accent);
+}
 
 /* ---------------------------------------------------------------------------
    OVERLAY (STATS & SYNC)
@@ -2540,6 +2575,79 @@ header {
     opacity: 0.6;
 }
 
+/* =============================================================================
+   PARTNER CHEMISTRY CARDS
+   ============================================================================= */
+
+.pc-chemistry-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    text-align: left;
+}
+
+.pc-chem-icon {
+    font-size: 1.8rem;
+}
+
+.pc-chem-name {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.pc-chem-name strong {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 800;
+    font-style: italic;
+    color: var(--text);
+    letter-spacing: 0.5px;
+}
+
+.pc-chem-stats {
+    font-family: var(--font-display);
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.sl-chem-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+}
+
+.sl-chem-details {
+    text-align: center;
+}
+
+.sl-chem-name {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.sl-chem-name strong {
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    font-weight: 800;
+    font-style: italic;
+    color: var(--text);
+    letter-spacing: 0.5px;
+}
+
+.sl-chem-stats {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--accent);
+}
 
 /* =============================================================================
    AURA MATCH POSTER
@@ -3921,6 +4029,25 @@ button:active,
     letter-spacing: 2.5px;
     text-transform: uppercase;
     color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.sl-story-badges {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    margin-right: 8px;
+}
+
+.sl-story-badges span {
+    font-family: var(--font-body);
+    font-size: 0.55rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 2px 6px;
+    border-radius: 4px;
     white-space: nowrap;
 }
 

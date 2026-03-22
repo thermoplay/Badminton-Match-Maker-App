@@ -29,6 +29,8 @@ function saveToDisk() {
             roundHistory: historySlice,
             playerQueue: StateStore.playerQueue,
             activeCourts: StateStore.get('activeCourts'),
+            singlesMode: StateStore.get('singlesMode'),
+            courtNames: StateStore.get('courtNames'),
         };
         localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
     } catch (e) {
@@ -52,6 +54,7 @@ function migratePlayer(p) {
     if (p.active           == null) p.active           = true;
     if (p.teammateHistory  == null) p.teammateHistory  = {};
     if (p.opponentHistory  == null) p.opponentHistory  = {};
+    if (p.partnerStats     == null) p.partnerStats     = {};
     if (p.achievements     == null) p.achievements     = [];
     if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
     return p;
@@ -80,11 +83,19 @@ function loadFromDisk() {
                 currentMatches: loadedMatches,
                 playerQueue: loadedQueue,
                 activeCourts: loadedCourts,
+                singlesMode: !!data.singlesMode,
+                courtNames: data.courtNames || {},
             });
 
             setTimeout(() => {
                 const courtInput = document.getElementById('courtCountInput');
                 if (courtInput) courtInput.value = loadedCourts;
+                
+                const modeBtn = document.getElementById('modeToggleBtn');
+                if (modeBtn) {
+                    modeBtn.textContent = data.singlesMode ? '1v1' : '2v2';
+                    modeBtn.classList.toggle('mode-singles', data.singlesMode);
+                }
             }, 0);
 
             renderSquad();
@@ -125,6 +136,7 @@ function addPlayer() {
         forcedRest:        false,
         teammateHistory:   {},
         opponentHistory:   {},
+        partnerStats:      {},
         achievements:      [],
     });
     el.value = '';
@@ -475,6 +487,22 @@ function setCourts(n) {
     }
 }
 
+function toggleGameMode() {
+    const current = StateStore.get('singlesMode');
+    const next = !current;
+    StateStore.set('singlesMode', next);
+    
+    const btn = document.getElementById('modeToggleBtn');
+    if (btn) {
+        btn.textContent = next ? '1v1' : '2v2';
+        btn.classList.toggle('mode-singles', next);
+    }
+    
+    saveToDisk();
+    showSessionToast(`Switched to ${next ? 'Singles (1v1)' : 'Doubles (2v2)'}`);
+}
+window.toggleGameMode = toggleGameMode;
+
 // ---------------------------------------------------------------------------
 // LONG-PRESS MENU
 // ---------------------------------------------------------------------------
@@ -596,6 +624,35 @@ function movePlayerToFront() {
     if (typeof showSessionToast === 'function') showSessionToast(`${p.name} moved to front`);
 }
 
+function openCourtRename(courtIndex) {
+    if (!isOperator) return; // Only host can rename
+
+    const courtNames = StateStore.get('courtNames') || {};
+    const currentName = courtNames[courtIndex] || `Court ${courtIndex + 1}`;
+
+    UIManager.prompt({
+        title: `Rename ${currentName}`,
+        initialValue: courtNames[courtIndex] || '',
+        placeholder: 'e.g. Center Court',
+        confirmText: 'Save Name',
+        onConfirm: (newName) => {
+            const trimmed = newName.trim();
+            const newCourtNames = { ...courtNames };
+
+            if (trimmed) {
+                newCourtNames[courtIndex] = trimmed;
+            } else {
+                delete newCourtNames[courtIndex]; // Revert to default if name is cleared
+            }
+
+            StateStore.set('courtNames', newCourtNames);
+            rebuildMatchCardIndices(); // Re-render cards to show new name
+            saveToDisk();
+            if (typeof broadcastGameState === 'function') broadcastGameState();
+        }
+    });
+}
+window.openCourtRename = openCourtRename;
 // ---------------------------------------------------------------------------
 // OVERLAYS — STATS & SYNC
 // ---------------------------------------------------------------------------
@@ -1190,6 +1247,32 @@ async function openPlayerCard(idx) {
     const bg  = Avatar.color(p.name);
     const ini = Avatar.initials(p.name);
 
+    // Calculate Partner Chemistry
+    let chemistryHTML = '';
+    if (p.partnerStats && Object.keys(p.partnerStats).length > 0) {
+        const partners = Object.entries(p.partnerStats);
+        // Sort by wins, then by games played
+        partners.sort(([, a], [, b]) => {
+            if (b.wins !== a.wins) return b.wins - a.wins;
+            return b.games - a.games;
+        });
+        const best = partners[0];
+        if (best) {
+            const [name, stats] = best;
+            const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+            chemistryHTML = `
+                <div class="pc-section-title" style="margin-top:24px;">Partner Chemistry</div>
+                <div class="pc-chemistry-card">
+                    <div class="pc-chem-icon">🤝</div>
+                    <div class="pc-chem-details">
+                        <div class="pc-chem-name">Best with: <strong>${escapeHTML(name)}</strong></div>
+                        <div class="pc-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
     document.getElementById('playerCardContent').innerHTML = `
         <div class="pc-avatar-wrap">
             <div class="pc-avatar" style="background:${bg};">${ini}</div>
@@ -1217,6 +1300,7 @@ async function openPlayerCard(idx) {
             </div>
         </div>
         ${p.streak > 0 ? `<div class="pc-streak">🔥 ${p.streak} game win streak</div>` : ''}
+        ${chemistryHTML}
         <div id="pc-achievements-container"></div>
     `;
 

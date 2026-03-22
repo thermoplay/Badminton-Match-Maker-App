@@ -27,8 +27,16 @@ function calculateELODelta(playerRating, opponentAvgRating, actualScore, gamesPl
 function calculateOdds(teamA, teamB) {
     // Null-safe: if a player object is missing (stale data), default rating to 1200
     const r = p => (p && p.rating != null ? Number(p.rating) : 1200);
-    const rA = (r(teamA[0]) + r(teamA[1])) / 2;
-    const rB = (r(teamB[0]) + r(teamB[1])) / 2;
+    
+    // Dynamic average based on actual team size (handles 1v1 or 2v2 correctly)
+    const getAvg = (team) => {
+        if (!team || team.length === 0) return 1200;
+        return team.reduce((sum, p) => sum + r(p), 0) / team.length;
+    };
+
+    const rA = getAvg(teamA);
+    const rB = getAvg(teamB);
+    
     const expectedA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
     const probA = Math.round(expectedA * 100);
     return [probA, 100 - probA];
@@ -169,12 +177,35 @@ function applyELOForMatch(m) {
     const loseAvg = losers.reduce((s, p)  => s + safeRating(p), 0) / losers.length;
 
     // Update Winners
+    if (winners.length === 2) {
+        const [p1, p2] = winners;
+        p1.partnerStats = p1.partnerStats || {};
+        p2.partnerStats = p2.partnerStats || {};
+        
+        const updateStat = (p, partnerName) => {
+             const s = p.partnerStats[partnerName] || { wins: 0, games: 0 };
+             s.games++; s.wins++;
+             p.partnerStats[partnerName] = s;
+        };
+        updateStat(p1, p2.name);
+        updateStat(p2, p1.name);
+    }
     winners.forEach(p => {
         const cur = safeRating(p);
         p.rating = cur + calculateELODelta(cur, loseAvg, 1, p.games);
         p.wins++; p.games++; p.streak++;
     });
     // Update Losers
+    if (losers.length === 2) {
+        const [p1, p2] = losers;
+        p1.partnerStats = p1.partnerStats || {};
+        p2.partnerStats = p2.partnerStats || {};
+        // Only increment games for losers
+        p1.partnerStats[p2.name] = p1.partnerStats[p2.name] || { wins: 0, games: 0 };
+        p1.partnerStats[p2.name].games++;
+        p2.partnerStats[p1.name] = p2.partnerStats[p1.name] || { wins: 0, games: 0 };
+        p2.partnerStats[p1.name].games++;
+    }
     losers.forEach(p => {
         const cur = safeRating(p);
         const delta = calculateELODelta(cur, winAvg, 0, p.games);
@@ -270,6 +301,35 @@ function rotateCourtPlayers(m) {
 
 const POOL_FACTOR = 2; // candidate pool = 4 * POOL_FACTOR players
 
+function determineStoryBadges(teamA, teamB) {
+    const badges = new Set();
+    const allPlayers = [...teamA, ...teamB];
+
+    // Badge: Fresh Blood (anyone with 0 completed games)
+    if (allPlayers.some(p => p.games === 0)) {
+        badges.add('🌱 Fresh Blood');
+    }
+
+    // Badge: Rematch (if any player on Team A has played any player on Team B)
+    let isRematch = false;
+    for (const pA of teamA) {
+        for (const pB of teamB) {
+            if (pA.opponentHistory && pA.opponentHistory[pB.name] > 0) {
+                isRematch = true;
+                break;
+            }
+        }
+        if (isRematch) break;
+    }
+    if (isRematch) badges.add('⚔️ Rematch');
+
+    // Badge: Dynamic Duo (if teammates have played together 2+ times)
+    if (teamA.length === 2 && teamA[0].teammateHistory && teamA[0].teammateHistory[teamA[1].name] >= 2) badges.add('⚡ Dynamic Duo');
+    if (teamB.length === 2 && teamB[0].teammateHistory && teamB[0].teammateHistory[teamB[1].name] >= 2) badges.add('⚡ Dynamic Duo');
+
+    return Array.from(badges);
+}
+
 // Score a single team split — lower = fresher matchup
 function scoreSplit(tA, tB) {
     const tm  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
@@ -338,12 +398,34 @@ function pickBestGroup(pool) {
     return combos[0];
 }
 
+// Pick the best pair of 2 from the candidate pool (Singles logic)
+function pickBestPair(pool) {
+    if (pool.length <= 2) return pool;
+    
+    const pairs = [];
+    for (let i = 0; i < pool.length - 1; i++) {
+        for (let j = i + 1; j < pool.length; j++) {
+            pairs.push([pool[i], pool[j]]);
+        }
+    }
+    
+    pairs.sort(() => Math.random() - 0.5);
+    // Score based on opponent history only (no teammates in singles)
+    pairs.sort((a, b) => {
+        const scoreA = (a[0].opponentHistory?.[a[1].name] || 0) + (a[1].opponentHistory?.[a[0].name] || 0);
+        const scoreB = (b[0].opponentHistory?.[b[1].name] || 0) + (b[1].opponentHistory?.[b[0].name] || 0);
+        return scoreA - scoreB;
+    });
+    
+    return pairs[0];
+}
+
 // Pull the best 4 from the queue front for one court.
 // onCourt = Set of names already assigned this round (multi-court guard).
-function pullNextFromQueue(onCourt) {
+function pullNextFromQueue(onCourt, count = 4) {
     if (!onCourt) onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
     const pool = getCandidatePool(onCourt);
-    return pickBestGroup(pool);
+    return count === 2 ? pickBestPair(pool) : pickBestGroup(pool);
 }
 
 // Build a match object from 4 player objects, applying best-split pairing.
@@ -366,6 +448,7 @@ function buildMatchFromPlayers(p4) {
     const { tA, tB } = splits[0];
     const odds = calculateOdds(tA, tB);
 
+    const storyBadges = determineStoryBadges(tA, tB);
     // Record session history for all 4 players
     const addHistory = (p, teammate, opponents) => {
         p.teammateHistory = p.teammateHistory || {};
@@ -381,8 +464,32 @@ function buildMatchFromPlayers(p4) {
     return {
         teams:           [tA.map(p => p.name), tB.map(p => p.name)],
         winnerTeamIndex: null,
+        storyBadges,
         odds,
         startedAt: Date.now(),
+    };
+}
+
+// Build a singles match (1v1)
+function buildSinglesMatch(p2) {
+    p2.forEach(p => p.sessionPlayCount++);
+    const pA = p2[0];
+    const pB = p2[1];
+
+    const storyBadges = determineStoryBadges([pA], [pB]);
+
+    // Record history
+    pA.opponentHistory = pA.opponentHistory || {};
+    pB.opponentHistory = pB.opponentHistory || {};
+    pA.opponentHistory[pB.name] = (pA.opponentHistory[pB.name] || 0) + 1;
+    pB.opponentHistory[pA.name] = (pB.opponentHistory[pA.name] || 0) + 1;
+
+    return {
+        teams: [[pA.name], [pB.name]],
+        winnerTeamIndex: null,
+        storyBadges,
+        odds: calculateOdds([pA], [pB]),
+        startedAt: Date.now()
     };
 }
 
@@ -393,8 +500,8 @@ function rebuildMatchCardIndices() {
     StateStore.currentMatches.forEach((m, i) => {
         const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
-        if (tA.length === 2 && tB.length === 2) {
-            const cardEl = buildMatchCard(i, tA, tB, m.odds, m.startedAt);
+        if (tA.length > 0 && tB.length > 0) {
+            const cardEl = buildMatchCard(i, tA, tB, m.odds, m.startedAt, m.storyBadges);
             cardEl.classList.remove('card-entering'); // No animation on rebuild
             container.appendChild(cardEl);
             if (m.winnerTeamIndex !== null) {
@@ -426,8 +533,10 @@ function rotateQueue() {
  */
 function _prepareForMatchGeneration() {
     const activePool = StateStore.squad.filter(p => p.active);
-    if (activePool.length < 4) {
-        alert('Requires at least 4 active players.');
+    const isSingles = StateStore.get('singlesMode');
+    const needed = isSingles ? 2 : 4;
+    if (activePool.length < needed) {
+        alert(`Requires at least ${needed} active players.`);
         return null;
     }
 
@@ -443,12 +552,14 @@ function _prepareForMatchGeneration() {
  * @returns {number} The number of courts to generate.
  */
 function _determineCourtCount(activePool) {
-    const maxCourts = Math.floor(activePool.length / 4);
+    const isSingles = StateStore.get('singlesMode');
+    const perCourt = isSingles ? 2 : 4;
+    const maxCourts = Math.floor(activePool.length / perCourt);
     const courtCount = Math.min(StateStore.get('activeCourts'), maxCourts);
 
     if (StateStore.get('activeCourts') > maxCourts && typeof showSessionToast === 'function') {
         showSessionToast(
-            `⚠️ Need ${activeCourts * 4} players for ${activeCourts} courts — only ${maxCourts} court${maxCourts !== 1 ? 's' : ''} generated with ${activePool.length} active players`
+            `⚠️ Need ${StateStore.get('activeCourts') * perCourt} players — only ${maxCourts} court${maxCourts !== 1 ? 's' : ''} generated`
         );
     }
     return courtCount;
@@ -462,18 +573,20 @@ function _determineCourtCount(activePool) {
 function _createMatchesForCourts(courtCount) {
     const matchData = [];
     const assignedThisRound = new Set();
+    const isSingles = StateStore.get('singlesMode');
+    const needed = isSingles ? 2 : 4;
 
     for (let i = 0; i < courtCount; i++) {
-        const p4 = pullNextFromQueue(assignedThisRound);
-        if (p4.length < 4) break;
+        const players = pullNextFromQueue(assignedThisRound, needed);
+        if (players.length < needed) break;
 
-        p4.forEach(p => assignedThisRound.add(p.name));
-        const match = buildMatchFromPlayers(p4);
+        players.forEach(p => assignedThisRound.add(p.name));
+        const match = isSingles ? buildSinglesMatch(players) : buildMatchFromPlayers(players);
         StateStore.currentMatches.push(match);
 
         const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
-        matchData.push({ idx: i, tA, tB, odds: match.odds, startedAt: match.startedAt });
+        matchData.push({ idx: i, tA, tB, odds: match.odds, startedAt: match.startedAt, storyBadges: match.storyBadges });
     }
     return matchData;
 }
@@ -572,8 +685,8 @@ function renderAllMatchCards(matchData) {
     container.innerHTML = ''; // Clear existing content
 
     const fragment = document.createDocumentFragment();
-    matchData.forEach(({ idx, tA, tB, odds, startedAt }) => {
-        const cardElement = buildMatchCard(idx, tA, tB, odds, startedAt);
+    matchData.forEach(({ idx, tA, tB, odds, startedAt, storyBadges }) => {
+        const cardElement = buildMatchCard(idx, tA, tB, odds, startedAt, storyBadges);
         fragment.appendChild(cardElement);
     });
     container.appendChild(fragment);
@@ -593,7 +706,7 @@ function renderMatchCard(idx, tA, tB, odds) {
     container.appendChild(buildMatchCard(idx, tA, tB, odds));
 }
 
-function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now()) {
+function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now(), storyBadges = []) {
     const template = document.getElementById('matchCardTemplate');
     if (!template) {
         console.error('Match Card Template not found in DOM!');
@@ -602,15 +715,23 @@ function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now()) {
 
     const card = template.content.cloneNode(true).firstElementChild;
 
-    card.id = `match-${idx}`;
+    card.id = `match-${idx}`; 
     card.dataset.started = startedAt;
 
-    card.querySelector('.match-label').textContent = `Court ${idx + 1}`;
+    const courtNames = StateStore.get('courtNames') || {};
+    const courtName = courtNames[idx] || `Court ${idx + 1}`;
+    const labelEl = card.querySelector('.match-label');
+    labelEl.textContent = courtName;
+    labelEl.onclick = () => openCourtRename(idx);
+
+    const header = card.querySelector('.match-header');
+    if (header && storyBadges && storyBadges.length > 0) {
+        header.insertAdjacentHTML('beforeend', `<div class="match-story-badges">${storyBadges.map(b => `<span class="story-badge">${escapeHTML(b)}</span>`).join('')}</div>`);
+    }
 
     if (odds && odds.length === 2) {
         const hA = odds[0] > odds[1] ? 'highlight' : '';
         const hB = odds[1] > odds[0] ? 'highlight' : '';
-        const header = card.querySelector('.match-header');
         if (header) {
             header.insertAdjacentHTML('beforeend', `
                 <div class="prob-container">
@@ -624,11 +745,13 @@ function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now()) {
     card.querySelector('.aura-share-btn').onclick = () => shareAuraPoster(idx);
     card.querySelector('.edit-teams-btn').onclick = () => openTeamBuilder(idx);
 
+    // Dynamic render for 1 or 2 players per team
+    const renderTeam = (team) => team.map(p => escapeHTML(p.name)).join(' <span class="amp">&amp;</span> ');
     const teamBoxes = card.querySelectorAll('.team-box');
-    teamBoxes[0].querySelector('b').innerHTML = `${escapeHTML(tA[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tA[1].name)}`;
+    teamBoxes[0].querySelector('b').innerHTML = renderTeam(tA);
     teamBoxes[0].onclick = () => setWinner(idx, 0);
 
-    teamBoxes[1].querySelector('b').innerHTML = `${escapeHTML(tB[0].name)} <span class="amp">&amp;</span> ${escapeHTML(tB[1].name)}`;
+    teamBoxes[1].querySelector('b').innerHTML = renderTeam(tB);
     teamBoxes[1].onclick = () => setWinner(idx, 1);
 
     const nextRow = card.querySelector('.court-next-row');
@@ -829,18 +952,27 @@ function builderSwapFromSideline(sidelineName) {
  * Keeps the same 4 players, re-runs the snake-draft logic.
  */
 function builderShuffle() {
-    const allFour = [...builderTeams[0], ...builderTeams[1]]
+    const allPlayers = [...builderTeams[0], ...builderTeams[1]]
         .map(n => findP(n))
         .filter(Boolean);
 
-    // Shuffle randomly first, then sort by rating for snake draft
-    allFour.sort(() => Math.random() - 0.5);
-    allFour.sort((a, b) => b.rating - a.rating);
+    // Shuffle randomly first
+    allPlayers.sort(() => Math.random() - 0.5);
 
-    builderTeams = [
-        [allFour[0].name, allFour[3].name],
-        [allFour[1].name, allFour[2].name]
-    ];
+    if (allPlayers.length === 4) {
+        // Doubles: sort by rating for balanced snake draft
+        allPlayers.sort((a, b) => b.rating - a.rating);
+        builderTeams = [
+            [allPlayers[0].name, allPlayers[3].name],
+            [allPlayers[1].name, allPlayers[2].name]
+        ];
+    } else if (allPlayers.length === 2) {
+        // Singles: just swap them randomly (the sort above did this)
+        builderTeams = [
+            [allPlayers[0].name],
+            [allPlayers[1].name]
+        ];
+    }
     builderSelected = null;
     renderTeamBuilder();
 }
@@ -854,8 +986,10 @@ function confirmTeamBuilder() {
     const tAObjs = builderTeams[0].map(n => findP(n)).filter(Boolean);
     const tBObjs = builderTeams[1].map(n => findP(n)).filter(Boolean);
 
-    if (tAObjs.length !== 2 || tBObjs.length !== 2) {
-        alert('Each team needs exactly 2 players.');
+    // Validate balanced teams (works for 1v1 or 2v2)
+    const total = tAObjs.length + tBObjs.length;
+    if (tAObjs.length !== tBObjs.length || (total !== 2 && total !== 4)) {
+        alert(`Teams must be balanced (1v1 or 2v2). Currently ${tAObjs.length} vs ${tBObjs.length}.`);
         return;
     }
 
@@ -868,13 +1002,16 @@ function confirmTeamBuilder() {
     StateStore.currentMatches[mIdx].odds = newOdds;
     StateStore.currentMatches[mIdx].winnerTeamIndex = null; // Reset winner since teams changed
 
+    const newBadges = determineStoryBadges(tAObjs, tBObjs);
+    StateStore.currentMatches[mIdx].storyBadges = newBadges;
+
     // Preserve the original start time so the timer doesn't reset
     const originalStartTime = StateStore.currentMatches[mIdx].startedAt;
 
     // Re-render just this card by replacing it in the DOM
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
-        const newCardEl = buildMatchCard(mIdx, tAObjs, tBObjs, newOdds, originalStartTime);
+        const newCardEl = buildMatchCard(mIdx, tAObjs, tBObjs, newOdds, originalStartTime, newBadges);
         cardEl.replaceWith(newCardEl);
     } else {
         rebuildMatchCardIndices();
@@ -993,7 +1130,12 @@ function swapActivePlayers(nameA, nameB) {
         const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
         m.odds = calculateOdds(tA, tB);
-        renderMatchCard(idx, tA, tB, m.odds); // Using the helper wrapper
+        // Re-render to show updated odds and potentially new badges
+        const cardEl = document.getElementById(`match-${idx}`);
+        if (cardEl) {
+            const newCardEl = buildMatchCard(idx, tA, tB, m.odds, m.startedAt, m.storyBadges);
+            cardEl.replaceWith(newCardEl);
+        }
     };
 
     updateMatch(locA.mIdx);
