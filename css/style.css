@@ -1050,13 +1050,6 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
 .btn-icon:hover  { border-color: var(--border-accent); background: #222232; }
 .btn-icon:active { transform: scale(0.91); }
 
-/* Mode toggle button specific style */
-.btn-icon.mode-singles {
-    background: var(--accent-dim);
-    color: var(--accent);
-    border-color: var(--accent);
-}
-
 /* ---------------------------------------------------------------------------
    OVERLAY (STATS & SYNC)
    --------------------------------------------------------------------------- */

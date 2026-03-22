@@ -29,7 +29,6 @@ function saveToDisk() {
             roundHistory: historySlice,
             playerQueue: StateStore.playerQueue,
             activeCourts: StateStore.get('activeCourts'),
-            singlesMode: StateStore.get('singlesMode'),
             courtNames: StateStore.get('courtNames'),
         };
         localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
@@ -83,19 +82,12 @@ function loadFromDisk() {
                 currentMatches: loadedMatches,
                 playerQueue: loadedQueue,
                 activeCourts: loadedCourts,
-                singlesMode: !!data.singlesMode,
                 courtNames: data.courtNames || {},
             });
 
             setTimeout(() => {
                 const courtInput = document.getElementById('courtCountInput');
                 if (courtInput) courtInput.value = loadedCourts;
-                
-                const modeBtn = document.getElementById('modeToggleBtn');
-                if (modeBtn) {
-                    modeBtn.textContent = data.singlesMode ? '1v1' : '2v2';
-                    modeBtn.classList.toggle('mode-singles', data.singlesMode);
-                }
             }, 0);
 
             renderSquad();
@@ -486,22 +478,6 @@ function setCourts(n) {
         saveToDisk();
     }
 }
-
-function toggleGameMode() {
-    const current = StateStore.get('singlesMode');
-    const next = !current;
-    StateStore.set('singlesMode', next);
-    
-    const btn = document.getElementById('modeToggleBtn');
-    if (btn) {
-        btn.textContent = next ? '1v1' : '2v2';
-        btn.classList.toggle('mode-singles', next);
-    }
-    
-    saveToDisk();
-    showSessionToast(`Switched to ${next ? 'Singles (1v1)' : 'Doubles (2v2)'}`);
-}
-window.toggleGameMode = toggleGameMode;
 
 // ---------------------------------------------------------------------------
 // LONG-PRESS MENU

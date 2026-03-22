@@ -398,34 +398,16 @@ function pickBestGroup(pool) {
     return combos[0];
 }
 
-// Pick the best pair of 2 from the candidate pool (Singles logic)
-function pickBestPair(pool) {
-    if (pool.length <= 2) return pool;
-    
-    const pairs = [];
-    for (let i = 0; i < pool.length - 1; i++) {
-        for (let j = i + 1; j < pool.length; j++) {
-            pairs.push([pool[i], pool[j]]);
-        }
-    }
-    
-    pairs.sort(() => Math.random() - 0.5);
-    // Score based on opponent history only (no teammates in singles)
-    pairs.sort((a, b) => {
-        const scoreA = (a[0].opponentHistory?.[a[1].name] || 0) + (a[1].opponentHistory?.[a[0].name] || 0);
-        const scoreB = (b[0].opponentHistory?.[b[1].name] || 0) + (b[1].opponentHistory?.[b[0].name] || 0);
-        return scoreA - scoreB;
-    });
-    
-    return pairs[0];
-}
-
 // Pull the best 4 from the queue front for one court.
 // onCourt = Set of names already assigned this round (multi-court guard).
-function pullNextFromQueue(onCourt, count = 4) {
+function pullNextFromQueue(onCourt) {
     if (!onCourt) onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
     const pool = getCandidatePool(onCourt);
-    return count === 2 ? pickBestPair(pool) : pickBestGroup(pool);
+    // If we have 4 or fewer eligible players, there's no choice to make.
+    if (pool.length <= 4) return pool;
+    
+    // Pick best group logic
+    return pickBestGroup(pool);
 }
 
 // Build a match object from 4 player objects, applying best-split pairing.
@@ -470,29 +452,6 @@ function buildMatchFromPlayers(p4) {
     };
 }
 
-// Build a singles match (1v1)
-function buildSinglesMatch(p2) {
-    p2.forEach(p => p.sessionPlayCount++);
-    const pA = p2[0];
-    const pB = p2[1];
-
-    const storyBadges = determineStoryBadges([pA], [pB]);
-
-    // Record history
-    pA.opponentHistory = pA.opponentHistory || {};
-    pB.opponentHistory = pB.opponentHistory || {};
-    pA.opponentHistory[pB.name] = (pA.opponentHistory[pB.name] || 0) + 1;
-    pB.opponentHistory[pA.name] = (pB.opponentHistory[pA.name] || 0) + 1;
-
-    return {
-        teams: [[pA.name], [pB.name]],
-        winnerTeamIndex: null,
-        storyBadges,
-        odds: calculateOdds([pA], [pB]),
-        startedAt: Date.now()
-    };
-}
-
 // Rebuild DOM indices after a court is removed (so id="match-N" stays accurate)
 function rebuildMatchCardIndices() {
     const container = document.getElementById('matchContainer');
@@ -533,8 +492,7 @@ function rotateQueue() {
  */
 function _prepareForMatchGeneration() {
     const activePool = StateStore.squad.filter(p => p.active);
-    const isSingles = StateStore.get('singlesMode');
-    const needed = isSingles ? 2 : 4;
+    const needed = 4;
     if (activePool.length < needed) {
         alert(`Requires at least ${needed} active players.`);
         return null;
@@ -552,8 +510,7 @@ function _prepareForMatchGeneration() {
  * @returns {number} The number of courts to generate.
  */
 function _determineCourtCount(activePool) {
-    const isSingles = StateStore.get('singlesMode');
-    const perCourt = isSingles ? 2 : 4;
+    const perCourt = 4;
     const maxCourts = Math.floor(activePool.length / perCourt);
     const courtCount = Math.min(StateStore.get('activeCourts'), maxCourts);
 
@@ -573,15 +530,13 @@ function _determineCourtCount(activePool) {
 function _createMatchesForCourts(courtCount) {
     const matchData = [];
     const assignedThisRound = new Set();
-    const isSingles = StateStore.get('singlesMode');
-    const needed = isSingles ? 2 : 4;
 
     for (let i = 0; i < courtCount; i++) {
-        const players = pullNextFromQueue(assignedThisRound, needed);
-        if (players.length < needed) break;
+        const players = pullNextFromQueue(assignedThisRound);
+        if (players.length < 4) break;
 
         players.forEach(p => assignedThisRound.add(p.name));
-        const match = isSingles ? buildSinglesMatch(players) : buildMatchFromPlayers(players);
+        const match = buildMatchFromPlayers(players);
         StateStore.currentMatches.push(match);
 
         const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
@@ -966,12 +921,6 @@ function builderShuffle() {
             [allPlayers[0].name, allPlayers[3].name],
             [allPlayers[1].name, allPlayers[2].name]
         ];
-    } else if (allPlayers.length === 2) {
-        // Singles: just swap them randomly (the sort above did this)
-        builderTeams = [
-            [allPlayers[0].name],
-            [allPlayers[1].name]
-        ];
     }
     builderSelected = null;
     renderTeamBuilder();
@@ -986,10 +935,10 @@ function confirmTeamBuilder() {
     const tAObjs = builderTeams[0].map(n => findP(n)).filter(Boolean);
     const tBObjs = builderTeams[1].map(n => findP(n)).filter(Boolean);
 
-    // Validate balanced teams (works for 1v1 or 2v2)
+    // Validate balanced teams (Doubles 2v2 only)
     const total = tAObjs.length + tBObjs.length;
-    if (tAObjs.length !== tBObjs.length || (total !== 2 && total !== 4)) {
-        alert(`Teams must be balanced (1v1 or 2v2). Currently ${tAObjs.length} vs ${tBObjs.length}.`);
+    if (tAObjs.length !== tBObjs.length || total !== 4) {
+        alert(`Teams must be balanced (2v2). Currently ${tAObjs.length} vs ${tBObjs.length}.`);
         return;
     }
 

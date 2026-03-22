@@ -12,7 +12,6 @@ const StateStore = (() => {
         activeCourts: 1,
         roundHistory: [],
         selectedPlayerIndex: null,
-        singlesMode: false,
         courtNames: {},
     };
 
