@@ -13,6 +13,7 @@ let supabase  = null;
 let selectedPlayerIndex = null;
 let pressTimer = null;
 let isLongPress = false;
+let swapSourceUUID = null;
 
 // ---------------------------------------------------------------------------
 // PERSISTENCE
@@ -214,6 +215,38 @@ function deletePlayer() {
     });
 }
 
+function initiateSwap(uuid) {
+    swapSourceUUID = uuid;
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    closeMenu();
+    showSessionToast(`Select another player to swap with ${p.name}`);
+    renderSquad();
+    Haptic.tap();
+}
+
+function completeSwap(targetUUID) {
+    const p1 = StateStore.squad.find(x => x.uuid === swapSourceUUID);
+    const p2 = StateStore.squad.find(x => x.uuid === targetUUID);
+    
+    if (p1 && p2 && typeof window.swapActivePlayers === 'function') {
+        if (window.swapActivePlayers(p1.name, p2.name)) {
+            showSessionToast(`Swapped ${p1.name} & ${p2.name}`);
+            Haptic.success();
+            saveToDisk();
+            if (typeof broadcastGameState === 'function') broadcastGameState();
+        } else {
+            showSessionToast('Could not swap players.');
+        }
+    }
+    cancelSwap(); // Clears state and renders
+}
+
+function cancelSwap() {
+    swapSourceUUID = null;
+    closeMenu();
+    renderSquad();
+}
+
 function toggleRestingState() {
     StateStore.squad[selectedPlayerIndex].active = !StateStore.squad[selectedPlayerIndex].active;
     closeMenu();
@@ -357,7 +390,8 @@ function renderSquad() {
             ${Avatar.html(p.name)}
             <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
         `;
-        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''}`;
+        const isSwapping = p.uuid === swapSourceUUID;
+        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''}`;
 
         let chip = existingChips.get(p.uuid);
 
@@ -449,7 +483,12 @@ function startPress(uuid) {
     isLongPress = false;
     pressTimer = setTimeout(() => {
         isLongPress = true;
-        Haptic.bump();
+        // If we are in swap mode and tap the source again, just cancel
+        if (swapSourceUUID && swapSourceUUID === uuid) {
+            Haptic.tap();
+        } else {
+            Haptic.bump();
+        }
         openMenu(uuid);
     }, 600);
 }
@@ -478,11 +517,39 @@ function openMenu(uuid) {
     const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
     const isPlaying = onCourt.has(p.name);
 
+    let swapActionHTML = '';
+
+    // Logic for Swap Button visibility
+    if (swapSourceUUID) {
+        // We are in the middle of a swap
+        if (isPlaying && p.uuid !== swapSourceUUID) {
+            // This is a valid target
+            const sourceP = StateStore.squad.find(s => s.uuid === swapSourceUUID);
+            const sourceName = sourceP ? sourceP.name : 'Player';
+            swapActionHTML = `
+                <button class="btn-main menu-btn" onclick="completeSwap('${p.uuid}')" style="background:var(--accent); color:#000;">
+                    Confirm Swap with ${escapeHTML(sourceName)}
+                </button>
+                <button class="btn-main menu-btn" onclick="cancelSwap()" style="background:var(--surface2); color:var(--text);">
+                    Cancel Swap
+                </button>
+            `;
+        } else {
+            // Clicked self or invalid target -> allow cancel
+            swapActionHTML = `<button class="btn-main menu-btn" onclick="cancelSwap()">Cancel Swap</button>`;
+        }
+    } else if (isPlaying) {
+        // Not swapping yet, show initiate button
+        swapActionHTML = `<button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="initiateSwap('${p.uuid}')">⇄ Swap Position</button>`;
+    }
+
     menu.innerHTML = `
         <div class="menu-card">
             <h2>${escapeHTML(p.name)}</h2>
             <p>${p.active ? (isPlaying ? 'Currently Playing 🏸' : 'Ready for Rotation') : 'Taking a Break ☕'}</p>
             
+            ${swapActionHTML}
+
             <button class="btn-main menu-btn" onclick="toggleRestingState()">
                 ${p.active ? 'Take a Break ☕' : 'Return to Play'}
             </button>
@@ -941,28 +1008,13 @@ function undoLastRound() {
     // Restore state from the snapshot using the StateStore
     StateStore.setState({
         squad: snapshot.squadSnapshot.map(s => ({ ...s })),
-        currentMatches: snapshot.matches.map(m => ({ ...m, winnerTeamIndex: null })),
+        currentMatches: snapshot.matches.map(m => ({ ...m })),
         playerQueue: snapshot.queueSnapshot ? [...snapshot.queueSnapshot] : StateStore.playerQueue,
     });
 
     renderSquad();
     rebuildMatchCardIndices();
     renderQueueStrip();
-
-    // Re-apply winner selections to the newly restored currentMatches in the store
-    snapshot.matches.forEach((m, i) => {
-        if (m.winnerTeamIndex !== null) {
-            const card = document.getElementById(`match-${i}`);
-            const boxes = card?.querySelectorAll('.team-box');
-            if (boxes && boxes[m.winnerTeamIndex]) {
-                boxes[m.winnerTeamIndex].classList.add('selected');
-            }
-            // Also update the state store's match object
-            if (StateStore.currentMatches[i]) {
-                StateStore.currentMatches[i].winnerTeamIndex = m.winnerTeamIndex;
-            }
-        }
-    });
 
     updateUndoButton();
     checkNextButtonState();

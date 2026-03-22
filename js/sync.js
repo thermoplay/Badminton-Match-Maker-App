@@ -2,7 +2,7 @@
 // COURTSIDE PRO — sync.js  v4
 // =============================================================================
 // BROADCAST ARCHITECTURE
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Two channels run simultaneously on the same WebSocket:
 //
 //  1. postgres_changes  — heavy state sync (squad, matches, round history)
@@ -23,7 +23,7 @@ let isOperator        = false;
 let currentRoomCode   = null;
 let operatorKey       = null;
 let operatorKeyHash   = null;
-let realtimeChannel   = null;
+let sbManager         = null; // Instance of SupabaseRealtimeManager
 let syncDebounceTimer = null;
 let _isBootingSession = false; // true only during initial rejoin hydration
 
@@ -47,6 +47,167 @@ window._sessionMembers = {};
 // It's best practice to load these from a configuration file or environment variables.
 const _RT_URL = 'wss://crqwaqovoqmlyvqeekhk.supabase.co/realtime/v1/websocket';
 const _RT_KEY = 'sb_publishable_2NEOSY4wadPb93X55k_uvg_ASydylcv'; // This should be your project's public anon key
+
+// ---------------------------------------------------------------------------
+// SUPABASE REALTIME MANAGER CLASS
+// ---------------------------------------------------------------------------
+
+class SupabaseRealtimeManager {
+    constructor(url, key) {
+        this.url = url;
+        this.key = key;
+        this.socket = null;
+        this.roomCode = null;
+        
+        // Reconnection & Health
+        this.reconnectAttempts = 0;
+        this.maxReconnectDelay = 30000; // Cap at 30s
+        this.heartbeatInterval = null;
+        this.pendingHeartbeats = new Map();
+    }
+
+    connect(roomCode) {
+        if (this.socket) this.disconnect();
+        this.roomCode = roomCode;
+
+        this.socket = new WebSocket(`${this.url}?apikey=${this.key}&vsn=1.0.0`);
+        this.socket.onopen    = () => this._onOpen();
+        this.socket.onmessage = (msg) => this._onMessage(msg);
+        this.socket.onerror   = () => this._onError();
+        this.socket.onclose   = () => this._onClose();
+    }
+
+    disconnect() {
+        if (this.socket) {
+            const ws = this.socket;
+            this.socket = null; // Prevent auto-reconnect logic
+            ws.close();
+            this._stopHeartbeat();
+        }
+    }
+
+    broadcast(type, payload) {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+        this.socket.send(JSON.stringify({
+            topic:   `realtime:courtside-${this.roomCode}`,
+            event:   'broadcast',
+            payload: { type, ...payload },
+            ref:     String(Date.now()),
+        }));
+    }
+
+    _onOpen() {
+        this.reconnectAttempts = 0;
+        showReconnectingIndicator(false);
+        const roomCode = this.roomCode;
+
+        // Helper to send Phx Join messages
+        const join = (topic, payload) => {
+            this.socket.send(JSON.stringify({ topic, event: 'phx_join', payload, ref: '1' }));
+        };
+
+        // 1. Sessions (postgres_changes)
+        join('realtime:public:sessions', {
+            config: {
+                broadcast: { self: false },
+                presence: { key: '' },
+                postgres_changes: [{ event: 'UPDATE', schema: 'public', table: 'sessions', filter: `room_code=eq.${roomCode}` }]
+            }
+        });
+
+        // 2. Broadcast channel
+        join(`realtime:courtside-${roomCode}`, { config: { broadcast: { self: false } } });
+
+        // 3. Members
+        join('realtime:public:session_members', {
+            config: {
+                broadcast: { self: false },
+                presence: { key: '' },
+                postgres_changes: [{ event: '*', schema: 'public', table: 'session_members', filter: `room_code=eq.${roomCode}` }]
+            }
+        });
+
+        // 4. Play Requests (Host only)
+        if (isOperator) {
+            join('realtime:public:play_requests', {
+                config: {
+                    broadcast: { self: false },
+                    presence: { key: '' },
+                    postgres_changes: [{ event: 'INSERT', schema: 'public', table: 'play_requests', filter: `room_code=eq.${roomCode}` }]
+                }
+            });
+        }
+
+        this._startHeartbeat();
+    }
+
+    _onMessage(msg) {
+        try {
+            const data = JSON.parse(msg.data);
+            
+            // Latency measurement (Reply to our client-side heartbeat)
+            if (data.event === 'phx_reply' && data.ref && this.pendingHeartbeats.has(data.ref)) {
+                this._measureLatency(data.ref);
+                return;
+            }
+
+            // Heartbeat response
+            if (data.event === 'heartbeat') {
+                this.socket.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: data.ref }));
+                return;
+            }
+            
+            // Route payloads to global handlers
+            if (data.event === 'postgres_changes') _handlePostgresChange(data.payload);
+            else if (data.event === 'broadcast' && data.payload?.type) _handleBroadcast(data.payload);
+
+        } catch (e) {
+            console.error('[CourtSide] Realtime: Error processing message', e);
+        }
+    }
+
+    _onError() { showReconnectingIndicator(true); }
+
+    _onClose() {
+        this._stopHeartbeat();
+        if (this.socket && isOnlineSession) {
+            // Exponential Backoff: 1s, 2s, 4s... up to 30s
+            const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+            this.reconnectAttempts++;
+            setTimeout(() => this.connect(this.roomCode), delay);
+        }
+    }
+
+    _startHeartbeat() {
+        this._stopHeartbeat();
+        this.heartbeatInterval = setInterval(() => {
+            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+            const ref = `hb-${Date.now()}`;
+            this.pendingHeartbeats.set(ref, Date.now());
+            this.socket.send(JSON.stringify({
+                topic: 'phoenix',
+                event: 'heartbeat',
+                payload: {},
+                ref: ref
+            }));
+        }, 5000); // 5s ping
+    }
+
+    _stopHeartbeat() {
+        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = null;
+        this.pendingHeartbeats.clear();
+    }
+
+    _measureLatency(ref) {
+        const start = this.pendingHeartbeats.get(ref);
+        this.pendingHeartbeats.delete(ref);
+        if (start) {
+            const latency = Date.now() - start;
+            _updateLatencyDisplay(latency);
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // API HELPERS
@@ -102,6 +263,9 @@ async function createOnlineSession() {
             if (typeof window.saveToDisk === 'function') window.saveToDisk();
         }
 
+        // Initialize Manager if needed
+        if (!sbManager) sbManager = new SupabaseRealtimeManager(_RT_URL, _RT_KEY);
+
         currentRoomCode = roomCode;
         const opKeyHash = result.data.operator_key; // Server returns the key
         operatorKey     = opKey;
@@ -112,7 +276,7 @@ async function createOnlineSession() {
         localStorage.setItem('cs_room_code',    roomCode);
         localStorage.setItem('cs_operator_key', opKey);
         localStorage.setItem('cs_op_key_hash',  operatorKeyHash);
-        subscribeRealtime(roomCode);
+        sbManager.connect(roomCode);
         updateSessionUI();
         closeOverlay();
         showSessionToast(`🌐 Live! Room: ${roomCode}`);
@@ -164,10 +328,13 @@ async function joinOnlineSession(roomCode) {
             showSessionToast(`👁 Joined session`);
         }
         _syncState();
+
+        if (!sbManager) sbManager = new SupabaseRealtimeManager(_RT_URL, _RT_KEY);
+
         _isBootingSession = true;
         applyRemoteState(session);
         _isBootingSession = false;
-        subscribeRealtime(code);
+        sbManager.connect(code);
         updateSessionUI();
         closeOverlay();
         Haptic.bump();
@@ -184,10 +351,18 @@ async function joinOnlineSession(roomCode) {
 
 function pushStateToSupabase() {
     if (!isOnlineSession || !isOperator) return;
+
+    // OFFLINE GUARD: Queue changes if offline
+    if (!navigator.onLine) {
+        localStorage.setItem('cs_pending_sync', 'true');
+        showSyncStatus('Offline. Changes queued.', 'info');
+        return;
+    }
+
     clearTimeout(syncDebounceTimer);
     syncDebounceTimer = setTimeout(async () => {
         try {
-            await apiCall('session-update', {
+            const res = await apiCall('session-update', {
                 method: 'PATCH',
                 body: {
                     room_code:        currentRoomCode,
@@ -201,7 +376,21 @@ function pushStateToSupabase() {
                     approved_players: window._approvedPlayers || {},
                 },
             });
-        } catch (e) { console.error('CourtSide: push failed', e); }
+            
+            if (res.ok) {
+                localStorage.removeItem('cs_pending_sync');
+                showSyncStatus('Saved to cloud', 'success');
+                // Clear success message after 2s
+                setTimeout(() => {
+                    const el = document.getElementById('syncStatusMsg');
+                    if (el && el.textContent === 'Saved to cloud') el.style.display = 'none';
+                }, 2000);
+            }
+        } catch (e) { 
+            console.error('CourtSide: push failed', e); 
+            localStorage.setItem('cs_pending_sync', 'true');
+            showSyncStatus('Sync failed. Retrying...', 'error');
+        }
     }, 800);
 }
 
@@ -211,13 +400,7 @@ function pushStateToSupabase() {
 
 // Internal: send any broadcast event
 function _broadcast(type, payload) {
-    if (!realtimeChannel || realtimeChannel.readyState !== WebSocket.OPEN) return;
-    realtimeChannel.send(JSON.stringify({
-        topic:   `realtime:courtside-${currentRoomCode}`,
-        event:   'broadcast',
-        payload: { type, ...payload },
-        ref:     String(Date.now()),
-    }));
+    if (sbManager) sbManager.broadcast(type, payload);
 }
 
 /**
@@ -278,23 +461,11 @@ function broadcastMatchResult(winnerUUIDs, loserUUIDs, gameLabel) {
  * Any subscriber can call this (not operator-only).
  */
 function broadcastNameUpdate(playerUUID, oldName, newName) {
-    if (!realtimeChannel || realtimeChannel.readyState !== WebSocket.OPEN) return;
-    realtimeChannel.send(JSON.stringify({
-        topic:   `realtime:courtside-${currentRoomCode}`,
-        event:   'broadcast',
-        payload: { type: 'name_update', playerUUID, oldName, newName },
-        ref:     String(Date.now()),
-    }));
+    if (sbManager) sbManager.broadcast('name_update', { playerUUID, oldName, newName });
 }
 
 function broadcastPlayerLeaving(playerUUID, playerName) {
-    if (!realtimeChannel || realtimeChannel.readyState !== WebSocket.OPEN) return;
-    realtimeChannel.send(JSON.stringify({
-        topic:   `realtime:courtside-${currentRoomCode}`,
-        event:   'broadcast',
-        payload: { type: 'player_leaving', playerUUID, playerName },
-        ref:     String(Date.now()),
-    }));
+    if (sbManager) sbManager.broadcast('player_leaving', { playerUUID, playerName });
 }
 window.broadcastPlayerLeaving = broadcastPlayerLeaving;
 
@@ -500,152 +671,29 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
 }
 
 // ---------------------------------------------------------------------------
-// REAL-TIME SUBSCRIPTION
-// Two channels on one WebSocket connection
+// HANDLER FOR POSTGRES CHANGES (Called by Manager)
 // ---------------------------------------------------------------------------
 
-function subscribeRealtime(roomCode) {
-    if (realtimeChannel) {
-        realtimeChannel.close();
-        realtimeChannel = null;
+function _handlePostgresChange(payload) {
+    const table  = payload?.data?.table || payload?.table;
+    const record = payload?.data?.record;
+    const old    = payload?.data?.old_record;
+    const type   = payload?.eventType || payload?.type;
+
+    if (table === 'session_members' || payload?.data?.table === 'session_members') {
+        if (type === 'DELETE' && old) _handleMemberChange(old, null, type);
+        else if (record) _handleMemberChange(record, old, type);
+        return;
     }
-    const ws = new WebSocket(`${_RT_URL}?apikey=${_RT_KEY}&vsn=1.0.0`);
-    realtimeChannel = ws;
 
-    ws.onopen = () => {
-        // Hide reconnecting indicator on successful connection
-        showReconnectingIndicator(false);
-
-        // Channel 1: postgres_changes for full state sync
-        ws.send(JSON.stringify({
-            topic: 'realtime:public:sessions',
-            event: 'phx_join',
-            payload: {
-                config: {
-                    broadcast:        { self: false },
-                    presence:         { key: '' },
-                    postgres_changes: [{
-                        event:  'UPDATE',
-                        schema: 'public',
-                        table:  'sessions',
-                        filter: `room_code=eq.${roomCode}`,
-                    }],
-                },
-            },
-            ref: '1',
-        }));
-        // Channel 2: broadcast for instant events
-        ws.send(JSON.stringify({
-            topic: `realtime:courtside-${roomCode}`,
-            event: 'phx_join',
-            payload: { config: { broadcast: { self: false } } },
-            ref: '2',
-        }));
-
-        // Channel 3: postgres_changes on session_members
-        // HOST:   receives ALL member changes for this room (name updates, new joins)
-        // PLAYER: receives their OWN row change (status flip pending→active = approval)
-        // Both use the same channel but filter differently client-side in _handleMemberChange.
-        ws.send(JSON.stringify({
-            topic: `realtime:public:session_members`,
-            event: 'phx_join',
-            payload: {
-                config: {
-                    broadcast:        { self: false },
-                    presence:         { key: '' },
-                    postgres_changes: [{
-                        event:  '*',        // INSERT, UPDATE, DELETE
-                        schema: 'public',
-                        table:  'session_members',
-                        filter: `room_code=eq.${roomCode}`,
-                    }],
-                },
-            },
-            ref: '3',
-        }));
-
-        // Channel 4: play_requests INSERTs — Instant Host Notification
-        if (isOperator) {
-            ws.send(JSON.stringify({
-                topic: `realtime:public:play_requests`,
-                event: 'phx_join',
-                payload: {
-                    config: {
-                        broadcast: { self: false },
-                        presence: { key: '' },
-                        postgres_changes: [{
-                            event: 'INSERT',
-                            schema: 'public',
-                            table: 'play_requests',
-                            filter: `room_code=eq.${roomCode}`,
-                        }],
-                    },
-                },
-                ref: '4',
-            }));
+    if (table === 'play_requests' || payload?.data?.table === 'play_requests') {
+        if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
+            window.onPlayRequestInsert(record);
         }
-    };
+        return;
+    }
 
-    ws.onmessage = (msg) => {
-        try {
-            const data = JSON.parse(msg.data);
-            // Heartbeat
-            if (data.event === 'heartbeat') {
-                ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: data.ref }));
-                return;
-            }
-            // postgres_changes — route by table
-            if (data.event === 'postgres_changes') {
-                const table  = data.payload?.data?.table || data.payload?.table;
-                const record = data.payload?.data?.record;
-                const old    = data.payload?.data?.old_record;
-                const type   = data.payload?.eventType || data.payload?.type;
-
-                if (table === 'session_members' || data.payload?.data?.table === 'session_members') {
-                    // session_members change — ALL subscribers handle this
-                    if (type === 'DELETE' && old) _handleMemberChange(old, null, type);
-                    else if (record) _handleMemberChange(record, old, type);
-                    return;
-                }
-
-                if (table === 'play_requests' || data.payload?.data?.table === 'play_requests') {
-                    if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
-                        window.onPlayRequestInsert(record);
-                    }
-                    return;
-                }
-
-                // sessions table change — non-operators only (legacy full-state sync)
-                if (!isOperator && record) {
-                    applyRemoteState(record);
-                }
-                return;
-            }
-            // Broadcast events — all subscribers
-            if (data.event === 'broadcast' && data.payload?.type) {
-                _handleBroadcast(data.payload);
-                return;
-            }
-        } catch (e) {
-            console.error('[CourtSide] Realtime: Error processing message', e, msg.data);
-        }
-    };
-
-    ws.onerror = () => {
-        // Show reconnecting indicator on error
-        showReconnectingIndicator(true);
-    };
-    ws.onclose = () => {
-        // Prevent ghost reconnects if this socket has already been replaced
-        if (ws !== realtimeChannel) return;
-
-        if (isOnlineSession) {
-            // The onclose handler already implements a reconnect strategy.
-            // The onerror handler above will provide visual feedback during
-            // connection drops, which is a better user experience.
-            setTimeout(() => subscribeRealtime(roomCode), 3000);
-        }
-    };
+    if (!isOperator && record) applyRemoteState(record);
 }
 
 // ---------------------------------------------------------------------------
@@ -860,7 +908,7 @@ function leaveSession() {
     operatorKey     = null;
     operatorKeyHash = null;
     _syncState();
-    if (realtimeChannel) { realtimeChannel.close(); realtimeChannel = null; }
+    if (sbManager) sbManager.disconnect();
     localStorage.removeItem('cs_room_code');
     localStorage.removeItem('cs_operator_key');
     localStorage.removeItem('cs_op_key_hash');
@@ -1009,14 +1057,42 @@ async function tryAutoRejoin() {
             isOperator = false;
         }
         _syncState();
+
+        // CONFLICT RESOLUTION:
+        // If we are the Host and have offline changes (pending sync),
+        // authoritative local state should overwrite the stale server state.
+        const hasPending = localStorage.getItem('cs_pending_sync') === 'true';
+        
         _isBootingSession = true;
-        applyRemoteState(session);
+        if (isOperator && hasPending) {
+            console.log('[CourtSide] Offline changes detected. Pushing local state to server.');
+            pushStateToSupabase();
+        } else {
+            applyRemoteState(session);
+        }
         _isBootingSession = false;
-        subscribeRealtime(savedCode);
+        if (!sbManager) sbManager = new SupabaseRealtimeManager(_RT_URL, _RT_KEY);
+        sbManager.connect(savedCode);
         updateSessionUI();
         showSessionToast(isOperator ? `✅ Reconnected as host` : `👁 Rejoined session`);
     } catch { /* silently stay offline */ }
 }
+
+// ---------------------------------------------------------------------------
+// CONNECTION MONITORING
+// ---------------------------------------------------------------------------
+
+window.addEventListener('online', () => {
+    // If we are host and have queued changes, sync immediately
+    if (isOnlineSession && isOperator && localStorage.getItem('cs_pending_sync') === 'true') {
+        showSyncStatus('Online. Syncing queued changes...', 'info');
+        pushStateToSupabase();
+    } 
+    // If we were completely disconnected/offline boot, try to reconnect session
+    else if (!isOnlineSession && localStorage.getItem('cs_room_code')) {
+        tryAutoRejoin();
+    }
+});
 
 // ---------------------------------------------------------------------------
 // SPECTATOR PRESENCE
@@ -1087,4 +1163,31 @@ async function archiveRoundToSupabase(snapshot) {
             }),
         });
     } catch (e) { console.error('CourtSide: archive failed', e); }
+}
+
+// ---------------------------------------------------------------------------
+// UI: LATENCY METER
+// ---------------------------------------------------------------------------
+
+function _updateLatencyDisplay(ms) {
+    let el = document.getElementById('sessionLatency');
+    if (!el) {
+        const badge = document.getElementById('sessionBadge');
+        if (!badge) return;
+        el = document.createElement('span');
+        el.id = 'sessionLatency';
+        el.style.fontSize = '0.55rem';
+        el.style.marginLeft = '6px';
+        el.style.opacity = '0.8';
+        el.style.fontFamily = 'monospace';
+        el.style.fontWeight = '700';
+        badge.appendChild(el);
+    }
+    
+    let color = '#4ade80'; // Green
+    if (ms > 150) color = '#facc15'; // Yellow
+    if (ms > 400) color = '#ef4444'; // Red
+    
+    el.style.color = color;
+    el.textContent = `${ms}ms`;
 }

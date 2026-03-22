@@ -960,3 +960,46 @@ function reorderPlayerQueue(srcName, destName) {
     if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.success();
 }
+
+// ---------------------------------------------------------------------------
+// CROSS-COURT SWAP LOGIC
+// ---------------------------------------------------------------------------
+
+function swapActivePlayers(nameA, nameB) {
+    let locA = null, locB = null;
+
+    // 1. Locate both players in current matches
+    StateStore.currentMatches.forEach((m, mIdx) => {
+        m.teams.forEach((team, tIdx) => {
+            const pIdx = team.indexOf(nameA);
+            if (pIdx !== -1) locA = { mIdx, tIdx, pIdx };
+            
+            const pIdxB = team.indexOf(nameB);
+            if (pIdxB !== -1) locB = { mIdx, tIdx, pIdx: pIdxB };
+        });
+    });
+
+    if (!locA || !locB) return false;
+
+    // 2. Perform Swap in State
+    StateStore.currentMatches[locA.mIdx].teams[locA.tIdx][locA.pIdx] = nameB;
+    StateStore.currentMatches[locB.mIdx].teams[locB.tIdx][locB.pIdx] = nameA;
+
+    // 3. Update affected matches (recalc odds, reset winner, re-render)
+    const updateMatch = (idx) => {
+        const m = StateStore.currentMatches[idx];
+        m.winnerTeamIndex = null;
+        const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
+        const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
+        m.odds = calculateOdds(tA, tB);
+        renderMatchCard(idx, tA, tB, m.odds); // Using the helper wrapper
+    };
+
+    updateMatch(locA.mIdx);
+    if (locA.mIdx !== locB.mIdx) updateMatch(locB.mIdx);
+
+    return true;
+}
+
+// Expose for app.js
+window.swapActivePlayers = swapActivePlayers;
