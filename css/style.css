@@ -1050,6 +1050,9 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
 .btn-icon:hover  { border-color: var(--border-accent); background: #222232; }
 .btn-icon:active { transform: scale(0.91); }
 
+/* Clean up UI: Hide legacy 1v1/2v2 toggle button (App is strict Doubles) */
+#modeToggleBtn { display: none !important; }
+
 /* ---------------------------------------------------------------------------
    OVERLAY (STATS & SYNC)
    --------------------------------------------------------------------------- */
