@@ -399,6 +399,19 @@
     <div id="sl-error-banner" aria-live="assertive"></div>
 
     <script>
+        // PWA Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => {
+                        console.log('[SW] Registration successful, scope:', registration.scope);
+                    })
+                    .catch(err => {
+                        console.log('[SW] Registration failed: ', err);
+                    });
+            });
+        }
+
         function _csShowError(msg, source) {
             const banner = document.getElementById('sl-error-banner');
             if (!banner) return;

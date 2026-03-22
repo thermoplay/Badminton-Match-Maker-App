@@ -664,8 +664,9 @@ function setWinner(mIdx, tIdx) {
     checkNextButtonState();
     saveToDisk();
 
-    // Broadcast winner selection immediately so players see it on their feed.
-    if (typeof dispatchWinSignals === 'function') dispatchWinSignals(mIdx);
+    // Broadcast game state so players see the winner selection on the card.
+    // This does NOT trigger win/loss stat updates, only the UI change.
+    if (typeof broadcastGameState === 'function') broadcastGameState();
 }
 
 // ---------------------------------------------------------------------------
