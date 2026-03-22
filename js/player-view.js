@@ -560,53 +560,15 @@ const PlayerMode = {
         
         // Start polling and show a loading state.
         this._subscribeAndPoll(joinCode, passport);
-        this._showSearchingSpinner();
-
-        // Upsert member record to get current status from DB.
-        const upsertResult = await this._memberUpsert(Passport.get(), joinCode).catch(err => {
-            console.error('[PlayerMode.boot] member-upsert threw:', err);
-            return null;
-        });
-
+        
         panel?.classList.remove('sl-booting');
         this._clearSearchingSpinner();
 
-        // Handle failed session lookup.
-        if (!upsertResult) {
-            this.setStatus('pending', 'Court not found', 'The session may have ended. Check the room code.');
-            console.error('[CourtSide] Session lookup failed for room:', joinCode);
-            this._promptForCode();
-            return;
-        }
-
-        // Seamless Reconnect: If DB says we're 'active', we are already in the session.
-        // Just sync up and enter. Don't force a new request.
-        if (upsertResult.status === 'active') {
-            this._markApprovedInSession(joinCode);
-            this._hydrateFromUpsert(upsertResult);
-            this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, "Syncing with court...");
-            SidelineView.show();
-            // Hydrate the view immediately with session data
-            await SidelineView._performRefresh(); 
-            setTimeout(() => this._updateStatus(Passport.get()), 500);
-            return;
-        }
-
-        // Legacy token verification (can likely be removed in the future)
-        const savedToken = this._loadToken(joinCode);
-        if (savedToken) {
-            const valid = await this._verifyToken(joinCode, savedToken, Passport.get());
-            if (valid) {
-                this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${Passport.get().playerName}`, "You're in the squad");
-                return;
-            } else {
-                this._clearToken(joinCode);
-            }
-        }
-
-        // Standard flow: submit a new join request.
-        await this._submitJoinRequest(Passport.get(), joinCode);
+        // Atomic Join Request: checks status, inserts request, or confirms active.
+        await this._submitJoinRequest(passport, joinCode, {
+            statusMessage: 'Connecting to court…',
+            statusSubMessage: 'Verifying session'
+        });
     },
 
 

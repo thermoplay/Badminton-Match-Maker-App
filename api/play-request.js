@@ -79,6 +79,12 @@ export default async function handler(req, res) {
         }
         // ------------------------
 
+        // ── Step 0: Validate Session Exists ──────────────────────────────────
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id&limit=1`);
+        if (!sessionCheck.ok || !sessionCheck.data?.length) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
         // ── Step 1: Check if player is already approved in session_members ────
         // Only this check should short-circuit. A pending row does NOT block us.
         // If 'force' is true (ghost player detected by client), skip this check.
