@@ -40,6 +40,7 @@ function saveToDisk() {
 // FIELD MIGRATION
 // ---------------------------------------------------------------------------
 function migratePlayer(p) {
+    if (!p || typeof p !== 'object') return p;
     if (p.rating           == null) p.rating           = 1200;
     if (p.wins             == null) p.wins             = 0;
     if (p.games            == null) p.games            = 0;
@@ -61,11 +62,13 @@ function loadFromDisk() {
     if (saved) {
         try {
             const data = JSON.parse(saved);
-            const loadedSquad = data.squad || [];
+            const loadedSquad = (data.squad || []).filter(p => p && typeof p === 'object');
             loadedSquad.forEach(migratePlayer);
 
             const squadPlayerNames = new Set(loadedSquad.map(p => p.name));
             const loadedMatches = (data.currentMatches || []).filter(m =>
+                m.teams && Array.isArray(m.teams) &&
+                m.teams.length === 2 && Array.isArray(m.teams[0]) && Array.isArray(m.teams[1]) &&
                 m.teams.flat().every(name => squadPlayerNames.has(name))
             );
 
@@ -96,24 +99,6 @@ function loadFromDisk() {
     }
     checkNextButtonState();
     updateUndoButton();
-}
-
-function renderSavedMatches() {
-    if (StateStore.currentMatches.length === 0) return;
-    const container = document.getElementById('matchContainer');
-    container.innerHTML = '';
-    StateStore.currentMatches.forEach((m, i) => {
-        const tAObjects = m.teams[0].map(n => findP(n));
-        const tBObjects = m.teams[1].map(n => findP(n));
-        if (tAObjects.some(p => !p) || tBObjects.some(p => !p)) return;
-        renderMatchCard(i, tAObjects, tBObjects, m.odds);
-        if (m.winnerTeamIndex !== null) {
-            const boxes = document.querySelectorAll(`#match-${i} .team-box`);
-            if (boxes[m.winnerTeamIndex]) {
-                boxes[m.winnerTeamIndex].classList.add('selected');
-            }
-        }
-    });
 }
 
 // ---------------------------------------------------------------------------
@@ -198,19 +183,19 @@ function editPlayerName() {
             });
 
             renderSquad();
-            renderSavedMatches();
+            rebuildMatchCardIndices();
             renderQueueStrip();
             saveToDisk();
             if (typeof broadcastGameState === 'function') broadcastGameState();
         }
+    });
+}
 
 // Expose UI functions to global scope for inline onclick handlers
 window.showPlayRequests = showPlayRequests;
 window.closePlayRequests = closePlayRequests;
 window.notifApprove = notifApprove;
 window.notifDecline = notifDecline;
-    });
-}
 
 function deletePlayer() {
     const p = StateStore.squad[selectedPlayerIndex];
@@ -904,8 +889,7 @@ function importSyncToken() {
         saveToDisk();
         closeOverlay();
         renderSquad();
-        document.getElementById('matchContainer').innerHTML = '';
-        renderSavedMatches();
+        rebuildMatchCardIndices();
         checkNextButtonState();
     } catch (e) {
         alert('Invalid Sync Token. Please check the data and try again.');
@@ -1269,8 +1253,8 @@ async function shareAuraPoster(matchIdx) {
 
     if (typeof generateShareableImage === 'function') {
         generateShareableImage({
-            teamA: (m.teams[0] || []).join(' & '),
-            teamB: (m.teams[1] || []).join(' & '),
+            teamA: m.teams[0] || [],
+            teamB: m.teams[1] || [],
             title: 'LIVE NOW'
         }).catch(e => {
             console.error('Aura poster failed:', e);

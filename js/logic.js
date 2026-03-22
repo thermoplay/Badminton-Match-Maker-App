@@ -601,6 +601,21 @@ function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now()) {
     card.dataset.started = startedAt;
 
     card.querySelector('.match-label').textContent = `Court ${idx + 1}`;
+
+    if (odds && odds.length === 2) {
+        const hA = odds[0] > odds[1] ? 'highlight' : '';
+        const hB = odds[1] > odds[0] ? 'highlight' : '';
+        const header = card.querySelector('.match-header');
+        if (header) {
+            header.insertAdjacentHTML('beforeend', `
+                <div class="prob-container">
+                    <div class="prob-pill ${hA}">${odds[0]}%</div>
+                    <div class="prob-pill ${hB}">${odds[1]}%</div>
+                </div>
+            `);
+        }
+    }
+
     card.querySelector('.aura-share-btn').onclick = () => shareAuraPoster(idx);
     card.querySelector('.edit-teams-btn').onclick = () => openTeamBuilder(idx);
 
@@ -740,7 +755,8 @@ function renderTeamBuilder() {
         const hA = odds[0] > odds[1] ? 'highlight' : '';
         const hB = odds[1] > odds[0] ? 'highlight' : '';
         document.getElementById('builderOdds').innerHTML = `
-
+            <div class="builder-odds-bar ${hA}" style="width:${odds[0]}%">${odds[0]}%</div>
+            <div class="builder-odds-bar ${hB}" style="width:${odds[1]}%">${odds[1]}%</div>
         `;
     }
 }
@@ -854,6 +870,8 @@ function confirmTeamBuilder() {
     if (cardEl) {
         const newCardEl = buildMatchCard(mIdx, tAObjs, tBObjs, newOdds, originalStartTime);
         cardEl.replaceWith(newCardEl);
+    } else {
+        rebuildMatchCardIndices();
     }
 
     closeTeamBuilder();

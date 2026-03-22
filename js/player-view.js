@@ -74,10 +74,11 @@ const SidelineView = {
         const myName   = passport?.playerName?.toLowerCase() || '';
 
         container.innerHTML = matches.map((m, i) => {
-            const tA      = m.teams[0] || [];
-            const tB      = m.teams[1] || [];
+            const teams   = m.teams || [];
+            const tA      = teams[0] || [];
+            const tB      = teams[1] || [];
             const playing = myName && [...tA, ...tB].map(n => n.toLowerCase()).includes(myName);
-            const odds    = m.odds || [50, 50];
+            const odds    = (m.odds && m.odds.length === 2) ? m.odds : [50, 50];
             const winIdx  = m.winnerTeamIndex;
             const hasWinner = winIdx !== null && winIdx !== undefined;
 
@@ -87,26 +88,34 @@ const SidelineView = {
 
             // Winner banner
             const winnerBanner = hasWinner
-                ? `<div class="sl-winner-banner">🏆 ${(m.teams[winIdx] || []).join(' & ')} won</div>`
+                ? `<div class="sl-winner-banner">🏆 ${(teams[winIdx] || []).join(' & ')} won</div>`
                 : '';
 
             // Team styling
             const aClass = hasWinner ? (winIdx === 0 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
             const bClass = hasWinner ? (winIdx === 1 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
 
+            const safeNames = (arr) => arr.map(n => (typeof escapeHTML === 'function' ? escapeHTML(n) : n)).join(' &amp; ');
+
             return `
                 <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}">
                     <div class="sl-match-header">
                         <div class="sl-match-label">COURT ${i + 1}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
+                        ${(odds[0] !== 50 || odds[1] !== 50) ? `
+                            <div style="display:flex;gap:4px;">
+                                <span class="sl-odds-pill ${odds[0] > odds[1] ? 'sl-odds-fav' : ''}">${odds[0]}%</span>
+                                <span class="sl-odds-pill ${odds[1] > odds[0] ? 'sl-odds-fav' : ''}">${odds[1]}%</span>
+                            </div>`
+                        : ''}
                         ${timerHTML}
                     </div>
                     <div class="sl-match-teams">
                         <div class="sl-team-col">
-                            <span class="${aClass}">${tA.join(' &amp; ')}</span>
+                            <span class="${aClass}">${safeNames(tA)}</span>
                         </div>
                         <span class="sl-vs">VS</span>
                         <div class="sl-team-col">
-                            <span class="${bClass}">${tB.join(' &amp; ')}</span>
+                            <span class="${bClass}">${safeNames(tB)}</span>
                         </div>
                     </div>
                     ${winnerBanner}
@@ -524,6 +533,7 @@ const PlayerMode = {
         const name = await this._promptName();
         if (!name) {
             document.getElementById('sidelinePanel')?.classList.remove('sl-booting');
+            this._promptForCode();
             return null;
         }
         Passport.rename(name);
@@ -722,6 +732,9 @@ const PlayerMode = {
                 <button class="sl-name-submit" id="slNameEntrySubmit">
                     JOIN COURT →
                 </button>
+                <button class="sl-back-btn" id="slNameEntryCancel" style="margin-top:10px;">
+                    Cancel
+                </button>
             </div>`;
         setTimeout(() => document.getElementById('slNameEntryInput')?.focus(), 120);
     },
@@ -875,7 +888,7 @@ const PlayerMode = {
         const me = squad.find(p => p.uuid === passport.playerUUID);
         const myName = me ? me.name : passport.playerName;
 
-        const onCourtNow = new Set(matches.flatMap(m => m.teams.flat()));
+        const onCourtNow = new Set(matches.flatMap(m => (m.teams || []).flat()));
         const playing = me ? onCourtNow.has(me.name) : false;
         const inSquad = !!me;
 
@@ -890,8 +903,9 @@ const PlayerMode = {
         let courtInfo = null;
         if (playing) {
             matches.forEach((m, idx) => {
-                const teamA = m.teams[0] || [];
-                const teamB = m.teams[1] || [];
+                const teams = m.teams || [];
+                const teamA = teams[0] || [];
+                const teamB = teams[1] || [];
                 const all = [...teamA, ...teamB];
                 if (all.some(n => n.toLowerCase() === myName.toLowerCase())) {
                     const myTeam = teamA.some(n => n.toLowerCase() === myName.toLowerCase()) ? teamA : teamB;
@@ -1172,6 +1186,7 @@ const PlayerMode = {
         return new Promise(resolve => {
             let input = document.getElementById('slNameEntryInput');
             let btn   = document.getElementById('slNameEntrySubmit');
+            let cancelBtn = document.getElementById('slNameEntryCancel');
 
             if (!input || !btn) {
                 const container = document.getElementById('slCurrentMatches');
@@ -1182,6 +1197,7 @@ const PlayerMode = {
                 this._showNameEntry();
                 input = document.getElementById('slNameEntryInput');
                 btn   = document.getElementById('slNameEntrySubmit');
+                cancelBtn = document.getElementById('slNameEntryCancel');
             }
 
             const submit = () => {
@@ -1192,6 +1208,7 @@ const PlayerMode = {
             };
 
             btn?.addEventListener('click', submit);
+            cancelBtn?.addEventListener('click', () => resolve(null));
             input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
             setTimeout(() => input?.focus(), 80);
         });

@@ -3900,6 +3900,8 @@ button:active,
     align-items: center;
     justify-content: space-between;
     margin-bottom: 7px;
+    flex-wrap: wrap;
+    gap: 6px;
 }
 
 .sl-match-label {
@@ -3909,6 +3911,7 @@ button:active,
     letter-spacing: 2.5px;
     text-transform: uppercase;
     color: var(--text-muted);
+    white-space: nowrap;
 }
 
 .sl-court-timer {
@@ -3968,6 +3971,7 @@ button:active,
     border: 1px solid var(--border);
     border-radius: 20px;
     padding: 2px 8px;
+    white-space: nowrap;
 }
 
 .sl-odds-pill.sl-odds-fav {

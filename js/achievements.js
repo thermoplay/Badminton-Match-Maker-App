@@ -50,7 +50,7 @@ async function checkAndAwardAchievements(match, squad) {
     for (const player of allPlayersInMatch) {
         if (!player.uuid) continue; // Cannot save achievements for players without a UUID.
 
-        const unlocked = new Set(player.achievements || []);
+        const unlocked = new Set(Array.isArray(player.achievements) ? player.achievements : []);
 
         // --- CHECK WINNER-ONLY ACHIEVEMENTS ---
         if (winners.includes(player)) {
@@ -113,7 +113,7 @@ async function unlockAchievement(player_uuid, achievement_id) {
     if (typeof StateStore !== 'undefined') {
         const p = StateStore.squad.find(p => p.uuid === player_uuid);
         if (p) {
-            if (!p.achievements) p.achievements = [];
+            if (!Array.isArray(p.achievements)) p.achievements = [];
             if (!p.achievements.includes(achievement_id)) {
                 p.achievements.push(achievement_id);
                 if (typeof saveToDisk === 'function') saveToDisk();

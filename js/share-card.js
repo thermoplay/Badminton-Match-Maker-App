@@ -21,8 +21,8 @@
 /**
  * Generic canvas renderer for 9:16 shareable images.
  * @param {object} options - The content to render on the card.
- * @param {string} options.teamA - Formatted name(s) for Team A.
- * @param {string} options.teamB - Formatted name(s) for Team B.
+ * @param {string|string[]} options.teamA - Name(s) for Team A.
+ * @param {string|string[]} options.teamB - Name(s) for Team B.
  * @param {string} options.title - The main title (e.g., "LIVE NOW").
  */
 async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
@@ -201,7 +201,10 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     // ── Share ────────────────────────────────────────────────────────────────
     canvas.toBlob(async (blob) => {
         const file = new File([blob], 'courtside-matchup.png', { type: 'image/png' });
-        const shareText = `🏸 ${teamA} vs ${teamB} — who you got? #CourtSide`;
+        
+        const tAStr = Array.isArray(teamA) ? teamA.join(' & ') : teamA;
+        const tBStr = Array.isArray(teamB) ? teamB.join(' & ') : teamB;
+        const shareText = `🏸 ${tAStr} vs ${tBStr} — who you got? #CourtSide`;
 
         if (navigator.share && navigator.canShare({ files: [file] })) {
             await navigator.share({ title: 'CourtSide Live', text: shareText, files: [file] })
@@ -215,10 +218,11 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
 async function slShareMatch(matchIdx) {
     const m = (window.currentMatches || [])[matchIdx];
     if (!m) return;
+    const teams = m.teams || [];
 
     await generateShareableImage({
-        teamA: (m.teams[0] || []).join(' & '),
-        teamB: (m.teams[1] || []).join(' & '),
+        teamA: teams[0] || [],
+        teamB: teams[1] || [],
         title: 'LIVE NOW'
     });
 }
@@ -250,7 +254,8 @@ function _roundRect(ctx, x, y, w, h, r) {
 
 function _drawTeamBlock(ctx, cx, y, names, color, W) {
     // Split "Player A & Player B" into two lines
-    const parts = names.split(/\s*&\s*/);
+    const parts = Array.isArray(names) ? names : String(names).split(/\s*&\s*/);
+
     if (parts.length >= 2) {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.font = 'bold 72px "Arial Narrow", Arial, sans-serif';
@@ -270,7 +275,8 @@ function _drawTeamBlock(ctx, cx, y, names, color, W) {
         ctx.font = 'bold 72px "Arial Narrow", Arial, sans-serif';
         ctx.letterSpacing = '2px';
         ctx.textAlign = 'center';
-        ctx.fillText(names.toUpperCase(), cx, y + 54);
+        const text = parts[0] || String(names);
+        ctx.fillText(text.toUpperCase(), cx, y + 54);
     }
 }
 

@@ -358,7 +358,6 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     const roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || null;
     if (!roomCode || !playerUUID || !playerName) return null;
     currentRoomCode        = roomCode; // keep local var in sync
-    window.currentRoomCode = roomCode; // expose globally so other paths can read it
     _syncState();
     try {
         const r = await fetch('/api/member-upsert', {
@@ -514,6 +513,9 @@ function subscribeRealtime(roomCode) {
     realtimeChannel = ws;
 
     ws.onopen = () => {
+        // Hide reconnecting indicator on successful connection
+        showReconnectingIndicator(false);
+
         // Channel 1: postgres_changes for full state sync
         ws.send(JSON.stringify({
             topic: 'realtime:public:sessions',
@@ -629,11 +631,15 @@ function subscribeRealtime(roomCode) {
         }
     };
 
-    ws.onerror = () => {};
+    ws.onerror = () => {
+        // Show reconnecting indicator on error
+        showReconnectingIndicator(true);
+    };
     ws.onclose = () => {
         if (isOnlineSession) {
-            // Silent reconnect — no banner. WS drops briefly on mobile
-            // sleep/background and self-heals. The user doesn't need to see it.
+            // The onclose handler already implements a reconnect strategy.
+            // The onerror handler above will provide visual feedback during
+            // connection drops, which is a better user experience.
             setTimeout(() => subscribeRealtime(roomCode), 3000);
         }
     };
@@ -664,8 +670,18 @@ function applyRemoteState(session) {
     const prevCount = StateStore.currentMatches.length;
 
     // Globals FIRST — no render reads stale data
-    const loadedSquad = session.squad || [];
-    const loadedMatches = session.current_matches || [];
+    const loadedSquad = (session.squad || []).filter(p => p && typeof p === 'object');
+    const loadedMatches = (session.current_matches || []).map(m => {
+        // Ensure teams is strictly an array of two arrays to prevent rendering crashes
+        const rawTeams = Array.isArray(m.teams) ? m.teams : [];
+        return {
+            ...m,
+            teams: [
+                Array.isArray(rawTeams[0]) ? rawTeams[0] : [],
+                Array.isArray(rawTeams[1]) ? rawTeams[1] : []
+            ]
+        };
+    });
     const loadedQueue = (session.player_queue || []).filter(name => loadedSquad.find(p => p.name === name));
     let loadedCourts = 1;
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
@@ -703,8 +719,7 @@ function applyRemoteState(session) {
     } else {
         // Host boot/rejoin hydration — restore full UI from DB state
         renderSquad();
-        document.getElementById('matchContainer').innerHTML = '';
-        renderSavedMatches();
+        rebuildMatchCardIndices();
         if (typeof renderQueueStrip === 'function') renderQueueStrip();
         checkNextButtonState();
         updateUndoButton();
@@ -739,7 +754,7 @@ function _handleMemberChange(record, oldRecord, eventType) {
             window._sessionMembers[uuid] = record;
 
             // Name change? Update squad in-memory and re-render.
-            if (prev.player_name && prev.player_name !== name) {
+            if (prev.player_name && name && prev.player_name !== name) {
                 // Delegate to _applyNameUpdate which handles uuid_map + squad + render
                 _applyNameUpdate(uuid, prev.player_name, name);
                 showSessionToast(`✏️ ${prev.player_name} → ${name}`);
