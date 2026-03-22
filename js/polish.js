@@ -69,9 +69,10 @@ const Avatar = (() => {
     const HUES = [162, 195, 220, 270, 330, 15, 45, 90, 0, 180, 240, 300];
 
     function hashName(name) {
+        const str = String(name || '');
         let h = 0;
-        for (let i = 0; i < name.length; i++) {
-            h = (Math.imul(31, h) + name.charCodeAt(i)) | 0;
+        for (let i = 0; i < str.length; i++) {
+            h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
         }
         return Math.abs(h);
     }

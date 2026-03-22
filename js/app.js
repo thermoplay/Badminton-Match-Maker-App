@@ -40,7 +40,6 @@ function saveToDisk() {
 // FIELD MIGRATION
 // ---------------------------------------------------------------------------
 function migratePlayer(p) {
-    if (!p || typeof p !== 'object') return p;
     if (p.rating           == null) p.rating           = 1200;
     if (p.wins             == null) p.wins             = 0;
     if (p.games            == null) p.games            = 0;
@@ -62,13 +61,11 @@ function loadFromDisk() {
     if (saved) {
         try {
             const data = JSON.parse(saved);
-            const loadedSquad = (data.squad || []).filter(p => p && typeof p === 'object');
+            const loadedSquad = data.squad || [];
             loadedSquad.forEach(migratePlayer);
 
             const squadPlayerNames = new Set(loadedSquad.map(p => p.name));
             const loadedMatches = (data.currentMatches || []).filter(m =>
-                m.teams && Array.isArray(m.teams) &&
-                m.teams.length === 2 && Array.isArray(m.teams[0]) && Array.isArray(m.teams[1]) &&
                 m.teams.flat().every(name => squadPlayerNames.has(name))
             );
 
@@ -90,7 +87,7 @@ function loadFromDisk() {
             }, 0);
 
             renderSquad();
-            renderSavedMatches();
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
             renderQueueStrip();
         } catch (e) {
             console.error('CourtSide: Failed to parse saved data.', e);
@@ -183,7 +180,7 @@ function editPlayerName() {
             });
 
             renderSquad();
-            rebuildMatchCardIndices();
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
             renderQueueStrip();
             saveToDisk();
             if (typeof broadcastGameState === 'function') broadcastGameState();
@@ -889,7 +886,8 @@ function importSyncToken() {
         saveToDisk();
         closeOverlay();
         renderSquad();
-        rebuildMatchCardIndices();
+        document.getElementById('matchContainer').innerHTML = '';
+        if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
         checkNextButtonState();
     } catch (e) {
         alert('Invalid Sync Token. Please check the data and try again.');
@@ -1253,8 +1251,8 @@ async function shareAuraPoster(matchIdx) {
 
     if (typeof generateShareableImage === 'function') {
         generateShareableImage({
-            teamA: m.teams[0] || [],
-            teamB: m.teams[1] || [],
+            teamA: (m.teams[0] || []).join(' & '),
+            teamB: (m.teams[1] || []).join(' & '),
             title: 'LIVE NOW'
         }).catch(e => {
             console.error('Aura poster failed:', e);

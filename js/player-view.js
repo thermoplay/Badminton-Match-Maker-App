@@ -84,13 +84,7 @@ const SidelineView = {
 
             // Timer is handled by the global TimerManager in timer.js
             // It reads the `data-started` attribute from the DOM.
-            let timerHTML = '';
-            if (m.startedAt) {
-                const diff = Math.max(0, Date.now() - m.startedAt);
-                const mm = Math.floor(diff / 60000);
-                const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
-                timerHTML = `<span class="sl-court-timer">⏱ ${mm}:${ss}</span>`;
-            }
+            const timerHTML = m.startedAt ? `<span class="sl-court-timer">⏱ 0:00</span>` : '';
 
             // Winner banner
             const winnerBanner = hasWinner
@@ -181,8 +175,9 @@ const SidelineView = {
 
         if (nameEl) nameEl.textContent = passport.playerName;
         if (avatarEl) {
-             avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
-             if (window.Avatar) avatarEl.style.background = Avatar.color(passport.playerName);
+             const safeName = passport.playerName || '?';
+             avatarEl.textContent = safeName.charAt(0).toUpperCase();
+             if (window.Avatar) avatarEl.style.background = Avatar.color(safeName);
         }
         
         // Hide legacy text stats if present
@@ -203,7 +198,9 @@ const SidelineView = {
 
         if (deck) {
             const career = passport.stats || { wins: 0, games: 0 };
-            const cWr = career.games > 0 ? Math.round((career.wins / career.games) * 100) : 0;
+            const cWins  = career.wins || 0;
+            const cGames = career.games || 0;
+            const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
             
             let sWins = 0, sGames = 0, sWr = 0;
             if (me) {
@@ -237,11 +234,11 @@ const SidelineView = {
                         <div class="sl-card-label">CAREER RECORD</div>
                         <div class="sl-card-grid">
                             <div class="sl-card-item">
-                                <div class="sl-card-val">${career.wins}</div>
+                                <div class="sl-card-val">${cWins}</div>
                                 <div class="sl-card-key">WINS</div>
                             </div>
                             <div class="sl-card-item">
-                                <div class="sl-card-val">${career.games}</div>
+                                <div class="sl-card-val">${cGames}</div>
                                 <div class="sl-card-key">GAMES</div>
                             </div>
                             <div class="sl-card-item">
