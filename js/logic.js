@@ -80,7 +80,39 @@ function _processFinishedMatch(match, mIdx) {
     if (typeof dispatchWinSignals === 'function') {
         dispatchWinSignals(mIdx, true); // skipBroadcast = true
     }
+    _recordMatchStats(match);
     rotateCourtPlayers(match);
+}
+
+/**
+ * Records participation stats and history for a completed match.
+ * Moved here from buildMatchFromPlayers to ensure accuracy.
+ */
+function _recordMatchStats(match) {
+    const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
+    const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
+    const allPlayers = [...tA, ...tB];
+
+    allPlayers.forEach(p => p.sessionPlayCount++);
+
+    const addHistory = (p, teammate, opponents) => {
+        p.teammateHistory = p.teammateHistory || {};
+        p.opponentHistory = p.opponentHistory || {};
+        if (teammate) p.teammateHistory[teammate.name] = (p.teammateHistory[teammate.name] || 0) + 1;
+        opponents.forEach(o => {
+            p.opponentHistory[o.name] = (p.opponentHistory[o.name] || 0) + 1;
+        });
+    };
+
+    // Doubles (2v2) logic
+    if (tA.length === 2) {
+        addHistory(tA[0], tA[1], tB);
+        addHistory(tA[1], tA[0], tB);
+    }
+    if (tB.length === 2) {
+        addHistory(tB[0], tB[1], tA);
+        addHistory(tB[1], tB[0], tA);
+    }
 }
 
 /**
@@ -212,11 +244,6 @@ function applyELOForMatch(m) {
         p.rating = Math.max(800, cur + delta); // delta is negative here
         p.games++; p.streak = 0;
     });
-}
-
-// Legacy alias — kept for undo path
-function applyELOResults() {
-    StateStore.currentMatches.forEach(m => applyELOForMatch(m));
 }
 
 // ---------------------------------------------------------------------------
@@ -412,8 +439,6 @@ function pullNextFromQueue(onCourt) {
 
 // Build a match object from 4 player objects, applying best-split pairing.
 function buildMatchFromPlayers(p4) {
-    p4.forEach(p => p.sessionPlayCount++);
-
     // ELO sort with shuffle for tie-breaking
     p4.sort(() => Math.random() - 0.5);
     p4.sort((a, b) => b.rating - a.rating);
@@ -431,17 +456,6 @@ function buildMatchFromPlayers(p4) {
     const odds = calculateOdds(tA, tB);
 
     const storyBadges = determineStoryBadges(tA, tB);
-    // Record session history for all 4 players
-    const addHistory = (p, teammate, opponents) => {
-        p.teammateHistory = p.teammateHistory || {};
-        p.opponentHistory = p.opponentHistory || {};
-        p.teammateHistory[teammate.name] = (p.teammateHistory[teammate.name] || 0) + 1;
-        opponents.forEach(o => {
-            p.opponentHistory[o.name] = (p.opponentHistory[o.name] || 0) + 1;
-        });
-    };
-    addHistory(tA[0], tA[1], tB); addHistory(tA[1], tA[0], tB);
-    addHistory(tB[0], tB[1], tA); addHistory(tB[1], tB[0], tA);
 
     return {
         teams:           [tA.map(p => p.name), tB.map(p => p.name)],
@@ -469,11 +483,6 @@ function rebuildMatchCardIndices() {
             }
         }
     });
-}
-
-// Legacy alias for undo — rotates ALL courts at once
-function rotateQueue() {
-    StateStore.currentMatches.forEach(m => rotateCourtPlayers(m));
 }
 
 // ---------------------------------------------------------------------------
