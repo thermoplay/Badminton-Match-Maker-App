@@ -84,7 +84,13 @@ const SidelineView = {
 
             // Timer is handled by the global TimerManager in timer.js
             // It reads the `data-started` attribute from the DOM.
-            const timerHTML = m.startedAt ? `<span class="sl-court-timer">⏱ 0:00</span>` : '';
+            let timerHTML = '';
+            if (m.startedAt) {
+                const diff = Math.max(0, Date.now() - m.startedAt);
+                const mm = Math.floor(diff / 60000);
+                const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+                timerHTML = `<span class="sl-court-timer">⏱ ${mm}:${ss}</span>`;
+            }
 
             // Winner banner
             const winnerBanner = hasWinner
@@ -95,7 +101,8 @@ const SidelineView = {
             const aClass = hasWinner ? (winIdx === 0 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
             const bClass = hasWinner ? (winIdx === 1 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
 
-            const safeNames = (arr) => arr.map(n => (typeof escapeHTML === 'function' ? escapeHTML(n) : n)).join(' &amp; ');
+            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+            const safeNames = (arr) => arr.map(n => esc(n)).join(' &amp; ');
 
             return `
                 <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}">
@@ -136,11 +143,12 @@ const SidelineView = {
 
         // Parse names and render with avatars if Avatar is available
         if (window.Avatar) {
+            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
             const names = text.split(/\s*[,&]\s*/).map(n => n.trim()).filter(Boolean);
             el.innerHTML = names.map(name =>
                 `<span class="sl-next-avatar-chip">
-                    <span class="sl-next-avatar" style="background:${Avatar.color(name)}">${Avatar.initials(name)}</span>
-                    <span class="sl-next-name">${escapeHTML ? escapeHTML(name) : name}</span>
+                    <span class="sl-next-avatar" style="background:${Avatar.color(name)}">${esc(Avatar.initials(name))}</span>
+                    <span class="sl-next-name">${esc(name)}</span>
                 </span>`
             ).join('<span class="sl-next-sep">·</span>');
         } else {
@@ -266,7 +274,6 @@ const SidelineView = {
         }
 
         // Add Leave Session button to the profile view
-        const profileView = document.getElementById('slViewProfile');
         if (profileView && !profileView.querySelector('.sl-session-actions')) {
             const actionsEl = document.createElement('div');
             actionsEl.className = 'sl-session-actions';
@@ -1244,7 +1251,8 @@ function _showYoureUpBanner(courtNum, partnerName) {
         borderRadius:    '0 0 16px 16px',
     });
     
-    const safePartner = partnerName ? (typeof escapeHTML === 'function' ? escapeHTML(partnerName) : partnerName) : '';
+    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+    const safePartner = partnerName ? esc(partnerName) : '';
     banner.innerHTML = `
         <div style="font-size:0.75rem; font-weight:900; letter-spacing:1px; opacity:0.8; margin-bottom:4px;">YOU'RE UP</div>
         <div style="font-size:1.8rem; font-weight:900; line-height:1; margin-bottom:4px; font-style:italic;">COURT ${courtNum || '?'}</div>

@@ -636,6 +636,9 @@ function subscribeRealtime(roomCode) {
         showReconnectingIndicator(true);
     };
     ws.onclose = () => {
+        // Prevent ghost reconnects if this socket has already been replaced
+        if (ws !== realtimeChannel) return;
+
         if (isOnlineSession) {
             // The onclose handler already implements a reconnect strategy.
             // The onerror handler above will provide visual feedback during

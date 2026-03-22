@@ -19,7 +19,7 @@ function findP(name) {
 // ---------------------------------------------------------------------------
 
 function calculateELODelta(playerRating, opponentAvgRating, actualScore, gamesPlayed) {
-    const K = gamesPlayed < 10 ? 60 : 32; // Placement matches move faster
+    const K = (Number(gamesPlayed) || 0) < 10 ? 60 : 32; // Placement matches move faster
     const expectedScore = 1 / (1 + Math.pow(10, (opponentAvgRating - playerRating) / 400));
     return Math.round(K * (actualScore - expectedScore));
 }
@@ -102,6 +102,8 @@ function _generateAndRenderNextMatchForCourt(mIdx, next4) {
         newCardEl.classList.add('card-replace');
         newCardEl.classList.remove('card-entering');
         cardEl.replaceWith(newCardEl);
+    } else {
+        rebuildMatchCardIndices();
     }
 }
 
@@ -162,18 +164,21 @@ function applyELOForMatch(m) {
     const losers  = m.teams[loseIdx].map(n => findP(n)).filter(Boolean);
     if (!winners.length || !losers.length) return;
 
-    const winAvg  = winners.reduce((s, p) => s + p.rating, 0) / winners.length;
-    const loseAvg = losers.reduce((s, p)  => s + p.rating, 0) / losers.length;
+    const safeRating = p => Number(p.rating) || 1200;
+    const winAvg  = winners.reduce((s, p) => s + safeRating(p), 0) / winners.length;
+    const loseAvg = losers.reduce((s, p)  => s + safeRating(p), 0) / losers.length;
 
     // Update Winners
     winners.forEach(p => {
-        p.rating += calculateELODelta(p.rating, loseAvg, 1, p.games);
+        const cur = safeRating(p);
+        p.rating = cur + calculateELODelta(cur, loseAvg, 1, p.games);
         p.wins++; p.games++; p.streak++;
     });
     // Update Losers
     losers.forEach(p => {
-        const delta = calculateELODelta(p.rating, winAvg, 0, p.games);
-        p.rating = Math.max(800, p.rating + delta); // delta is negative here
+        const cur = safeRating(p);
+        const delta = calculateELODelta(cur, winAvg, 0, p.games);
+        p.rating = Math.max(800, cur + delta); // delta is negative here
         p.games++; p.streak = 0;
     });
 }
