@@ -1922,12 +1922,18 @@ async function approvePlayRequest(name, id, playerUUID = null) {
 }
 
 function _makeApprovalToken() {
-    const arr = new Uint8Array(12);
-    (window.crypto || crypto).getRandomValues(arr);
-    return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+    return Array.from({ length: 12 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 }
 
-const _generateUUID = () => window.Passport?._uuid() || crypto.randomUUID();
+function _generateUUID() {
+    if (window.Passport && typeof window.Passport._uuid === 'function') {
+        return window.Passport._uuid();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
 
 async function denyPlayRequest(id) {
     try {

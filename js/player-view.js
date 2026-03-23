@@ -102,7 +102,8 @@ const SidelineView = {
             const safeNames = (arr) => arr.map(n => esc(n)).join(' &amp; ');
 
             return `
-                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}"
+                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}" onclick="SidelineView.openMatchPreview(${i})">
+                    <div class="sl-match-header">
                         <div class="sl-match-label">${courtName}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
                         ${storyBadges.length ? `<div class="sl-story-badges">${storyBadges.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : ''}
                         ${timerHTML}
@@ -118,7 +119,8 @@ const SidelineView = {
                     </div>
                     ${winnerBanner}
                     ${playing && !hasWinner ? `
-                    <button class="sl-share-mat
+                    <button class="sl-share-match-btn" onclick="event.stopPropagation(); slShareMatch(${i})">
+                        📲 Share this matchup
                     </button>` : ''}
                 </div>`;
         }).join('');

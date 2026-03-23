@@ -231,8 +231,7 @@ function generateRoomCode() {
 }
 
 function generateOperatorKey() {
-    return Array.from(crypto.getRandomValues(new Uint8Array(16)))
-        .map(b => b.toString(16).padStart(2, '0')).join('');
+    return Array.from({ length: 16 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 }
 
 // ---------------------------------------------------------------------------
