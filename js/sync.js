@@ -213,14 +213,28 @@ class SupabaseRealtimeManager {
 // API HELPERS
 // ---------------------------------------------------------------------------
 
-async function apiCall(route, options = {}) {
-    const res = await fetch(`/api/${route}`, {
+async function apiCall(route, options = {}, retries = 2) {
+    const url = `/api/${route}`;
+    const fetchOpts = {
         method:  options.method || 'GET',
         headers: { 'Content-Type': 'application/json' },
         body:    options.body ? JSON.stringify(options.body) : undefined,
-    });
-    const data = await res.json().catch(() => ({}));
-    return { ok: res.ok, status: res.status, data };
+    };
+
+    for (let i = 0; i <= retries; i++) {
+        try {
+            const res = await fetch(url, fetchOpts);
+            // If 5xx server error, throw to trigger retry. 4xx (client error) returns immediately.
+            if (!res.ok && res.status >= 500 && i < retries) throw new Error(res.statusText);
+            
+            const data = await res.json().catch(() => ({}));
+            return { ok: res.ok, status: res.status, data };
+        } catch (e) {
+            if (i === retries) return { ok: false, status: 0, data: { error: 'Network error' } };
+            // Backoff: 500ms, 1000ms
+            await new Promise(r => setTimeout(r, 500 * (i + 1)));
+        }
+    }
 }
 
 function generateRoomCode() {
@@ -300,7 +314,8 @@ async function joinOnlineSession(roomCode) {
     try {
         const result = await apiCall(`session-get?code=${encodeURIComponent(code)}`);
         if (!result.ok) {
-            showSyncStatus('Room not found. Check the code and try again.', 'error');
+            const msg = result.status === 0 ? 'Network error. Retrying...' : 'Room not found. Check code.';
+            showSyncStatus(msg, 'error');
             Haptic.error();
             return;
         }

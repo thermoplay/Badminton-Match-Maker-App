@@ -741,6 +741,7 @@ const PlayerMode = {
 
     _joinCode:  null,
     _pollTimer: null,
+    _statePollTimer: null,
 
     leaveSession() {
         const doLeave = () => {
@@ -768,6 +769,7 @@ const PlayerMode = {
 
             // 2. Clean up local state
             clearInterval(this._pollTimer);
+            clearInterval(this._statePollTimer);
             localStorage.removeItem('cs_player_room_code');
             try { sessionStorage.removeItem(SS_APPROVED); } catch {}
 
@@ -799,6 +801,7 @@ const PlayerMode = {
 
     _onRemovedFromSession() {
         clearInterval(this._pollTimer);
+        clearInterval(this._statePollTimer);
         localStorage.removeItem('cs_player_room_code');
         try { sessionStorage.removeItem(SS_APPROVED); } catch {}
 
@@ -1351,6 +1354,15 @@ const PlayerMode = {
             joinOnlineSession(joinCode).catch(() => {});
         }
         this._startSignalPoll(joinCode, passport);
+        
+        // Connectivity Resilience: State Polling Fallback
+        // Fetches full game state every 10s to recover from WebSocket drops.
+        if (this._statePollTimer) clearInterval(this._statePollTimer);
+        this._statePollTimer = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                SidelineView._performRefresh();
+            }
+        }, 10000);
     },
 
     _startSignalPoll(joinCode, passport) {
