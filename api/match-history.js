@@ -73,6 +73,29 @@ export default async function handler(req, res) {
             return res.status(result.ok ? 200 : 500).json({ archived: rows.length });
         }
 
+        // --- Unlock an Achievement ---
+        if (type === 'achievement_unlock') {
+            const { player_uuid, achievement_id, room_code, operator_key } = req.body;
+            
+            // Verify operator key (only host can unlock)
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
+            if (!sessionRes.ok || !sessionRes.data?.[0]) {
+                return res.status(404).json({ error: 'Session not found' });
+            }
+            if (sessionRes.data[0].operator_key !== operator_key) {
+                return res.status(403).json({ error: 'Invalid operator key' });
+            }
+
+            const result = await sb('/player_achievements', {
+                method: 'POST',
+                body: { player_uuid, achievement_id, room_code, unlocked_at: new Date().toISOString() }
+            });
+
+            // Ignore 409 (Conflict) if achievement already exists, otherwise report error
+            if (!result.ok && result.status !== 409) return res.status(500).json({ error: 'Failed to save' });
+            return res.status(200).json({ ok: true });
+        }
+
         return res.status(400).json({ error: 'Invalid POST type specified' });
     }
 

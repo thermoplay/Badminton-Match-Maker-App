@@ -123,10 +123,11 @@ async function unlockAchievement(player_uuid, achievement_id) {
 
     try {
         // Use the new, secure endpoint
-        await fetch('/api/achievement-unlock', {
+        await fetch('/api/match-history', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                type: 'achievement_unlock',
                 player_uuid: player_uuid,
                 achievement_id: achievement_id,
                 room_code: window.currentRoomCode,

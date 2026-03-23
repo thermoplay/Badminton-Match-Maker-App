@@ -106,12 +106,6 @@ const SidelineView = {
                     <div class="sl-match-header">
                         <div class="sl-match-label">${courtName}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
                         ${storyBadges.length ? `<div class="sl-story-badges">${storyBadges.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : ''}
-                        ${(odds[0] !== 50 || odds[1] !== 50) ? `
-                            <div style="display:flex;gap:4px;">
-                                <span class="sl-odds-pill ${odds[0] > odds[1] ? 'sl-odds-fav' : ''}">${odds[0]}%</span>
-                                <span class="sl-odds-pill ${odds[1] > odds[0] ? 'sl-odds-fav' : ''}">${odds[1]}%</span>
-                            </div>`
-                        : ''}
                         ${timerHTML}
                     </div>
                     <div class="sl-match-teams">
@@ -171,24 +165,64 @@ const SidelineView = {
         const passport = Passport.get();
         if (!passport) return;
         const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+        const profileView = document.getElementById('slViewProfile');
+        if (!profileView) return;
 
-        // Render Header
-        const nameEl = document.getElementById('slProfileName');
-        const avatarEl = document.getElementById('slProfileAvatar');
-        const statsEl = document.getElementById('slProfileStats');
-
-        if (nameEl) nameEl.textContent = passport.playerName;
-        if (avatarEl) {
-             const safeName = passport.playerName || '?';
-             avatarEl.textContent = safeName.charAt(0).toUpperCase();
-             if (window.Avatar) avatarEl.style.background = Avatar.color(safeName);
+        // --- 1. Enhanced Identity Header ---
+        let header = document.getElementById('slProfileHeaderEnhanced');
+        if (!header) {
+            header = document.createElement('div');
+            header.id = 'slProfileHeaderEnhanced';
+            profileView.insertBefore(header, profileView.firstChild);
+            
+            // Hide legacy header elements if they exist
+            ['slProfileName', 'slProfileAvatar', 'slProfileStats'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
         }
-        
-        // Hide legacy text stats if present
-        if (statsEl) statsEl.style.display = 'none';
+
+        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        // Determine Player Title
+        const getTitle = (p) => {
+            if (!p) return { title: 'Newcomer', icon: '👋' };
+            const wr = p.games > 0 ? p.wins / p.games : 0;
+            if (p.streak >= 5)              return { title: 'On Fire',       icon: '🔥' };
+            if (p.streak >= 3)              return { title: 'Hot Hand',      icon: '⚡' };
+            if (p.games === 0)              return { title: 'Fresh Blood',   icon: '🌱' };
+            if (p.games >= 10 && wr >= 0.7) return { title: 'The Closer',    icon: '🎯' };
+            if (p.games >= 10 && wr >= 0.6) return { title: 'Sharp Shooter', icon: '🏹' };
+            if (p.games >= 8)               return { title: 'Iron Man',      icon: '💪' };
+            if (wr >= 0.6 && p.games >= 5)  return { title: 'Rising Star',   icon: '⭐' };
+            if (wr <= 0.35 && p.games >= 5) return { title: 'Never Quits',   icon: '🛡️' };
+            if (p.wins === 0 && p.games > 0)return { title: 'The Underdog',  icon: '🐉' };
+            if (p.games >= 6 && wr >= 0.45) return { title: 'Steady Eddie',  icon: '🤝' };
+            if (p.sessionPlayCount >= 5)    return { title: 'Always Ready',  icon: '🏃' };
+            return { title: 'The Veteran', icon: '🏅' };
+        };
+
+        const titleData = getTitle(me);
+        const avatarColor = window.Avatar ? Avatar.color(passport.playerName) : '#666';
+        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
+
+        header.innerHTML = `
+            <div class="sl-profile-card">
+                <div class="sl-profile-top-right">
+                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
+                </div>
+                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
+                    ${avatarInitial}
+                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
+                </div>
+                <div class="sl-profile-name-large">${esc(passport.playerName)}</div>
+                <div class="sl-profile-title-badge">
+                    <span>${titleData.icon}</span>
+                    <span>${titleData.title}</span>
+                </div>
+            </div>`;
 
         // Render Stats Deck (Session + Career)
-        const profileView = document.getElementById('slViewProfile');
         let deck = document.getElementById('slStatsDeck');
         
         if (!deck && profileView) {

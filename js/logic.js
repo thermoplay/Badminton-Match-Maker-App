@@ -693,19 +693,6 @@ function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now(), storyBadges =
         header.insertAdjacentHTML('beforeend', `<div class="match-story-badges">${storyBadges.map(b => `<span class="story-badge">${escapeHTML(b)}</span>`).join('')}</div>`);
     }
 
-    if (odds && odds.length === 2) {
-        const hA = odds[0] > odds[1] ? 'highlight' : '';
-        const hB = odds[1] > odds[0] ? 'highlight' : '';
-        if (header) {
-            header.insertAdjacentHTML('beforeend', `
-                <div class="prob-container">
-                    <div class="prob-pill ${hA}">${odds[0]}%</div>
-                    <div class="prob-pill ${hB}">${odds[1]}%</div>
-                </div>
-            `);
-        }
-    }
-
     card.querySelector('.aura-share-btn').onclick = () => shareAuraPoster(idx);
     card.querySelector('.edit-teams-btn').onclick = () => openTeamBuilder(idx);
 
@@ -840,18 +827,6 @@ function renderTeamBuilder() {
         sidelineEl.innerHTML = '<div class="builder-section-label" style="opacity:0.4;">No players on sideline</div>';
     }
 
-    // Update odds preview
-    const tAObjs = builderTeams[0].map(n => findP(n)).filter(Boolean);
-    const tBObjs = builderTeams[1].map(n => findP(n)).filter(Boolean);
-    if (tAObjs.length === 2 && tBObjs.length === 2) {
-        const odds = calculateOdds(tAObjs, tBObjs);
-        const hA = odds[0] > odds[1] ? 'highlight' : '';
-        const hB = odds[1] > odds[0] ? 'highlight' : '';
-        document.getElementById('builderOdds').innerHTML = `
-            <div class="builder-odds-bar ${hA}" style="width:${odds[0]}%">${odds[0]}%</div>
-            <div class="builder-odds-bar ${hB}" style="width:${odds[1]}%">${odds[1]}%</div>
-        `;
-    }
 }
 
 /**
