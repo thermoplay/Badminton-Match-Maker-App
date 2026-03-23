@@ -5267,6 +5267,78 @@ button:active,
 .sl-h2h-vs { color: #f87171; } /* Soft red */
 .sl-h2h-with { color: var(--accent); }
 
+/* ── Match Preview (Tale of the Tape) ───────────────────────────────────── */
+.sl-preview-card {
+    max-width: 380px;
+    padding: 20px 0 0; /* Header padding handled by card, content separate */
+    overflow: hidden;
+}
+
+.sl-modal-header { padding: 0 24px; } /* Ensure header aligns with content */
+
+.sl-tape-content { padding: 10px 24px 24px; }
+
+.sl-tape-teams {
+    display: flex;
+    justify-content: space-between;
+    align-items: stretch;
+    margin-bottom: 24px;
+}
+.sl-tape-team {
+    width: 42%;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+}
+.sl-tape-name {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    line-height: 1.1;
+    color: var(--text);
+}
+.sl-tape-vs {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 900;
+    font-style: italic;
+    color: var(--accent);
+    display: flex; align-items: center;
+}
+
+.sl-tape-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+}
+.sl-tape-row:last-child { border-bottom: none; }
+
+.sl-tape-label {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    text-align: center;
+    flex: 1;
+}
+
+.sl-tape-val {
+    font-family: var(--font-display);
+    font-size: 1.2rem;
+    font-weight: 800;
+    width: 60px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+.sl-tape-val.win { color: var(--accent); }
+
 .sl-achievements-list {
     display: flex;
     flex-direction: column;

@@ -102,8 +102,7 @@ const SidelineView = {
             const safeNames = (arr) => arr.map(n => esc(n)).join(' &amp; ');
 
             return `
-                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}">
-                    <div class="sl-match-header">
+                <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}"
                         <div class="sl-match-label">${courtName}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
                         ${storyBadges.length ? `<div class="sl-story-badges">${storyBadges.map(b => `<span>${esc(b)}</span>`).join('')}</div>` : ''}
                         ${timerHTML}
@@ -119,11 +118,87 @@ const SidelineView = {
                     </div>
                     ${winnerBanner}
                     ${playing && !hasWinner ? `
-                    <button class="sl-share-match-btn" onclick="slShareMatch(${i})">
-                        📲 Share this matchup
+                    <button class="sl-share-mat
                     </button>` : ''}
                 </div>`;
         }).join('');
+    },
+
+    openMatchPreview(idx) {
+        const match = (window.currentMatches || [])[idx];
+        if (!match) return;
+        const squad = window.squad || [];
+
+        // Helpers to get stats
+        const getStats = (teamNames) => {
+            const players = teamNames.map(n => squad.find(p => p.name === n)).filter(Boolean);
+            if (players.length === 0) return { wr: 0, streak: 0, games: 0 };
+            
+            const totalWins = players.reduce((sum, p) => sum + p.wins, 0);
+            const totalGames = players.reduce((sum, p) => sum + p.games, 0);
+            const avgStreak = Math.round(players.reduce((sum, p) => sum + p.streak, 0) / players.length);
+            const wr = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
+            
+            return { wr, streak: avgStreak, games: totalGames, count: players.length };
+        };
+
+        const tA = match.teams[0];
+        const tB = match.teams[1];
+        const statsA = getStats(tA);
+        const statsB = getStats(tB);
+        const odds = match.odds || [50, 50];
+
+        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const renderNames = (arr) => arr.map(n => esc(n)).join('<br>&amp;<br>');
+
+        const html = `
+            <div class="sl-tape-content">
+                <div class="sl-tape-teams">
+                    <div class="sl-tape-team">
+                        <div class="sl-tape-name">${renderNames(tA)}</div>
+                    </div>
+                    <div class="sl-tape-vs">VS</div>
+                    <div class="sl-tape-team">
+                        <div class="sl-tape-name">${renderNames(tB)}</div>
+                    </div>
+                </div>
+
+                <div class="sl-tape-row">
+                    <div class="sl-tape-val ${odds[0] > odds[1] ? 'win' : ''}">${odds[0]}%</div>
+                    <div class="sl-tape-label">Win Probability</div>
+                    <div class="sl-tape-val ${odds[1] > odds[0] ? 'win' : ''}">${odds[1]}%</div>
+                </div>
+
+                <div class="sl-tape-row">
+                    <div class="sl-tape-val ${statsA.wr > statsB.wr ? 'win' : ''}">${statsA.wr}%</div>
+                    <div class="sl-tape-label">Win Rate</div>
+                    <div class="sl-tape-val ${statsB.wr > statsA.wr ? 'win' : ''}">${statsB.wr}%</div>
+                </div>
+
+                <div class="sl-tape-row">
+                    <div class="sl-tape-val ${statsA.streak > statsB.streak ? 'win' : ''}">${statsA.streak}</div>
+                    <div class="sl-tape-label">Current Streak</div>
+                    <div class="sl-tape-val ${statsB.streak > statsA.streak ? 'win' : ''}">${statsB.streak}</div>
+                </div>
+
+                <div class="sl-tape-row">
+                    <div class="sl-tape-val">${Math.round(statsA.games / statsA.count)}</div>
+                    <div class="sl-tape-label">Avg Experience</div>
+                    <div class="sl-tape-val">${Math.round(statsB.games / statsB.count)}</div>
+                </div>
+            </div>
+        `;
+
+        const contentEl = document.getElementById('slMatchPreviewContent');
+        if (contentEl) {
+            contentEl.innerHTML = html;
+            document.getElementById('slMatchPreviewModal').style.display = 'flex';
+            if (window.Haptic) Haptic.tap();
+        }
+    },
+
+    closeMatchPreview() {
+        document.getElementById('slMatchPreviewModal').style.display = 'none';
     },
 
     _renderNextUp() {

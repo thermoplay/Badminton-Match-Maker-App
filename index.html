@@ -256,6 +256,17 @@
         </div>
     </div>
 
+    <!-- ── MATCH PREVIEW MODAL (TALE OF THE TAPE) ────────────────────────── -->
+    <div id="slMatchPreviewModal" class="sl-modal" style="display:none;" onclick="if(event.target===this) SidelineView.closeMatchPreview()">
+        <div class="sl-modal-card sl-preview-card">
+            <div class="sl-modal-header">
+                <div class="sl-modal-title">TALE OF THE TAPE</div>
+                <button class="sl-modal-close" onclick="SidelineView.closeMatchPreview()">✕</button>
+            </div>
+            <div id="slMatchPreviewContent"></div>
+        </div>
+    </div>
+
     <!-- ═══ PLAYER SIDELINE VIEW ═══════════════════════════════════════════════ -->
     <div id="sidelinePanel" style="display:none;" class="sl-panel">
         <div class="sl-inner">
