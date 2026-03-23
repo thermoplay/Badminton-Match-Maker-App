@@ -464,20 +464,27 @@ function setCourts(n) {
         return;
     }
 
-    if (confirm(`Apply ${val} court${val > 1 ? 's' : ''} now? This will reset the current round.`)) {
-        StateStore.set('currentMatches', []);
-        document.getElementById('matchContainer').innerHTML = '';
-        const onCourt = StateStore.squad.filter(p => p.active);
-        onCourt.forEach(p => {
-            if (!StateStore.playerQueue.includes(p.name)) StateStore.playerQueue.unshift(p.name);
-        });
-        generateMatches();
-    } else {
-        const restoredCourts = StateStore.currentMatches.length || 1;
-        StateStore.set('activeCourts', restoredCourts);
-        if (input) input.value = restoredCourts;
-        saveToDisk();
-    }
+    UIManager.confirm({
+        title: 'Change Courts?',
+        message: `Apply ${val} court${val > 1 ? 's' : ''} now? This will reset the current round.`,
+        confirmText: 'Change & Reset',
+        isDestructive: true,
+        onConfirm: () => {
+            StateStore.set('currentMatches', []);
+            document.getElementById('matchContainer').innerHTML = '';
+            const onCourt = StateStore.squad.filter(p => p.active);
+            onCourt.forEach(p => {
+                if (!StateStore.playerQueue.includes(p.name)) StateStore.playerQueue.unshift(p.name);
+            });
+            generateMatches();
+        },
+        onCancel: () => {
+            const restoredCourts = StateStore.currentMatches.length || 1;
+            StateStore.set('activeCourts', restoredCourts);
+            if (input) input.value = restoredCourts;
+            saveToDisk();
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,30 +1042,32 @@ function updateUndoButton() {
 
 function undoLastRound() {
     if (StateStore.roundHistory.length === 0) return;
-    if (!confirm('Undo the last round? This will reverse all ELO changes.')) return;
-
-    const snapshot = StateStore.roundHistory.pop();
-
-    // Restore state from the snapshot using the StateStore
-    StateStore.setState({
-        squad: snapshot.squadSnapshot.map(s => ({ ...s })),
-        currentMatches: snapshot.matches.map(m => ({ ...m })),
-        playerQueue: snapshot.queueSnapshot ? [...snapshot.queueSnapshot] : StateStore.playerQueue,
+    UIManager.confirm({
+        title: 'Undo Round?',
+        message: 'Undo the last round? This will reverse all ELO changes.',
+        confirmText: 'Yes, Undo',
+        onConfirm: () => {
+            const snapshot = StateStore.roundHistory.pop();
+            // Restore state from the snapshot using the StateStore
+            StateStore.setState({
+                squad: snapshot.squadSnapshot.map(s => ({ ...s })),
+                currentMatches: snapshot.matches.map(m => ({ ...m })),
+                playerQueue: snapshot.queueSnapshot ? [...snapshot.queueSnapshot] : StateStore.playerQueue,
+            });
+            renderSquad();
+            rebuildMatchCardIndices();
+            renderQueueStrip();
+            updateUndoButton();
+            checkNextButtonState();
+            saveToDisk();
+            if (isOnlineSession && isOperator) {
+                pushStateToSupabase();
+                if (typeof broadcastGameState === 'function') broadcastGameState();
+            }
+            Haptic.bump();
+            showSessionToast('↩ Last round undone');
+        }
     });
-
-    renderSquad();
-    rebuildMatchCardIndices();
-    renderQueueStrip();
-
-    updateUndoButton();
-    checkNextButtonState();
-    saveToDisk();
-    if (isOnlineSession && isOperator) {
-        pushStateToSupabase();
-        if (typeof broadcastGameState === 'function') broadcastGameState();
-    }
-    Haptic.bump();
-    showSessionToast('↩ Last round undone');
 }
 
 // ---------------------------------------------------------------------------
@@ -1978,29 +1987,33 @@ function passportRename() {
     const passport = Passport.get();
     if (!passport) return;
 
-    const newName = prompt('Update your name:', passport.playerName);
-    if (!newName || !newName.trim()) return;
+    UIManager.prompt({
+        title: 'Update Name',
+        initialValue: passport.playerName,
+        confirmText: 'Save Name',
+        onConfirm: (newName) => {
+            const trimmed = (newName || '').trim();
+            if (!trimmed) return;
+            
+            const oldName = passport.playerName;
+            Passport.rename(trimmed);
+            
+            if (typeof PlayerMode !== 'undefined') {
+                PlayerMode._renderIdentity(Passport.get());
+            }
+            SidelineView.refresh();
 
-    const trimmed = newName.trim();
-    const oldName = passport.playerName;
-
-    Passport.rename(trimmed);
-    if (typeof PlayerMode !== 'undefined') {
-        PlayerMode._renderIdentity(Passport.get());
-    }
-    SidelineView.refresh();
-
-    if (typeof isOnlineSession !== 'undefined' && isOnlineSession && currentRoomCode) {
-        if (typeof broadcastNameUpdate === 'function') {
-            broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
+            if (typeof isOnlineSession !== 'undefined' && isOnlineSession && currentRoomCode) {
+                if (typeof broadcastNameUpdate === 'function') {
+                    broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
+                }
+                if (typeof memberRename === 'function') {
+                    memberRename(passport.playerUUID, trimmed);
+                }
+            }
+            showSessionToast(`✅ Name updated to ${trimmed}`);
         }
-    }
-
-    if (typeof isOnlineSession !== 'undefined' && isOnlineSession && currentRoomCode && typeof memberRename === 'function') {
-        memberRename(passport.playerUUID, trimmed);
-    }
-
-    showSessionToast(`✅ Name updated to ${trimmed}`);
+    });
 }
 
 let _signalPollTimer = null;
@@ -2153,10 +2166,19 @@ async function passportJoinSession() {
 
 async function passportRenameAndJoin() {
     const passport = Passport.get();
-    const newName  = prompt('Enter name for this session:', passport?.playerName || '');
-    if (!newName || !newName.trim()) return;
-    Passport.rename(newName.trim());
-    await submitPassportJoinRequest(newName.trim(), passport.playerUUID);
+    
+    UIManager.prompt({
+        title: 'Join Session',
+        initialValue: passport?.playerName || '',
+        placeholder: 'Enter name...',
+        confirmText: 'Join',
+        onConfirm: async (newName) => {
+            const trimmed = (newName || '').trim();
+            if (!trimmed) return;
+            Passport.rename(trimmed);
+            await submitPassportJoinRequest(trimmed, passport.playerUUID);
+        }
+    });
 }
 
 async function submitPassportJoinRequest(name, uuid) {

@@ -52,15 +52,15 @@ const UIManager = {
         this._modal.classList.remove('visible');
     },
 
-    confirm({ title, message, confirmText = 'Confirm', onConfirm, isDestructive = false }) {
+    confirm({ title, message, confirmText = 'Confirm', onConfirm, onCancel, isDestructive = false }) {
         const confirmBtnClass = isDestructive ? 'btn-main btn-danger' : 'btn-main';
         const content = `<div class="menu-card"><h2>${_escapeHTML(title)}</h2><p>${_escapeHTML(message)}</p><button id="modalConfirm" class="${confirmBtnClass} menu-btn">${_escapeHTML(confirmText)}</button><button id="modalCancel" class="btn-cancel">Cancel</button></div>`;
         this.show(content, 'card');
         document.getElementById('modalConfirm').onclick = () => { this.hide(); onConfirm(); };
-        document.getElementById('modalCancel').onclick = () => this.hide();
+        document.getElementById('modalCancel').onclick = () => { this.hide(); if (onCancel) onCancel(); };
     },
 
-    prompt({ title, initialValue = '', placeholder = '', confirmText = 'OK', onConfirm }) {
+    prompt({ title, initialValue = '', placeholder = '', confirmText = 'OK', onConfirm, onCancel }) {
         const content = `
             <div class="menu-card">
                 <h2>${_escapeHTML(title)}</h2>
@@ -81,8 +81,11 @@ const UIManager = {
         const submit = () => { this.hide(); onConfirm(inputEl.value); };
 
         confirmBtn.onclick = submit;
-        cancelBtn.onclick = () => this.hide();
-        inputEl.onkeydown = (e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') this.hide(); };
+        cancelBtn.onclick = () => { this.hide(); if (onCancel) onCancel(); };
+        inputEl.onkeydown = (e) => { 
+            if (e.key === 'Enter') submit(); 
+            if (e.key === 'Escape') { this.hide(); if (onCancel) onCancel(); }
+        };
     }
 };
 

@@ -1375,8 +1375,20 @@ const PlayerMode = {
             if (!input || !btn) {
                 const container = document.getElementById('slCurrentMatches');
                 if (!container) {
-                    const n = window.prompt('Enter your name to join:');
-                    return resolve(n ? n.trim() : null);
+                    if (typeof UIManager !== 'undefined') {
+                        UIManager.prompt({
+                            title: 'Join Session',
+                            placeholder: 'Enter your name...',
+                            confirmText: 'Join',
+                            onConfirm: (n) => resolve(n ? n.trim() : null),
+                            onCancel: () => resolve(null)
+                        });
+                    } else {
+                        // Extreme fallback if UIManager fails
+                        const n = window.prompt('Enter your name to join:');
+                        resolve(n ? n.trim() : null);
+                    }
+                    return;
                 }
                 this._showNameEntry();
                 input = document.getElementById('slNameEntryInput');
