@@ -222,6 +222,30 @@ const SidelineView = {
                 </div>
             </div>`;
 
+        // --- 2. Status Toggle (Ready / Resting) ---
+        let statusToggle = document.getElementById('slStatusToggleCard');
+        if (!statusToggle) {
+            statusToggle = document.createElement('div');
+            statusToggle.id = 'slStatusToggleCard';
+            // Insert after header
+            if (header.nextSibling) profileView.insertBefore(statusToggle, header.nextSibling);
+            else profileView.appendChild(statusToggle);
+        }
+        
+        const isActive = me ? me.active : true;
+        statusToggle.className = `sl-status-toggle-card ${isActive ? 'active' : 'resting'}`;
+        statusToggle.onclick = () => PlayerMode.toggleStatus(isActive);
+        statusToggle.innerHTML = `
+            <div class="sl-toggle-icon">${isActive ? '🏸' : '☕'}</div>
+            <div class="sl-toggle-info">
+                <div class="sl-toggle-label">${isActive ? 'I\'M READY TO PLAY' : 'I\'M TAKING A BREAK'}</div>
+                <div class="sl-toggle-sub">${isActive ? 'Included in next rotation' : 'Skipping next rounds'}</div>
+            </div>
+            <div class="sl-toggle-switch">
+                <div class="sl-toggle-knob"></div>
+            </div>
+        `;
+
         // Render Stats Deck (Session + Career)
         let deck = document.getElementById('slStatsDeck');
         
@@ -232,6 +256,15 @@ const SidelineView = {
             const ach = document.getElementById('slProfileAchievements');
             if (ach) profileView.insertBefore(deck, ach);
             else profileView.appendChild(deck);
+        }
+
+        let analyticsContainer = document.getElementById('slProfileAnalytics');
+        if (!analyticsContainer && profileView) {
+            analyticsContainer = document.createElement('div');
+            analyticsContainer.id = 'slProfileAnalytics';
+            const chem = document.getElementById('slProfileChemistry');
+            if (chem) profileView.insertBefore(analyticsContainer, chem);
+            else profileView.appendChild(analyticsContainer);
         }
 
         let chemContainer = document.getElementById('slProfileChemistry');
@@ -296,6 +329,42 @@ const SidelineView = {
                     </div>
                 </div>`;
         }
+
+        if (analyticsContainer && me) {
+            // Rival Logic
+            let rivalName = 'None yet';
+            let rivalCount = 0;
+            if (me.opponentHistory) {
+                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
+                if (rivals.length > 0) {
+                    rivalName = rivals[0][0];
+                    rivalCount = rivals[0][1];
+                }
+            }
+            const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+            // Form Logic
+            const formHTML = (me.form || []).map(r => 
+                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'rgba(239,68,68,0.2)'}; color:${r==='W'?'#000':'#ef4444'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
+            ).join('');
+
+            analyticsContainer.innerHTML = `
+                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
+                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
+                    </div>
+                    <div style="width:1px; height:30px; background:var(--border);"></div>
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
+                        <div style="font-size:0.9rem; font-weight:700;">${esc(rivalName)}</div>
+                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
+                    </div>
+                </div>`;
+        }
+
+        this._renderH2H(profileView, me);
 
         if (chemContainer) {
             const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
@@ -367,6 +436,80 @@ const SidelineView = {
             actionsEl.appendChild(supportSection);
             profileView.appendChild(actionsEl);
         }
+    },
+
+    _renderH2H(profileView, me) {
+        if (!me) return;
+        let container = document.getElementById('slProfileH2H');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'slProfileH2H';
+            container.className = 'sl-h2h-section';
+            
+            // Try to insert before the Achievements section (Label + List)
+            const achList = document.getElementById('slProfileAchievements');
+            let anchor = achList;
+            if (achList && achList.previousElementSibling && 
+                achList.previousElementSibling.classList.contains('sl-section-label') &&
+                achList.previousElementSibling.textContent.includes('ACHIEVEMENTS')) {
+                anchor = achList.previousElementSibling;
+            }
+
+            if (anchor) profileView.insertBefore(container, anchor);
+            else profileView.appendChild(container);
+        }
+
+        const select = document.getElementById('slH2HSelect');
+        const selectedVal = select ? select.value : '';
+
+        const squad = window.squad || [];
+        const others = squad.filter(p => p.uuid !== me.uuid).sort((a,b) => a.name.localeCompare(b.name));
+        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        container.innerHTML = `
+            <div class="sl-section-label">⚔️ HEAD TO HEAD</div>
+            <div class="sl-h2h-select-wrap">
+                <select id="slH2HSelect" class="sl-h2h-select" onchange="SidelineView._renderH2HStats()">
+                    <option value="" disabled ${selectedVal ? '' : 'selected'}>Compare with...</option>
+                    ${others.map(p => `<option value="${esc(p.name)}" ${p.name === selectedVal ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                </select>
+                <div class="sl-h2h-arrow">▼</div>
+            </div>
+            <div id="slH2HStats"></div>
+        `;
+        
+        if (selectedVal) this._renderH2HStats();
+    },
+
+    _renderH2HStats() {
+        const select = document.getElementById('slH2HSelect');
+        const container = document.getElementById('slH2HStats');
+        if (!select || !container) return;
+        
+        const targetName = select.value;
+        if (!targetName) { container.innerHTML = ''; return; }
+
+        const passport = Passport.get();
+        const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+        if (!me) return;
+
+        const vsGames = (me.opponentHistory || {})[targetName] || 0;
+        const withStats = (me.partnerStats || {})[targetName] || { wins: 0, games: 0 };
+        const withWr = withStats.games > 0 ? Math.round((withStats.wins / withStats.games) * 100) : 0;
+
+        container.innerHTML = `
+            <div class="sl-h2h-card">
+                <div class="sl-h2h-row">
+                    <div class="sl-h2h-label">VERSUS (RIVALRY)</div>
+                    <div class="sl-h2h-val sl-h2h-vs">${vsGames} <span style="font-size:0.7rem;color:var(--text-muted);font-weight:600;">GAMES</span></div>
+                </div>
+                <div style="height:1px;background:var(--border);margin:10px 0;"></div>
+                <div class="sl-h2h-row">
+                    <div class="sl-h2h-label">WITH (CHEMISTRY)</div>
+                    <div class="sl-h2h-val sl-h2h-with">${withStats.wins}/${withStats.games} <span style="font-size:0.7rem;color:var(--text-muted);font-weight:600;">(${withWr}%)</span></div>
+                </div>
+            </div>
+        `;
     },
 
     _initPullToRefresh() {
@@ -1254,6 +1397,20 @@ const PlayerMode = {
             setTimeout(() => input?.focus(), 80);
         });
     },
+
+    toggleStatus(currentActiveState) {
+        const passport = Passport.get();
+        if (!passport) return;
+        
+        const newState = !currentActiveState;
+        // Optimistic UI update handled by re-render on next broadcast, 
+        // but we can trigger a haptic feedback immediately.
+        if (window.Haptic) Haptic.tap();
+        
+        if (typeof broadcastStatusUpdate === 'function') {
+            broadcastStatusUpdate(passport.playerUUID, newState);
+        }
+    }
 };
 // =============================================================================
 // "YOU'RE UP!" BANNER — fires once on transition into playing state

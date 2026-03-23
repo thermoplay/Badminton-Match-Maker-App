@@ -406,6 +406,14 @@ function _broadcast(type, payload) {
 }
 
 /**
+ * BUG FIX: Feature #5 - Player self-service break
+ * Player broadcasts their status intent (active/resting) to the host.
+ */
+function broadcastStatusUpdate(playerUUID, isActive) {
+    if (sbManager) sbManager.broadcast('player_status_update', { playerUUID, isActive });
+}
+
+/**
  * BUG 1 FIX — broadcast approval to the specific player.
  * Contains: playerUUID (so player can match), token (for sessionStorage),
  * current squad + matches (so sideline view is immediately populated).
@@ -627,6 +635,14 @@ function _handleBroadcast(payload) {
         }
         return;
     }
+
+    // Feature #5: Status update — host applies the change
+    if (type === 'player_status_update') {
+        if (isOperator) {
+            _applyStatusUpdate(payload.playerUUID, payload.isActive);
+        }
+        return;
+    }
 }
 
 // Host applies a name change broadcast from a player
@@ -672,6 +688,23 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     saveToDisk();
     if (matchUpdated) broadcastGameState(); // Ensure players see the new name on match cards
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
+}
+
+// Host applies a status change broadcast from a player
+function _applyStatusUpdate(playerUUID, isActive) {
+    const player = StateStore.squad.find(p => p.uuid === playerUUID);
+    if (!player) return;
+
+    const oldStatus = player.active;
+    player.active = !!isActive;
+
+    if (oldStatus !== player.active) {
+        renderSquad();
+        checkNextButtonState();
+        saveToDisk();
+        broadcastGameState(); // Push new squad state to all players
+        showSessionToast(`${player.name} is now ${player.active ? 'Ready 🏸' : 'Resting ☕'}`);
+    }
 }
 
 // ---------------------------------------------------------------------------

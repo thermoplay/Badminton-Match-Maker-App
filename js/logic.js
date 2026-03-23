@@ -226,6 +226,7 @@ function applyELOForMatch(m) {
         const cur = safeRating(p);
         p.rating = cur + calculateELODelta(cur, loseAvg, 1, p.games);
         p.wins++; p.games++; p.streak++;
+        p.form = (p.form || []).concat('W').slice(-5);
     });
     // Update Losers
     if (losers.length === 2) {
@@ -243,6 +244,7 @@ function applyELOForMatch(m) {
         const delta = calculateELODelta(cur, winAvg, 0, p.games);
         p.rating = Math.max(800, cur + delta); // delta is negative here
         p.games++; p.streak = 0;
+        p.form = (p.form || []).concat('L').slice(-5);
     });
 }
 

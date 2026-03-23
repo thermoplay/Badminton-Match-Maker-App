@@ -5184,7 +5184,89 @@ button:active,
     opacity: 0;
 }
 
+/* ── Status Toggle Card ─────────────────────────────────────────────────── */
+.sl-status-toggle-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: 20px;
+    user-select: none;
+}
+
+.sl-status-toggle-card.active {
+    border-color: var(--accent);
+    background: linear-gradient(90deg, rgba(0,255,163,0.08), transparent);
+}
+
+.sl-status-toggle-card.resting {
+    border-color: var(--border);
+    opacity: 0.8;
+}
+
+.sl-toggle-icon { font-size: 1.5rem; }
+.sl-toggle-info { flex: 1; }
+.sl-toggle-label {
+    font-family: var(--font-display);
+    font-size: 0.9rem;
+    font-weight: 800;
+    color: var(--text);
+}
+.sl-status-toggle-card.active .sl-toggle-label { color: var(--accent); }
+.sl-toggle-sub { font-size: 0.7rem; color: var(--text-muted); }
+
+.sl-toggle-switch {
+    width: 44px; height: 24px;
+    background: var(--bg2);
+    border-radius: 20px;
+    position: relative;
+    border: 1px solid var(--border);
+    transition: background 0.3s;
+}
+.sl-status-toggle-card.active .sl-toggle-switch { background: var(--accent); border-color: var(--accent); }
+
+.sl-toggle-knob { width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; top: 1px; left: 1px; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+.sl-status-toggle-card.active .sl-toggle-knob { transform: translateX(20px); }
+
 /* ── Achievements List ──────────────────────────────────────────────────── */
+.sl-h2h-section { margin-top: 24px; }
+.sl-h2h-select-wrap { position: relative; margin-bottom: 12px; }
+.sl-h2h-select {
+    width: 100%;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    appearance: none;
+    -webkit-appearance: none;
+}
+.sl-h2h-select:focus { border-color: var(--accent); outline: none; }
+.sl-h2h-arrow {
+    position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+    pointer-events: none; color: var(--text-muted); font-size: 0.8rem;
+}
+.sl-h2h-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px;
+    animation: cardDrop 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.sl-h2h-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.sl-h2h-row:last-child { margin-bottom: 0; }
+.sl-h2h-label { font-size: 0.7rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+.sl-h2h-val { font-family: var(--font-display); font-size: 1.1rem; font-weight: 800; color: var(--text); }
+.sl-h2h-vs { color: #f87171; } /* Soft red */
+.sl-h2h-with { color: var(--accent); }
+
 .sl-achievements-list {
     display: flex;
     flex-direction: column;

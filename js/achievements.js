@@ -25,6 +25,16 @@ const Achievements = {
         name: 'Iron Man',
         description: 'Play 5 games in a single session.',
         icon: '💪'
+    },
+    'socialite': {
+        name: 'Social Butterfly',
+        description: 'Play with 3 different partners.',
+        icon: '🦋'
+    },
+    'veteran': {
+        name: 'Veteran',
+        description: 'Play 10 games in a single session.',
+        icon: '🎖️'
     }
 };
 
@@ -78,6 +88,17 @@ async function checkAndAwardAchievements(match, squad) {
         if (!unlocked.has('iron_man') && player.sessionPlayCount === 5) {
             unlockAchievement(player.uuid, 'iron_man');
             showAchievementToast(player.name, Achievements.iron_man);
+        }
+        // Check for 'veteran'
+        if (!unlocked.has('veteran') && player.games === 10) {
+            unlockAchievement(player.uuid, 'veteran');
+            showAchievementToast(player.name, Achievements.veteran);
+        }
+        // Check for 'socialite'
+        const uniquePartners = Object.keys(player.partnerStats || {}).length;
+        if (!unlocked.has('socialite') && uniquePartners >= 3) {
+            unlockAchievement(player.uuid, 'socialite');
+            showAchievementToast(player.name, Achievements.socialite);
         }
     }
 }

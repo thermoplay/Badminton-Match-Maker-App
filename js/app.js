@@ -54,6 +54,7 @@ function migratePlayer(p) {
     if (p.teammateHistory  == null) p.teammateHistory  = {};
     if (p.opponentHistory  == null) p.opponentHistory  = {};
     if (p.partnerStats     == null) p.partnerStats     = {};
+    if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
     if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
     return p;
@@ -1073,6 +1074,8 @@ function renderStatsTab(tab) {
                 onclick="renderStatsTab('performance')">Performance</button>
             <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
                 onclick="renderStatsTab('history')">History</button>
+            <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
+                onclick="renderStatsTab('profile')">My Profile</button>
         </div>
     `;
 
@@ -1102,6 +1105,167 @@ function renderStatsTab(tab) {
         };
 
         content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
+
+    } else if (tab === 'profile') {
+        if (!passport) {
+             content.innerHTML = tabs + `<div class="sl-empty" style="padding:40px 0;">No passport found.</div>`;
+             return;
+        }
+        const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
+        
+        // 1. Identity Header
+        const { title, icon } = me ? getPlayerTitle(me) : { title: 'Spectator', icon: '👀' };
+        const avatarColor = Avatar.color(passport.playerName);
+        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
+        
+        const headerHTML = `
+            <div class="sl-profile-card">
+                <div class="sl-profile-top-right">
+                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
+                </div>
+                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
+                    ${avatarInitial}
+                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
+                </div>
+                <div class="sl-profile-name-large">${escapeHTML(passport.playerName)}</div>
+                <div class="sl-profile-title-badge">
+                    <span>${icon}</span>
+                    <span>${title}</span>
+                </div>
+            </div>`;
+
+        // 2. Stats Deck
+        const career = passport.stats || { wins: 0, games: 0 };
+        const cWins  = career.wins || 0;
+        const cGames = career.games || 0;
+        const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+        
+        let sWins = 0, sGames = 0, sWr = 0;
+        if (me) {
+            sWins = me.wins;
+            sGames = me.games;
+            sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
+        }
+
+        const statsHTML = `
+            <div class="sl-stats-deck">
+                <div class="sl-stat-card ${!me ? 'inactive' : ''}">
+                    <div class="sl-card-label">CURRENT SESSION</div>
+                    ${me ? `
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>` : `<div class="sl-card-empty">Not in squad</div>`}
+                </div>
+
+                <div class="sl-stat-card">
+                    <div class="sl-card-label">CAREER RECORD</div>
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+        // Form & Analytics (New Section)
+        let analyticsHTML = '';
+        if (me) {
+            // Rival Logic
+            let rivalName = 'None yet';
+            let rivalCount = 0;
+            if (me.opponentHistory) {
+                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
+                if (rivals.length > 0) {
+                    rivalName = rivals[0][0];
+                    rivalCount = rivals[0][1];
+                }
+            }
+
+            // Form Logic
+            const formHTML = (me.form || []).map(r => 
+                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'#ef4444'}; color:${r==='W'?'#000':'#fff'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
+            ).join('');
+
+            analyticsHTML = `
+                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
+                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
+                    </div>
+                    <div style="width:1px; height:30px; background:var(--border);"></div>
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
+                        <div style="font-size:0.9rem; font-weight:700;">${escapeHTML(rivalName)}</div>
+                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
+                    </div>
+                </div>`;
+        }
+
+        // 3. Chemistry
+        let chemHTML = '';
+        if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
+            const partners = Object.entries(me.partnerStats);
+            partners.sort(([, a], [, b]) => {
+                if (b.wins !== a.wins) return b.wins - a.wins;
+                return b.games - a.games;
+            });
+            const best = partners[0];
+            if (best) {
+                const [name, stats] = best;
+                const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+                chemHTML = `
+                    <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
+                    <div class="sl-chem-card">
+                        <div class="sl-chem-details">
+                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(name)}</strong></div>
+                            <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                        </div>
+                    </div>`;
+            }
+        }
+
+        // 4. Achievements
+        let achHTML = '';
+        if (window.Achievements) {
+            const myAch = me ? (me.achievements || []) : [];
+            const list = Object.keys(window.Achievements).map(key => {
+                const def = window.Achievements[key];
+                const unlocked = myAch.includes(key);
+                return `
+                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}">
+                        <div class="sl-ach-icon">${def.icon}</div>
+                        <div class="sl-ach-text">
+                            <div class="sl-ach-title">${def.name}</div>
+                            <div class="sl-ach-desc">${def.description}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            achHTML = `<div class="sl-achievements-list" style="margin-top:20px;">${list}</div>`;
+        }
+
+        content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
 
     } else {
         if (StateStore.roundHistory.length === 0) {
@@ -1223,6 +1387,18 @@ async function openPlayerCard(idx) {
     const bg  = Avatar.color(p.name);
     const ini = Avatar.initials(p.name);
 
+    // Calculate Form HTML
+    const formHTML = (p.form || []).map(r => 
+        `<span style="display:inline-block; width:18px; height:18px; border-radius:50%; background:${r==='W'?'var(--accent)':'rgba(239,68,68,0.2)'}; color:${r==='W'?'#000':'#ef4444'}; font-size:0.55rem; font-weight:800; text-align:center; line-height:18px; margin:0 2px;">${r}</span>`
+    ).join('');
+
+    // Calculate Rival
+    let rival = '—';
+    if (p.opponentHistory) {
+        const rivals = Object.entries(p.opponentHistory).sort(([,a], [,b]) => b - a);
+        if (rivals.length) rival = `${rivals[0][0]} (${rivals[0][1]}g)`;
+    }
+
     // Calculate Partner Chemistry
     let chemistryHTML = '';
     if (p.partnerStats && Object.keys(p.partnerStats).length > 0) {
@@ -1273,6 +1449,16 @@ async function openPlayerCard(idx) {
             <div class="pc-stat">
                 <div class="pc-stat-val">${wr}%</div>
                 <div class="pc-stat-label">Win Rate</div>
+            </div>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:16px; padding:0 10px;">
+            <div style="text-align:left;">
+                <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px;">FORM</div>
+                <div>${formHTML || '<span style="opacity:0.5; font-size:0.8rem;">-</span>'}</div>
+            </div>
+            <div style="text-align:right;">
+                <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px;">RIVAL</div>
+                <div style="font-size:0.85rem; font-weight:600;">${escapeHTML(rival)}</div>
             </div>
         </div>
         ${p.streak > 0 ? `<div class="pc-streak">🔥 ${p.streak} game win streak</div>` : ''}
