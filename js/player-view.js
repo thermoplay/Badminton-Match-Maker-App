@@ -389,6 +389,7 @@ const SidelineView = {
             const cWins  = career.wins || 0;
             const cGames = career.games || 0;
             const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+            const rating = me ? Math.round(me.rating || 1200) : 1200;
             
             let sWins = 0, sGames = 0, sWr = 0;
             if (me) {
@@ -413,7 +414,10 @@ const SidelineView = {
                             </div>
                             <div class="sl-card-item">
                                 <div class="sl-card-val">${sWr}%</div>
-                                <div class="sl-card-key">WIN RATE</div>
+                                <div class="sl-card-key">SESSION WR</div>
+                                <div class="sl-wr-track">
+                                    <div class="sl-wr-bar" style="width:${sWr}%"></div>
+                                </div>
                             </div>
                         </div>` : `<div class="sl-card-empty">Not in a session</div>`}
                     </div>
@@ -422,16 +426,16 @@ const SidelineView = {
                         <div class="sl-card-label">CAREER RECORD</div>
                         <div class="sl-card-grid">
                             <div class="sl-card-item">
-                                <div class="sl-card-val">${cWins}</div>
-                                <div class="sl-card-key">WINS</div>
-                            </div>
-                            <div class="sl-card-item">
                                 <div class="sl-card-val">${cGames}</div>
-                                <div class="sl-card-key">GAMES</div>
+                                <div class="sl-card-key">TOTAL GAMES</div>
                             </div>
                             <div class="sl-card-item">
                                 <div class="sl-card-val">${cWr}%</div>
                                 <div class="sl-card-key">WIN RATE</div>
+                            </div>
+                            <div class="sl-card-item">
+                                <div class="sl-card-val">${rating}</div>
+                                <div class="sl-card-key">RATING</div>
                             </div>
                         </div>
                     </div>
@@ -508,16 +512,19 @@ const SidelineView = {
             const html = Object.keys(window.Achievements).map(key => {
                 const def = window.Achievements[key];
                 const unlocked = myAch.includes(key);
+                const safeName = esc(def.name);
+                const safeDesc = esc(def.description);
+                const statusClass = unlocked ? 'unlocked' : 'locked';
+                const tapAction = `showSessionToast('${unlocked ? '🏆' : '🔒'} ${safeName}: ${safeDesc}')`;
+                
                 return `
-                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}">
-                        <div class="sl-ach-icon">${def.icon}</div>
-                        <div class="sl-ach-text">
-                            <div class="sl-ach-title">${def.name}</div>
-                            <div class="sl-ach-desc">${def.description}</div>
-                        </div>
+                    <div class="sl-achievement-badge ${statusClass}" onclick="${tapAction}">
+                        <div class="sl-ach-icon-large">${def.icon}</div>
+                        <div class="sl-ach-label">${safeName}</div>
                     </div>
                 `;
             }).join('');
+            container.className = 'sl-achievements-grid';
             container.innerHTML = html;
         }
 
