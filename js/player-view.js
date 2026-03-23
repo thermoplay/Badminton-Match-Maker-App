@@ -128,6 +128,8 @@ const SidelineView = {
         const match = (window.currentMatches || [])[idx];
         if (!match) return;
         const squad = window.squad || [];
+        const passport = Passport.get();
+        const myName = passport?.playerName;
 
         // Helpers to get stats
         const getStats = (teamNames) => {
@@ -150,6 +152,10 @@ const SidelineView = {
 
         const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         const renderNames = (arr) => arr.map(n => esc(n)).join('<br>&amp;<br>');
+        const renderNames = (arr) => arr.map(n => {
+            const isMe = myName && n.toLowerCase() === myName.toLowerCase();
+            return isMe ? `<strong style="color: var(--accent);">${esc(n)}</strong>` : esc(n);
+        }).join('<br>&amp;<br>');
 
         const html = `
             <div class="sl-tape-content">
@@ -199,6 +205,32 @@ const SidelineView = {
 
     closeMatchPreview() {
         document.getElementById('slMatchPreviewModal').style.display = 'none';
+    },
+
+    showRecap(recapData) {
+        const modal = document.getElementById('slRecapModal');
+        const content = document.getElementById('slRecapContent');
+        if (!modal || !content || !recapData) return;
+
+        const { totalGames, mostActivePlayer, bestFormPlayer } = recapData;
+        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        content.innerHTML = `
+            <div class="sl-recap-item">
+                <span class="sl-recap-val">${totalGames}</span>
+                <span class="sl-recap-label">Total Games Played</span>
+            </div>
+            <div class="sl-recap-item">
+                <span class="sl-recap-val">${esc(mostActivePlayer.name)}</span>
+                <span class="sl-recap-label">Most Active (${mostActivePlayer.count} games)</span>
+            </div>
+            <div class="sl-recap-item">
+                <span class="sl-recap-val">${esc(bestFormPlayer.name)}</span>
+                <span class="sl-recap-label">Best Form (${bestFormPlayer.streak}-game streak)</span>
+            </div>
+        `;
+
+        modal.style.display = 'flex';
     },
 
     _renderNextUp() {
@@ -1030,6 +1062,12 @@ const PlayerMode = {
                 this._renderIdentity(Passport.get());
             }
         }
+    },
+
+    _onSessionEnded(recapData) {
+        clearInterval(this._pollTimer);
+        if (window.Haptic) Haptic.success();
+        this.showRecap(recapData);
     },
 
     _onApprovalReceived(payload) {

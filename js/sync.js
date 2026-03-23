@@ -481,6 +481,11 @@ function broadcastPlayerLeaving(playerUUID, playerName) {
 }
 window.broadcastPlayerLeaving = broadcastPlayerLeaving;
 
+function broadcastSessionEnded(recapData) {
+    if (!isOperator) return;
+    _broadcast('session_ended', { recap: recapData });
+}
+
 // ---------------------------------------------------------------------------
 // SESSION MEMBERS — DB operations called from app.js
 // ---------------------------------------------------------------------------
@@ -589,6 +594,14 @@ function _handleBroadcast(payload) {
     if (type === 'player_leaving') {
         if (isOperator && typeof window.removePlayerFromSession === 'function') {
             window.removePlayerFromSession(payload.playerUUID, payload.playerName);
+        }
+        return;
+    }
+
+    // Session has ended, show recap to players
+    if (type === 'session_ended') {
+        if (!isOperator && typeof PlayerMode !== 'undefined') {
+            PlayerMode._onSessionEnded(payload.recap);
         }
         return;
     }

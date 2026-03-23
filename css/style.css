@@ -5339,6 +5339,45 @@ button:active,
 }
 .sl-tape-val.win { color: var(--accent); }
 
+/* ── Session Recap Modal (Player View) ──────────────────────────────────── */
+.sl-recap-card {
+    max-width: 380px;
+    padding: 24px;
+}
+
+.sl-recap-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.sl-recap-item {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+}
+
+.sl-recap-val {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 900;
+    font-style: italic;
+    color: var(--accent);
+    line-height: 1.1;
+    margin-bottom: 6px;
+    display: block;
+}
+
+.sl-recap-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    line-height: 1.3;
+}
+
 .sl-achievements-list {
     display: flex;
     flex-direction: column;

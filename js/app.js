@@ -689,8 +689,8 @@ function showOverlay(type) {
                     <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
                         onclick="copyInviteLink()">Copy Invite Link</button>
                     ${isOperator ? `
-                        <button class="btn-main" style="width:100%; margin-top:10px; background:rgba(239,68,68,0.1); color:#ef4444;"
-                            onclick="endAndDeleteSession(); closeOverlay();">End Session</button>
+                        <button class="btn-main btn-danger" style="width:100%; margin-top:10px;"
+                            onclick="confirmEndSession()">End Session</button>
                     ` : `
                         <button class="btn-main" style="width:100%; margin-top:10px; background:#334155; color:#fff;"
                             onclick="leaveSession(); closeOverlay();">Leave Session</button>
@@ -794,6 +794,52 @@ function closeOverlay() {
     document.getElementById('overlay').classList.remove('open');
 }
 
+function confirmEndSession() {
+    // 1. Calculate Recap Stats
+    const totalGames = StateStore.roundHistory.reduce((sum, round) => sum + (round.matches?.length || 0), 0);
+
+    let mostActivePlayer = { name: 'N/A', count: 0 };
+    if (StateStore.squad.length > 0) {
+        const activeSorted = [...StateStore.squad].sort((a, b) => (b.sessionPlayCount || 0) - (a.sessionPlayCount || 0));
+        if (activeSorted.length > 0) {
+            mostActivePlayer = { name: activeSorted[0].name, count: activeSorted[0].sessionPlayCount || 0 };
+        }
+    }
+
+    let bestFormPlayer = { name: 'N/A', streak: 0 };
+    if (StateStore.squad.length > 0) {
+        const streakSorted = [...StateStore.squad].sort((a, b) => (b.streak || 0) - (a.streak || 0));
+        if (streakSorted.length > 0) {
+            bestFormPlayer = { name: streakSorted[0].name, streak: streakSorted[0].streak || 0 };
+        }
+    }
+
+    const recapData = { totalGames, mostActivePlayer, bestFormPlayer };
+
+    // 2. Show Recap Modal with confirmation
+    UIManager.confirm({
+        title: 'Session Recap',
+        message: `
+            <div id="recapContentForDownload" style="text-align:left; padding: 16px; background: var(--bg2); border-radius: 10px; border:1px solid var(--border);">
+                <p><strong>Total Games:</strong> ${recapData.totalGames}</p>
+                <p><strong>Most Active:</strong> ${escapeHTML(recapData.mostActivePlayer.name)} (${recapData.mostActivePlayer.count} games)</p>
+                <p><strong>Best Form:</strong> ${escapeHTML(recapData.bestFormPlayer.name)} (${recapData.bestFormPlayer.streak}-game streak)</p>
+            </div>
+            <p style="margin-top:20px; font-size:0.8rem;">End the session for all players and delete it from the server?</p>
+        `,
+        confirmText: 'End Session',
+        isDestructive: true,
+        onConfirm: () => {
+            if (typeof broadcastSessionEnded === 'function') {
+                broadcastSessionEnded(recapData);
+            }
+            setTimeout(() => {
+                if (typeof endAndDeleteSession === 'function') endAndDeleteSession();
+                closeOverlay();
+            }, 250); // Delay to allow broadcast to send
+        }
+    });
+}
 // ---------------------------------------------------------------------------
 // QR CODE & SYNC TOKEN
 // ---------------------------------------------------------------------------
