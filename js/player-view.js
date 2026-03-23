@@ -153,7 +153,6 @@ const SidelineView = {
         const odds = match.odds || [50, 50];
 
         const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-        const renderNames = (arr) => arr.map(n => esc(n)).join('<br>&amp;<br>');
         const renderNames = (arr) => arr.map(n => {
             const isMe = myName && n.toLowerCase() === myName.toLowerCase();
             return isMe ? `<strong style="color: var(--accent);">${esc(n)}</strong>` : esc(n);

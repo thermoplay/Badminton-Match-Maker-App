@@ -1,4 +1,4 @@
-const CACHE_NAME = 'courtside-pro-v1'; // Change version to force update
+const CACHE_NAME = 'courtside-pro-v2'; // Change version to force update
 const URLS_TO_CACHE = [
     '/',
     '/index.html',
