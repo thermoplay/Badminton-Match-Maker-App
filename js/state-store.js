@@ -13,6 +13,8 @@ const StateStore = (() => {
         roundHistory: [],
         selectedPlayerIndex: null,
         courtNames: {},
+        isOpenParty: false,
+        guestList: [],
     };
 
     // --- Getters ---

@@ -55,6 +55,8 @@ export default async function handler(req, res) {
             current_matches:    session.current_matches,
             player_queue:       session.player_queue     || [],
             last_active:        session.last_active,
+            is_open_party:      session.is_open_party    || false,
+            guest_list:         session.guest_list       || [],
             uuid_map:           session.uuid_map         || {},
             approved_players:   session.approved_players || {},
             // Return the stored key. The client can verify identity by comparing it.

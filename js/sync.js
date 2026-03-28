@@ -389,6 +389,8 @@ function pushStateToSupabase() {
                     player_queue:     StateStore.playerQueue,
                     uuid_map:         window._sessionUUIDMap  || {},
                     court_names:      StateStore.get('courtNames'),
+                    is_open_party:    StateStore.get('isOpenParty') || false,
+                    guest_list:       StateStore.get('guestList') || [],
                     approved_players: window._approvedPlayers || {},
                 },
             });
@@ -836,7 +838,15 @@ function applyRemoteState(session) {
         }, 0);
     }
 
-    StateStore.setState({ squad: loadedSquad, currentMatches: loadedMatches, playerQueue: loadedQueue, activeCourts: loadedCourts, courtNames: loadedCourtNames });
+    StateStore.setState({ 
+        squad: loadedSquad, 
+        currentMatches: loadedMatches, 
+        playerQueue: loadedQueue, 
+        activeCourts: loadedCourts, 
+        courtNames: loadedCourtNames,
+        isOpenParty: session.is_open_party || false,
+        guestList: session.guest_list || []
+    });
     // Also update window globals for player view, which doesn't use StateStore
     if (!isOperator) {
         window.squad = loadedSquad;

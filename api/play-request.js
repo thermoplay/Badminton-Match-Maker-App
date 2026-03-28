@@ -80,10 +80,18 @@ export default async function handler(req, res) {
         // ------------------------
 
         // ── Step 0: Validate Session Exists ──────────────────────────────────
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id&limit=1`);
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list&limit=1`);
         if (!sessionCheck.ok || !sessionCheck.data?.length) {
             return res.status(404).json({ error: 'Session not found' });
         }
+
+        const isOpenParty = !!sessionCheck.data[0].is_open_party;
+        const guestList   = sessionCheck.data[0].guest_list || [];
+
+        const isGuest = guestList.some(g => 
+            g.toLowerCase() === trimmedName.toLowerCase() || 
+            (uuid && g === uuid)
+        );
 
         // ── Step 1: Check if player is already approved in session_members ────
         // Only this check should short-circuit. A pending row does NOT block us.
@@ -113,6 +121,11 @@ export default async function handler(req, res) {
                 }
                 // Fall through to Step 2 and Step 3
             }
+        }
+
+        // If Party is OPEN, return alreadyActive immediately so client skips pending
+        if (isOpenParty || isGuest) {
+            // Fall through to write the records as ACTIVE
         }
 
         // ── Step 2: Duplicate guard — check play_requests, NOT session_members ─
@@ -145,6 +158,7 @@ export default async function handler(req, res) {
 
         // ── Step 4: Upsert/Update session_members status ────────────────────
         if (uuid) {
+            const status = (isOpenParty || isGuest) ? 'active' : 'pending';
             if (force) {
                 // If forcing (ghost player rejoin), we MUST update the status to pending.
                 await sbFetch(
@@ -152,7 +166,7 @@ export default async function handler(req, res) {
                     {
                         method:  'PATCH',
                         headers: { 'Prefer': 'return=minimal' },
-                        body:    { status: 'pending', last_seen: new Date().toISOString() },
+                        body:    { status: status, last_seen: new Date().toISOString() },
                     }
                 );
             } else {
@@ -160,12 +174,12 @@ export default async function handler(req, res) {
                 await sbFetch('/session_members', {
                     method:  'POST',
                     headers: { 'Prefer': 'return=minimal,resolution=ignore-duplicates' },
-                    body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: 'pending', joined_at: new Date().toISOString(), last_seen: new Date().toISOString() },
+                    body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: status, joined_at: new Date().toISOString(), last_seen: new Date().toISOString() },
                 });
             }
         }
 
-        return res.status(200).json({ ok: true, alreadyActive: false });
+        return res.status(200).json({ ok: true, alreadyActive: (isOpenParty || isGuest) });
     }
 
     // ── GET: host polls pending requests ─────────────────────────────────────

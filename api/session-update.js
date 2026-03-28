@@ -65,6 +65,8 @@ export default async function handler(req, res) {
                 player_queue:     player_queue || [],
                 uuid_map:         req.body.uuid_map         || {},
                 approved_players: req.body.approved_players || {},
+                is_open_party:    req.body.is_open_party    || false,
+                guest_list:       req.body.guest_list       || [],
                 last_active: new Date().toISOString(),
             },
         }
