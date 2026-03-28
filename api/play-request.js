@@ -41,7 +41,13 @@ async function sbFetch(path, options = {}) {
         body:    options.body ? JSON.stringify(options.body) : undefined,
     });
     const text = await res.text();
-    return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
+    let data = null;
+    try {
+        if (text) data = JSON.parse(text);
+    } catch (e) {
+        console.error('[sbFetch] JSON parse failed:', text);
+    }
+    return { ok: res.ok, status: res.status, data };
 }
 
 export default async function handler(req, res) {
@@ -77,11 +83,11 @@ export default async function handler(req, res) {
 
         // ── Step 0: Validate Session Exists (Hyphen-Agnostic) ────────────────
         const plainCode = code.replace(/-/g, '');
-        // Use 'in' filter with quoted values for maximum robustness in PostgREST
-        const sessionCheck = await sbFetch(`/sessions?room_code=in.("${encodeURIComponent(code)}","${encodeURIComponent(plainCode)}")&select=id,is_open_party,guest_list,last_active&limit=1`);
+        // Use 'or' filter for better compatibility and to avoid quote encoding issues in URLs
+        const sessionCheck = await sbFetch(`/sessions?or=(room_code.eq.${encodeURIComponent(code)},room_code.eq.${encodeURIComponent(plainCode)})&select=id,is_open_party,guest_list,last_active&limit=1`);
 
         if (!sessionCheck.ok) {
-            return res.status(500).json({ error: 'Failed to verify session with database.' });
+            return res.status(500).json({ error: `Database verification failed (${sessionCheck.status}).` });
         }
 
         if (!sessionCheck.data || sessionCheck.data.length === 0) {
