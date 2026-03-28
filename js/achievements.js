@@ -174,7 +174,19 @@ function showAchievementToast(playerName, achievement) {
     }
 }
 
+/**
+ * Shows a toast with the achievement's full details.
+ */
+function showAchievementDescription(key) {
+    const def = Achievements[key];
+    if (!def) return;
+    if (typeof showSessionToast === 'function') {
+        showSessionToast(`${def.icon} ${def.name}: ${def.description}`);
+    }
+}
+
 // Make these functions available to the other scripts.
 window.checkAndAwardAchievements = checkAndAwardAchievements;
 window.fetchPlayerAchievements = fetchPlayerAchievements;
 window.Achievements = Achievements;
+window.showAchievementDescription = showAchievementDescription;

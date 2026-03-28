@@ -544,7 +544,10 @@ const SidelineView = {
                 const tapAction = `showSessionToast('${unlocked ? '🏆' : '🔒'} ${safeName}: ${safeDesc}')`;
                 
                 return `
-                    <div class="sl-achievement-badge ${statusClass}" onclick="${tapAction}">
+                    <div class="sl-achievement-badge ${statusClass}" onclick="${tapAction}"
+                         onmousedown="startAchPress('${key}')" onmouseup="endAchPress()"
+                         ontouchstart="startAchPress('${key}')" ontouchend="endAchPress()"
+                         oncontextmenu="event.preventDefault(); return false;">
                         <div class="sl-ach-icon-large">${def.icon}</div>
                         <div class="sl-ach-label">${safeName}</div>
                     </div>

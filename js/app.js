@@ -16,6 +16,26 @@ let isLongPress = false;
 let swapSourceUUID = null;
 
 // ---------------------------------------------------------------------------
+// ACHIEVEMENT PRESS HANDLERS
+// ---------------------------------------------------------------------------
+let achPressTimer = null;
+function startAchPress(key) {
+    achPressTimer = setTimeout(() => {
+        if (typeof showAchievementDescription === 'function') {
+            showAchievementDescription(key);
+            if (window.Haptic) Haptic.bump();
+        }
+        achPressTimer = null;
+    }, 600);
+}
+function endAchPress() {
+    clearTimeout(achPressTimer);
+    achPressTimer = null;
+}
+window.startAchPress = startAchPress;
+window.endAchPress = endAchPress;
+
+// ---------------------------------------------------------------------------
 // PERSISTENCE
 // ---------------------------------------------------------------------------
 
@@ -1554,7 +1574,10 @@ async function openPlayerCard(idx) {
                 const isUnlocked = p.achievements && p.achievements.includes(key);
                 return `
                     <div class="pc-achievement-badge ${isUnlocked ? 'unlocked' : 'locked'}" 
-                         title="${def.name}: ${def.description}">
+                         title="${def.name}: ${def.description}"
+                         onmousedown="startAchPress('${key}')" onmouseup="endAchPress()"
+                         ontouchstart="startAchPress('${key}')" ontouchend="endAchPress()"
+                         oncontextmenu="event.preventDefault(); return false;">
                         ${def.icon}
                     </div>
                 `;
@@ -2066,7 +2089,12 @@ window._startPolling = _startPolling;
 function updateIWTPVisibility() {
     const sheet = document.getElementById('iwantToPlaySheet');
     if (!sheet) return;
-    const show = isOnlineSession && !isOperator;
+
+    // BUG FIX: Only show the "I want to play" sheet for spectators.
+    // If the user is already in player-mode (sideline view), hide the join prompt.
+    const isPlayerView = document.body.classList.contains('player-mode');
+    const show = isOnlineSession && !isOperator && !isPlayerView;
+
     sheet.style.display = show ? 'flex' : 'none';
     if (show) checkIWTPSmartRecognition();
 }
@@ -2219,6 +2247,12 @@ function _installPassportIWTPOverride() {
         const passport = Passport.get();
         const sheet    = document.getElementById('iwantToPlaySheet');
         if (!sheet || !isOnlineSession || isOperator) return;
+
+        // BUG FIX: If already in player mode, suppress the welcome back join prompt
+        if (document.body.classList.contains('player-mode')) {
+            sheet.style.display = 'none';
+            return;
+        }
 
         if (passport && passport.playerName) {
             showPassportWelcome(passport);
