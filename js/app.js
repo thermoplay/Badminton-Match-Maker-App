@@ -220,6 +220,33 @@ function editPlayerName() {
     });
 }
 
+function toggleBatterySaver() {
+    const current = StateStore.get('batterySaver') || false;
+    StateStore.set('batterySaver', !current);
+    showSessionToast(`🔋 Battery Saver: ${!current ? 'ON' : 'OFF'}`);
+    // Refresh overlay to update button text
+    showOverlay('sync');
+    saveToDisk();
+}
+window.toggleBatterySaver = toggleBatterySaver;
+
+/**
+ * Forces a reconciliation of the player queue with the active squad.
+ * Useful for fixing edge-case ordering issues or missing players.
+ */
+function resyncQueue() {
+    if (window.isOperator === false) return;
+    if (typeof initQueue === 'function') {
+        initQueue();
+        if (typeof renderQueueStrip === 'function') renderQueueStrip();
+        saveToDisk();
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
+        showSessionToast('🔄 Queue re-synced with squad');
+        if (window.Haptic) Haptic.success();
+    }
+}
+window.resyncQueue = resyncQueue;
+
 // Expose UI functions to global scope for inline onclick handlers
 window.showPlayRequests = showPlayRequests;
 window.closePlayRequests = closePlayRequests;
@@ -720,6 +747,12 @@ function showOverlay(type) {
                     <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
                         onclick="copyInviteLink()">Copy Invite Link</button>
                     ${isOperator ? `
+                        <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
+                            onclick="toggleBatterySaver()">
+                            🔋 Battery Saver: ${StateStore.get('batterySaver') ? 'ON' : 'OFF'}
+                        </button>
+                        <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
+                            onclick="resyncQueue()">🔄 Re-sync Queue</button>
                         <button class="btn-main btn-danger" style="width:100%; margin-top:10px;"
                             onclick="confirmEndSession()">End Session</button>
                     ` : `
@@ -2126,14 +2159,32 @@ function passportRename() {
             if (typeof PlayerMode !== 'undefined') {
                 PlayerMode._renderIdentity(Passport.get());
             }
-            SidelineView.refresh();
 
-            if (typeof isOnlineSession !== 'undefined' && isOnlineSession && currentRoomCode) {
-                if (typeof broadcastNameUpdate === 'function') {
-                    broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
+            if (typeof isOnlineSession !== 'undefined' && isOnlineSession) {
+                // KEY FIX: If Host renames, update squad/matches/queue immediately
+                if (window.isOperator && typeof window._applyNameUpdate === 'function') {
+                    window._applyNameUpdate(passport.playerUUID, oldName, trimmed);
+                } else {
+                    // Player/Spectator renames: broadcast to host
+                    if (typeof broadcastNameUpdate === 'function') {
+                        broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
+                    }
+                    if (typeof SidelineView !== 'undefined') {
+                        SidelineView.refresh();
+                    }
                 }
+                
                 if (typeof memberRename === 'function') {
                     memberRename(passport.playerUUID, trimmed);
+                }
+            } else {
+                // Offline rename: update local squad if this device is the host
+                const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
+                if (me) {
+                    me.name = trimmed;
+                    StateStore.set('playerQueue', StateStore.playerQueue.map(n => n === oldName ? trimmed : n));
+                    renderSquad();
+                    saveToDisk();
                 }
             }
             showSessionToast(`✅ Name updated to ${trimmed}`);

@@ -26,6 +26,7 @@ let operatorKeyHash   = null;
 let sbManager         = null; // Instance of SupabaseRealtimeManager
 let syncDebounceTimer = null;
 let _isBootingSession = false; // true only during initial rejoin hydration
+let _pendingActions   = [];    // Queue for actions attempted while offline
 
 // ---------------------------------------------------------------------------
 // STATE MIRROR — keeps window.X in sync with module-level `let` vars.
@@ -43,6 +44,23 @@ function _syncState() {
 // session_members realtime state
 // Key: player_uuid → { player_uuid, player_name, status, room_code }
 window._sessionMembers = {};
+
+/**
+ * Generates a simple hash of the current squad and queue.
+ * Used for state drift detection by players.
+ */
+function _generateStateHash(squad, queue) {
+    // Create a deterministic string representing the core state
+    const s = (squad || []).map(p => (p.uuid || p.name) + (p.active ? '1' : '0')).sort().join('');
+    const q = (queue || []).join(',');
+    const str = `${s}|${q}`;
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash).toString(36);
+}
 
 // It's best practice to load these from a configuration file or environment variables.
 const _RT_URL = 'wss://crqwaqovoqmlyvqeekhk.supabase.co/realtime/v1/websocket';
@@ -98,7 +116,8 @@ class SupabaseRealtimeManager {
 
     _onOpen() {
         this.reconnectAttempts = 0;
-        showReconnectingIndicator(false);
+        // Clear reconnection/weak signal warning on open
+        if (typeof showReconnectingIndicator === 'function') showReconnectingIndicator(false);
         const roomCode = this.roomCode;
 
         // Connectivity Improvement: Force a state refresh on connect/reconnect
@@ -106,6 +125,8 @@ class SupabaseRealtimeManager {
         if (typeof SidelineView !== 'undefined' && roomCode) {
             SidelineView._performRefresh(true);
         }
+
+        this._flushPendingActions();
 
         // Helper to send Phx Join messages
         const join = (topic, payload) => {
@@ -148,6 +169,15 @@ class SupabaseRealtimeManager {
         this._startHeartbeat();
     }
 
+    _flushPendingActions() {
+        if (_pendingActions.length === 0) return;
+        console.log(`[CourtSide] Connection restored. Flushing ${_pendingActions.length} pending actions...`);
+        while(_pendingActions.length > 0) {
+            const { type, payload } = _pendingActions.shift();
+            this.broadcast(type, payload);
+        }
+    }
+
     _onMessage(msg) {
         try {
             const data = JSON.parse(msg.data);
@@ -174,7 +204,10 @@ class SupabaseRealtimeManager {
         }
     }
 
-    _onError() { showReconnectingIndicator(true); }
+    _onError() { 
+        if (typeof showReconnectingIndicator === 'function') 
+            showReconnectingIndicator(true, '📡 Signal Lost...'); 
+    }
 
     _onClose() {
         this._stopHeartbeat();
@@ -212,7 +245,14 @@ class SupabaseRealtimeManager {
         this.pendingHeartbeats.delete(ref);
         if (start) {
             const latency = Date.now() - start;
-            _updateLatencyDisplay(latency);
+            if (typeof _updateLatencyDisplay === 'function') _updateLatencyDisplay(latency);
+            
+            // If latency is very high (>1.5s), show a soft warning
+            if (latency > 1500) {
+                if (typeof showReconnectingIndicator === 'function') showReconnectingIndicator(true, '📡 Weak Signal...');
+            } else if (this.socket?.readyState === WebSocket.OPEN) {
+                if (typeof showReconnectingIndicator === 'function') showReconnectingIndicator(false);
+            }
         }
     }
 }
@@ -438,14 +478,28 @@ function _broadcast(type, payload) {
  * Player broadcasts their status intent (active/resting) to the host.
  */
 function broadcastStatusUpdate(playerUUID, isActive) {
-    if (sbManager) sbManager.broadcast('player_status_update', { playerUUID, isActive });
+    const payload = { playerUUID, isActive };
+    if (sbManager && sbManager.socket?.readyState === WebSocket.OPEN) {
+        sbManager.broadcast('player_status_update', payload);
+    } else {
+        // Queue for later if offline
+        _pendingActions.push({ type: 'player_status_update', payload });
+        if (typeof showSessionToast === 'function') showSessionToast('📡 Offline. Update will sync on reconnect.');
+    }
 }
 
 /**
  * Player broadcasts their spirit animal update to the host.
  */
 function broadcastSpiritAnimalUpdate(playerUUID, emoji) {
-    if (sbManager) sbManager.broadcast('spirit_animal_update', { playerUUID, emoji });
+    const payload = { playerUUID, emoji };
+    if (sbManager && sbManager.socket?.readyState === WebSocket.OPEN) {
+        sbManager.broadcast('spirit_animal_update', payload);
+    } else {
+        // Queue for later if offline
+        _pendingActions.push({ type: 'spirit_animal_update', payload });
+        if (typeof showSessionToast === 'function') showSessionToast('📡 Offline. Emoji will sync on reconnect.');
+    }
 }
 
 /**
@@ -470,8 +524,13 @@ function broadcastApproval(playerUUID, playerName, token) {
  * Called by saveToDisk hook, setWinner, processAndNext.
  * Players update their live feed immediately without waiting for DB.
  */
-function broadcastGameState() {
+let _broadcastThrottleTimer = null;
+function broadcastGameState(immediate = false) {
     if (!isOperator || !isOnlineSession) return;
+
+    if (!immediate && _broadcastThrottleTimer) return;
+
+    const doBroadcast = () => {
     // Serialize matches with explicit teamA/teamB keys so the player view never
     // has to infer team assignment from position or sort order.
     const safeMatches = StateStore.currentMatches.map(m => ({
@@ -484,9 +543,21 @@ function broadcastGameState() {
     _broadcast('game_state', {
         squad: StateStore.squad,
         current_matches: safeMatches,
+        player_queue: StateStore.playerQueue,
         courtNames: StateStore.get('courtNames'),
         next_up: (document.getElementById('nextUpNames')?.textContent || '').trim(),
+        hash: _generateStateHash(StateStore.squad, StateStore.playerQueue)
     });
+        _broadcastThrottleTimer = null;
+    };
+
+    if (immediate) {
+        clearTimeout(_broadcastThrottleTimer);
+        doBroadcast();
+    } else {
+        // 200ms throttle to prevent broadcast storms during rapid UI actions
+        _broadcastThrottleTimer = setTimeout(doBroadcast, 200);
+    }
 }
 
 /**
@@ -730,6 +801,24 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     uuidMap[trimmed] = playerUUID;
     window._sessionUUIDMap = uuidMap;
 
+    // KEY FIX: Update name in player queue to prevent player from being removed during sync
+    if (StateStore.playerQueue) {
+        const newQueue = StateStore.playerQueue.map(n => (n === prevName ? trimmed : n));
+        StateStore.set('playerQueue', newQueue);
+    }
+
+    // KEY FIX: Update name in approved players list (used for DB push)
+    if (window._approvedPlayers) {
+        const entry = window._approvedPlayers[playerUUID] || window._approvedPlayers[prevName];
+        if (entry) {
+            entry.name = trimmed;
+            if (window._approvedPlayers[prevName]) {
+                delete window._approvedPlayers[prevName];
+                window._approvedPlayers[playerUUID] = entry;
+            }
+        }
+    }
+
     // Update active matches if the player is currently in a game
     let matchUpdated = false;
     if (StateStore.currentMatches) {
@@ -748,6 +837,8 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     if (matchUpdated) broadcastGameState(); // Ensure players see the new name on match cards
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
+window._applyNameUpdate = _applyNameUpdate;
+window._generateStateHash = _generateStateHash;
 
 // Host applies a spirit animal update broadcast from a player
 function _applySpiritAnimalUpdate(playerUUID, emoji) {
@@ -1047,15 +1138,15 @@ function leaveSession() {
     updateSessionUI();
 }
 
-function showReconnectingIndicator(show) {
+function showReconnectingIndicator(show, text = '⟳ Reconnecting…') {
     let el = document.getElementById('reconnectIndicator');
     if (!el) {
         el = document.createElement('div');
         el.id = 'reconnectIndicator';
         el.className = 'reconnect-indicator';
-        el.textContent = '⟳ Reconnecting…';
         document.body.appendChild(el);
     }
+    el.textContent = text;
     el.classList.toggle('visible', show);
 }
 
@@ -1356,5 +1447,9 @@ function _updateLatencyDisplay(ms) {
     if (ms > 400) color = '#ef4444'; // Red
     
     el.style.color = color;
-    el.textContent = `${ms}ms`;
+    
+    // Signal icon + value
+    const icon = ms < 150 ? '📶' : (ms < 400 ? '📶' : '📶');
+    const opacity = ms < 150 ? '1' : (ms < 400 ? '0.7' : '0.4');
+    el.innerHTML = `<span style="opacity:${opacity}; margin-right:2px;">${icon}</span>${ms}ms`;
 }

@@ -235,24 +235,29 @@ const SidelineView = {
         const content = document.getElementById('slRecapContent');
         if (!modal || !content || !recapData) return;
 
-        const { totalGames, mostActivePlayer, bestFormPlayer } = recapData;
+        const { totalGames, mvp, milestones } = recapData;
         const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const dur = milestones?.longest?.duration ? Math.round(milestones.longest.duration / 60000) : 0;
 
         content.innerHTML = `
             <div class="sl-recap-item">
                 <span class="sl-recap-val">${totalGames}</span>
                 <span class="sl-recap-label">Total Games Played</span>
             </div>
-            <div class="sl-recap-item">
-                <span class="sl-recap-val">${esc(mostActivePlayer.name)}</span>
-                <span class="sl-recap-label">Most Active (${mostActivePlayer.count} games)</span>
+            <div class="sl-recap-item" style="border-color:var(--accent); background:var(--accent-dim);">
+                <div style="font-size:0.6rem; color:var(--accent); font-weight:900; letter-spacing:2px; margin-bottom:4px;">SESSION MVP</div>
+                <span class="sl-recap-val" style="font-size:1.8rem;">${esc(mvp.name)}</span>
+                <span class="sl-recap-label" style="color:var(--text);">${mvp.wins} Wins · ${mvp.games} Games</span>
+                <button class="sl-share-match-btn" style="margin-top:12px; background:var(--accent); color:#000;" onclick="PlayerMode.shareMVPPoster()">📲 SHARE MVP POSTER</button>
             </div>
-            <div class="sl-recap-item">
-                <span class="sl-recap-val">${esc(bestFormPlayer.name)}</span>
-                <span class="sl-recap-label">Best Form (${bestFormPlayer.streak}-game streak)</span>
+            <div class="sl-section-label" style="margin-top:10px;">🏅 SESSION RECORDS</div>
+            <div class="sl-recap-item" style="text-align:left; padding:12px;">
+                <div style="font-size:0.75rem; margin-bottom:8px;">⏱ <strong>Longest Game:</strong> ${dur}m<br><span style="font-size:0.65rem; color:var(--text-muted);">${esc(milestones?.longest?.teams || '—')}</span></div>
+                <div style="font-size:0.75rem;">🐶 <strong>Biggest Upset:</strong> ${milestones?.upset?.winner || '—'}<br><span style="font-size:0.65rem; color:var(--text-muted);">Won with only ${milestones?.upset?.odds || 0}% probability</span></div>
             </div>
         `;
 
+        this._lastRecap = recapData;
         modal.style.display = 'flex';
     },
 
@@ -1244,6 +1249,18 @@ const PlayerMode = {
     _onGameStateUpdate(payload) {
         const passport = Passport.get();
         if (!passport) return;
+
+        // Connectivity Improvement: State Drift Detection
+        // Compare host's broadcast hash with our new local state to verify consistency.
+        if (payload.hash && typeof window._generateStateHash === 'function') {
+            const incomingHash = window._generateStateHash(payload.squad, payload.player_queue);
+            if (incomingHash !== payload.hash) {
+                console.warn('[CourtSide] State drift detected! Triggering background resync...');
+                SidelineView._performRefresh(true);
+                return; // Stop here; the refresh will handle the rest.
+            }
+        }
+
         if (payload.next_up) window._lastNextUp = payload.next_up;
         SidelineView.refresh();
         this._updateStatus(passport);
@@ -1554,6 +1571,8 @@ const PlayerMode = {
         // Connectivity Resilience: State Polling Fallback
         // Fetches full game state every 10s to recover from WebSocket drops.
         if (this._statePollTimer) clearInterval(this._statePollTimer);
+        const isSaver = localStorage.getItem('cs_battery_saver') === 'true';
+        const stateInterval = isSaver ? 30000 : 10000;
         this._statePollTimer = setInterval(() => {
             if (document.visibilityState === 'visible') {
                 SidelineView._performRefresh(true); // silent refresh
@@ -1575,7 +1594,9 @@ const PlayerMode = {
 
     _startSignalPoll(joinCode, passport) {
         clearInterval(this._pollTimer);
-        this._pollTimer = setInterval(() => this._pollSignal(joinCode, passport), 3000);
+        const isSaver = localStorage.getItem('cs_battery_saver') === 'true';
+        const interval = isSaver ? 12000 : 3000;
+        this._pollTimer = setInterval(() => this._pollSignal(joinCode, passport), interval);
     },
 
     async _pollSignal(joinCode, passport) {
@@ -1840,6 +1861,7 @@ const PlayerMode = {
     },
 
     openNavigation() {
+        const isSaver = localStorage.getItem('cs_battery_saver') === 'true';
         const code = this._joinCode || window.currentRoomCode || '';
         const content = `
             <div class="menu-card">
@@ -1847,6 +1869,10 @@ const PlayerMode = {
                 <div style="margin-bottom:20px; display:flex; flex-direction:column; gap:8px;">
                     <button class="btn-main" style="background:var(--accent); color:#000; height: 54px;" onclick="UIManager.hide(); SidelineView._performRefresh();">🔄 SYNC NOW</button>
                     
+                    <button class="btn-main" style="background:var(--surface2); color:var(--text); height: 50px;" onclick="PlayerMode.toggleBatterySaver()">
+                        🔋 BATTERY SAVER: ${isSaver ? 'ON' : 'OFF'}
+                    </button>
+
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                         <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="window.location.href=window.location.origin + window.location.pathname">🏠 HOME</button>
                         <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="PlayerMode.shareRoomCode()">🔗 SHARE</button>
@@ -1878,6 +1904,16 @@ const PlayerMode = {
         } else {
             navigator.clipboard.writeText(url).then(() => showSessionToast('Invite link copied!'));
         }
+        UIManager.hide();
+    },
+
+    toggleBatterySaver() {
+        const current = localStorage.getItem('cs_battery_saver') === 'true';
+        const newVal = !current;
+        localStorage.setItem('cs_battery_saver', String(newVal));
+        // Re-init poll timers with new interval
+        this._subscribeAndPoll(this._joinCode, Passport.get());
+        showSessionToast(`🔋 Battery Saver: ${newVal ? 'ON' : 'OFF'}`);
         UIManager.hide();
     },
 

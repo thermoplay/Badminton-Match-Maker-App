@@ -222,6 +222,101 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     }, 'image/png');
 }
 
+/**
+ * Generates a special MVP poster for the end of a session.
+ */
+async function generateMVPPoster(name, wins, totalSessionGames) {
+    const W = 1080, H = 1920;
+    const canvas = document.createElement('canvas');
+    canvas.width  = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    // Background: Deep gradient
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#0a0a1a');
+    bg.addColorStop(0.5, '#0a0a0f');
+    bg.addColorStop(1, '#1a0a0a');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    _drawGrain(ctx, W, H, 0.02);
+    _drawCourtLines(ctx, W, H);
+
+    // Trophy Icon Shadow
+    ctx.fillStyle = 'rgba(0,255,163,0.05)';
+    ctx.font = '400px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('🏆', W/2, H/2 + 100);
+
+    // Top Branding
+    ctx.fillStyle = '#00ffa3';
+    ctx.font = 'bold 44px "Arial Narrow", Arial, sans-serif';
+    ctx.letterSpacing = '12px';
+    ctx.fillText('SESSION RECAP', W/2, 180);
+
+    // Main Title
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,255,163,0.5)';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 120px "Arial Narrow", Arial, sans-serif';
+    ctx.letterSpacing = '4px';
+    ctx.fillText('SESSION MVP', W/2, H*0.35);
+    ctx.restore();
+
+    // Player Name
+    ctx.fillStyle = '#00ffa3';
+    ctx.font = 'italic 900 180px "Arial Narrow", Arial, sans-serif';
+    ctx.fillText(name.toUpperCase(), W/2, H*0.48);
+
+    // Stats Box
+    const boxY = H * 0.6;
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    _roundRect(ctx, 150, boxY, W - 300, 300, 30);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,255,163,0.3)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Stat 1: Wins
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 100px Arial';
+    ctx.fillText(wins, W/2 - 180, boxY + 140);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = 'bold 30px Arial';
+    ctx.letterSpacing = '4px';
+    ctx.fillText('WINS', W/2 - 180, boxY + 200);
+
+    // Divider
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.beginPath(); ctx.moveTo(W/2, boxY + 60); ctx.lineTo(W/2, boxY + 240); ctx.stroke();
+
+    // Stat 2: Total Session Games
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 100px Arial';
+    ctx.fillText(totalSessionGames, W/2 + 180, boxY + 140);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = 'bold 30px Arial';
+    ctx.letterSpacing = '4px';
+    ctx.fillText('GAMES', W/2 + 180, boxY + 200);
+
+    // Footer
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = 'bold 32px Arial';
+    ctx.letterSpacing = '6px';
+    ctx.fillText('THECOURTSIDEPRO.VERCEL.APP', W/2, H - 120);
+
+    canvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const file = new File([blob], 'session-mvp.png', { type: 'image/png' });
+        if (navigator.share && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+            await navigator.share({ title: 'Session MVP', text: `${name} is the MVP! 🏆`, files: [file] }).catch(() => _downloadShareImage(blob));
+        } else {
+            _downloadShareImage(blob);
+        }
+    }, 'image/png');
+}
+
 async function slShareMatch(matchIdx) {
     const m = (window.currentMatches || [])[matchIdx];
     if (!m) return;
@@ -489,4 +584,5 @@ function _roundRectFill(ctx, x, y, w, h, r) {
 
 // Expose the main function to the window for inline `onclick` handlers
 window.slShareMatch = slShareMatch;
+window.generateMVPPoster = generateMVPPoster;
 window.generateShareableImage = generateShareableImage; // Expose generic function

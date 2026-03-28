@@ -27,6 +27,11 @@ const Haptic = {
 
 const Confetti = {
     async burst(x, y, count = 70) {
+        // Suppress confetti if battery saver is on (host uses StateStore, player uses localStorage)
+        const isHostSaver = (typeof StateStore !== 'undefined' && StateStore.get('batterySaver'));
+        const isPlayerSaver = (localStorage.getItem('cs_battery_saver') === 'true');
+        if (isHostSaver || isPlayerSaver) return;
+
         if (!window.confetti) {
             try {
                 await new Promise((resolve, reject) => {

@@ -15,6 +15,7 @@ const StateStore = (() => {
         courtNames: {},
         isOpenParty: false,
         guestList: [],
+        batterySaver: false,
     };
 
     // --- Getters ---
