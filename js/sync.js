@@ -101,9 +101,16 @@ class SupabaseRealtimeManager {
         showReconnectingIndicator(false);
         const roomCode = this.roomCode;
 
+        // Connectivity Improvement: Force a state refresh on connect/reconnect
+        // to ensure we haven't missed any broadcasts while offline.
+        if (typeof SidelineView !== 'undefined' && roomCode) {
+            SidelineView._performRefresh(true);
+        }
+
         // Helper to send Phx Join messages
         const join = (topic, payload) => {
-            this.socket.send(JSON.stringify({ topic, event: 'phx_join', payload, ref: '1' }));
+            const ref = `join-${topic}-${Date.now()}`;
+            this.socket.send(JSON.stringify({ topic, event: 'phx_join', payload, ref }));
         };
 
         // 1. Sessions (postgres_changes)
@@ -145,9 +152,10 @@ class SupabaseRealtimeManager {
         try {
             const data = JSON.parse(msg.data);
             
-            // Latency measurement (Reply to our client-side heartbeat)
-            if (data.event === 'phx_reply' && data.ref && this.pendingHeartbeats.has(data.ref)) {
-                this._measureLatency(data.ref);
+            // Phoenix Reply handling (Joins, Heartbeats)
+            if (data.event === 'phx_reply' && data.ref) {
+                if (this.pendingHeartbeats.has(data.ref)) this._measureLatency(data.ref);
+                if (data.payload?.status === 'error') console.error('[CourtSide] Realtime error:', data.payload.response);
                 return;
             }
 
@@ -776,10 +784,12 @@ function _applyStatusUpdate(playerUUID, isActive) {
 // ---------------------------------------------------------------------------
 
 function _handlePostgresChange(payload) {
-    const table  = payload?.data?.table || payload?.table;
-    const record = payload?.data?.record;
-    const old    = payload?.data?.old_record;
-    const type   = payload?.eventType || payload?.type;
+    const table  = payload?.table || payload?.data?.table;
+    const type   = payload?.eventType || payload?.type || payload?.data?.type;
+    
+    // Support both record/old_record and new/old formats for different Realtime versions
+    const record = payload?.new || payload?.data?.record || payload?.record;
+    const old    = payload?.old || payload?.data?.old_record || payload?.old_record;
 
     if (table === 'session_members' || payload?.data?.table === 'session_members') {
         if (type === 'DELETE' && old) _handleMemberChange(old, null, type);
@@ -790,6 +800,12 @@ function _handlePostgresChange(payload) {
     if (table === 'play_requests' || payload?.data?.table === 'play_requests') {
         if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
             window.onPlayRequestInsert(record);
+            
+            // For Open Rooms, push an immediate game state broadcast
+            // so the joining player doesn't have to wait for the 800ms debounce.
+            if (window.StateStore?.get('isOpenParty')) {
+                setTimeout(() => broadcastGameState(), 200);
+            }
         }
         return;
     }
@@ -1221,10 +1237,27 @@ window.addEventListener('online', () => {
     if (isOnlineSession && isOperator && localStorage.getItem('cs_pending_sync') === 'true') {
         showSyncStatus('Online. Syncing queued changes...', 'info');
         pushStateToSupabase();
-    } 
-    // If we were completely disconnected/offline boot, try to reconnect session
-    else if (!isOnlineSession && localStorage.getItem('cs_room_code')) {
+    } else if (!isOnlineSession && localStorage.getItem('cs_room_code')) {
         tryAutoRejoin();
+    }
+    
+    // Refresh UI state for spectators/players when network returns
+    if (isOnlineSession && !isOperator && typeof SidelineView !== 'undefined') {
+        SidelineView._performRefresh(true);
+    }
+});
+
+// Visibility change handler for mobile sleep/wake cycles
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && isOnlineSession) {
+        // If socket is stale or dead, reconnect immediately
+        if (!sbManager || !sbManager.socket || sbManager.socket.readyState !== WebSocket.OPEN) {
+            console.log('[CourtSide] Tab resumed, reconnecting socket...');
+            if (sbManager) sbManager.connect(currentRoomCode);
+        } else if (!isOperator && typeof SidelineView !== 'undefined') {
+            // Refresh state to catch missed broadcasts while backgrounded
+            SidelineView._performRefresh(true);
+        }
     }
 });
 

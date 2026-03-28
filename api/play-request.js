@@ -76,9 +76,16 @@ export default async function handler(req, res) {
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
         // ── Step 0: Validate Session Exists ──────────────────────────────────
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list&limit=1`);
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list,last_active&limit=1`);
         if (!sessionCheck.ok || !sessionCheck.data?.length) {
             return res.status(404).json({ error: 'Session not found' });
+        }
+
+        // Host Presence Check: If session hasn't been touched in 5 minutes, it's "dead"
+        const lastActive = new Date(sessionCheck.data[0].last_active).getTime();
+        const isStale = (Date.now() - lastActive) > 5 * 60 * 1000;
+        if (isStale) {
+            return res.status(410).json({ error: 'Host is offline. Ask the host to refresh their screen.' });
         }
 
         const isOpenParty = !!sessionCheck.data[0].is_open_party;
@@ -123,14 +130,6 @@ export default async function handler(req, res) {
                 });
             }
             
-            // Duplicate guard for notifications
-            if (uuid) {
-                const dup = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=id&limit=1`);
-                if (dup.ok && dup.data?.length > 0) {
-                    return res.status(200).json({ ok: true, alreadyActive: true });
-                }
-            }
-
             // Create notification so host's client adds player to squad in local memory.
             // We ignore failures here (like duplicates) to ensure the join itself succeeds.
             await sbFetch('/play_requests', {
@@ -139,6 +138,7 @@ export default async function handler(req, res) {
                 body: { room_code: code, name: trimmedName, player_uuid: uuid, requested_at: new Date().toISOString() },
             });
 
+            // For Open Parties/Guests, if we auto-approved, the player is immediately active.
             return res.status(200).json({ ok: true, alreadyActive: true });
         }
 
@@ -171,12 +171,24 @@ export default async function handler(req, res) {
     }
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {
-        const { room_code } = req.query;
+        const { room_code, status } = req.query;
         if (!room_code) return res.status(400).json({ error: 'Missing room_code' });
 
         let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
         if (code.length === 8) {
             code = code.slice(0, 4) + '-' + code.slice(4);
+        }
+
+        // Reconciliation support: Fetch currently active members from session_members
+        // This allows the host to recover players who are active in the DB but missing locally.
+        if (status === 'active') {
+            const r = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active`);
+            const mapped = (Array.isArray(r.data) ? r.data : []).map(m => ({
+                id: m.id,
+                name: m.player_name,
+                player_uuid: m.player_uuid
+            }));
+            return res.status(200).json({ requests: mapped });
         }
 
         const r = await sbFetch(

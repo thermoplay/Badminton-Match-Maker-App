@@ -789,6 +789,8 @@ const PlayerMode = {
     _joinCode:  null,
     _pollTimer: null,
     _statePollTimer: null,
+    _retryInterval: null,
+    _joinRetryTimeout: null,
 
     leaveSession() {
         const doLeave = () => {
@@ -817,6 +819,7 @@ const PlayerMode = {
             // 2. Clean up local state
             clearInterval(this._pollTimer);
             clearInterval(this._statePollTimer);
+            this._clearJoinRetryTimer();
             localStorage.removeItem('cs_player_room_code');
             try { sessionStorage.removeItem(SS_APPROVED); } catch {}
 
@@ -990,6 +993,7 @@ const PlayerMode = {
                     Waiting for the host to approve you.<br>
                     You'll be added to the rotation automatically.
                 </div>
+                <div id="slRetryNote" class="sl-retry-note" style="display:none;"></div>
                 <button class="sl-queued-resend" id="slResendBtn">Resend Request</button>
                 <div class="sl-queued-note">
                     Already approved?
@@ -1010,6 +1014,7 @@ const PlayerMode = {
     },
 
     async _resendRequest() {
+        this._clearJoinRetryTimer();
         const passport = Passport.get();
         if (!passport || !this._joinCode) return;
         const btn = document.getElementById('slResendBtn');
@@ -1162,6 +1167,7 @@ const PlayerMode = {
         if (payload.courtNames)      window.courtNames     = payload.courtNames;
 
         this._clearQueuedState();
+        this._clearJoinRetryTimer();
 
         this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
 
@@ -1202,6 +1208,7 @@ const PlayerMode = {
         const myEntry  = approved[passport.playerUUID] || approved[passport.playerName];
         if (myEntry && !this._isApprovedInSession(this._joinCode)) {
             this._markApprovedInSession(this._joinCode);
+            this._clearJoinRetryTimer();
             if (myEntry.token) this._saveToken(this._joinCode, myEntry.token, passport.playerName, passport.playerUUID);
             this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
             setTimeout(() => this._updateLiveFeed(session, passport), 1500);
@@ -1343,11 +1350,12 @@ const PlayerMode = {
         }
 
         this._clearQueuedState();
+        this._clearJoinRetryTimer();
 
-        const p = Passport.get();
-        this.setStatus('approved', `You're in, ${p.playerName}!`, 'Added to the rotation ✅');
-        
-        // Haptic feedback on host approval
+        const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
+        const name = p?.playerName || 'Player';
+        this.setStatus('approved', `You're in, ${name}!`, 'Added to the rotation ✅');
+
         if (window.Haptic) Haptic.success();
 
         SidelineView.show();
@@ -1398,7 +1406,7 @@ const PlayerMode = {
 
             if (data.alreadyActive) {
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', "You're in!", "Connected to court ✅");
+                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "Reconnected to court ✅");
                 SidelineView.show();
                 SidelineView.refresh();
                 setTimeout(() => this._updateStatus(passport), 800);
@@ -1407,10 +1415,54 @@ const PlayerMode = {
 
             this._showQueuedState(passport.playerName);
 
+            // Start retry timer: if no host broadcast in 5s, auto-resend
+            this._startJoinRetryTimer();
+
         } catch(e) {
             this.setStatus('pending', 'Connection failed', 'Check your internet');
             console.error('[PlayerMode] join request failed:', e);
         }
+    },
+
+    _startJoinRetryTimer() {
+        this._clearJoinRetryTimer();
+        
+        let secondsLeft = 5;
+        const updateText = (s) => {
+            const el = document.getElementById('slRetryNote');
+            if (el) {
+                el.textContent = s > 0 ? `Auto-retrying in ${s}s...` : 'Auto-retrying now...';
+                el.style.display = 'block';
+            }
+        };
+
+        updateText(secondsLeft);
+
+        this._retryInterval = setInterval(() => {
+            secondsLeft--;
+            updateText(secondsLeft);
+            if (secondsLeft <= 0) {
+                clearInterval(this._retryInterval);
+                this._retryInterval = null;
+            }
+        }, 1000);
+
+        this._joinRetryTimeout = setTimeout(() => {
+            this._resendRequest();
+        }, 5000);
+    },
+
+    _clearJoinRetryTimer() {
+        if (this._joinRetryTimeout) {
+            clearTimeout(this._joinRetryTimeout);
+            this._joinRetryTimeout = null;
+        }
+        if (this._retryInterval) {
+            clearInterval(this._retryInterval);
+            this._retryInterval = null;
+        }
+        const el = document.getElementById('slRetryNote');
+        if (el) el.style.display = 'none';
     },
 
     async _joinSession(passport, joinCode) {
@@ -1430,6 +1482,18 @@ const PlayerMode = {
         this._statePollTimer = setInterval(() => {
             if (document.visibilityState === 'visible') {
                 SidelineView._performRefresh(true); // silent refresh
+                
+                // Self-Healing Logic: If we are meant to be approved (local flag set)
+                // but the current broadcasted squad doesn't contain us, we may have 
+                // been dropped from the Host's memory during a crash/refresh.
+                const p = Passport.get();
+                if (this._isApprovedInSession(this._joinCode) && p) {
+                    const inSquad = (window.squad || []).some(m => m.uuid === p.playerUUID);
+                    if (!inSquad) {
+                        console.warn('[PlayerMode] Self-healing: Approved but not in squad. Re-notifying host...');
+                        this._resendRequest();
+                    }
+                }
             }
         }, 10000);
     },
@@ -1598,6 +1662,15 @@ const PlayerMode = {
         document.getElementById('slJoinManualCodeBtn')?.addEventListener('click', () => this._joinWithManualCode());
         document.getElementById('slManualCodeInput')?.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') this._joinWithManualCode();
+        });
+        
+        // Auto-format room code: ABCD-1234
+        document.getElementById('slManualCodeInput')?.addEventListener('input', (e) => {
+            let val = e.target.value.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            if (val.length > 4) {
+                val = val.slice(0, 4) + '-' + val.slice(4, 8);
+            }
+            e.target.value = val;
         });
     },
  

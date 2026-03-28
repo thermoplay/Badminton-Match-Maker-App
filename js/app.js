@@ -2147,7 +2147,27 @@ const _startPolling = () => {
     if (_pollingInterval) clearInterval(_pollingInterval);
     ensureHostUI();
     pollPlayRequests();
-    _pollingInterval = setInterval(() => { if (isOnlineSession && isOperator) pollPlayRequests(); }, 10000);
+    
+    _pollingInterval = setInterval(async () => { 
+        if (isOnlineSession && isOperator) {
+            pollPlayRequests();
+            
+            // Self-Healing: Check for players who are 'active' in DB but missing in local squad
+            try {
+                const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}&status=active`);
+                const data = await res.json();
+                const activeInDB = data.requests || [];
+                
+                activeInDB.forEach(dbPlayer => {
+                    const inLocal = StateStore.squad.some(p => p.uuid === dbPlayer.player_uuid);
+                    if (!inLocal) {
+                        console.log(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
+                        approvePlayRequest(dbPlayer.name, dbPlayer.id, dbPlayer.player_uuid);
+                    }
+                });
+            } catch (e) {}
+        }
+    }, 15000);
 };
 window._startPolling = _startPolling;
 

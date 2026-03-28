@@ -4929,6 +4929,18 @@ button:active,
 
 .sl-queued-check:hover { opacity: 0.75; }
 
+.sl-retry-note {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 4px 10px;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    animation: sl-pulse 2s infinite;
+}
+
 /* =============================================================================
    YOU'RE UP BANNER — _showYoureUpBanner() in passport.js
    ============================================================================= */
