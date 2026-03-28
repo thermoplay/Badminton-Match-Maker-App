@@ -692,8 +692,12 @@ window.openCourtRename = openCourtRename;
 
 function joinManualCode() {
     const input = document.getElementById('manualRoomCodeInput');
-    const code = input?.value?.trim();
-    if (code) {
+    const raw = input?.value?.trim();
+    if (raw) {
+        // Normalize room code: strip non-alphanumeric and add hyphen if 8 chars
+        let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
+
         if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
             const newUrl = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
             window.history.pushState({}, document.title, newUrl);
@@ -703,7 +707,7 @@ function joinManualCode() {
         } else {
             window.location.href = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
         }
-    } else if (!code) {
+    } else {
         alert('Please enter a room code.');
     }
 }

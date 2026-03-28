@@ -570,8 +570,11 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     // before falling back to the module-level variable or window global.
     // The module-level currentRoomCode may not be set yet if joinOnlineSession()
     // is still in-flight when this is called from PlayerMode.boot().
-    const roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || null;
-    if (!roomCode || !playerUUID || !playerName) return null;
+    let roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || null;
+    if (roomCode) {
+        roomCode = roomCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (roomCode.length === 8) roomCode = roomCode.slice(0, 4) + '-' + roomCode.slice(4);
+    }
     currentRoomCode        = roomCode; // keep local var in sync
     _syncState();
     try {

@@ -871,11 +871,16 @@ const PlayerMode = {
         if (!joinCode) {
             try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
         }
+
+        // Normalize room code early to ensure consistency across all API calls
+        if (joinCode) {
+            joinCode = joinCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            if (joinCode.length === 8) joinCode = joinCode.slice(0, 4) + '-' + joinCode.slice(4);
+        }
         this._joinCode = joinCode;
 
         // 2. Initial UI setup
         this._bootUI(passport, joinCode);
-
         // 3. If no code, prompt user to enter one and stop.
         if (!joinCode) {
             this._promptForCode();
@@ -948,6 +953,7 @@ const PlayerMode = {
         if (this._isApprovedInSession(joinCode)) {
             if (panel) panel.classList.remove('sl-booting');
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
+            SidelineView.show();
             this._subscribeAndPoll(joinCode, passport);
             return;
         }
@@ -1390,6 +1396,7 @@ const PlayerMode = {
             if (data.alreadyActive) {
                 this._markApprovedInSession(joinCode);
                 this.setStatus('approved', "You're in!", "Connected to court ✅");
+                SidelineView.show();
                 SidelineView.refresh();
                 setTimeout(() => this._updateStatus(passport), 800);
                 return;
@@ -1559,8 +1566,10 @@ const PlayerMode = {
 
     _joinWithManualCode() {
         const input = document.getElementById('slManualCodeInput');
-        const code = input?.value?.trim();
-        if (code) {
+        const raw = input?.value?.trim();
+        if (raw) {
+            let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
             PlayerMode.boot(Passport.get(), code);
         }
     },
