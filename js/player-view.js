@@ -881,6 +881,10 @@ const PlayerMode = {
 
         // 2. Initial UI setup
         this._bootUI(passport, joinCode);
+
+        // Ensure the sideline panel is unhidden and ready to render matches
+        SidelineView.show();
+
         // 3. If no code, prompt user to enter one and stop.
         if (!joinCode) {
             this._promptForCode();
@@ -953,7 +957,6 @@ const PlayerMode = {
         if (this._isApprovedInSession(joinCode)) {
             if (panel) panel.classList.remove('sl-booting');
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
-            SidelineView.show();
             this._subscribeAndPoll(joinCode, passport);
             return;
         }

@@ -873,6 +873,11 @@ function applyRemoteState(session) {
     window._approvedPlayers = session.approved_players || {};
 
     if (!isOperator) {
+        // Ensure the player view is active and visible if matches are available
+        if (typeof SidelineView !== 'undefined' && !SidelineView._visible) {
+            SidelineView.show();
+        }
+
         if (typeof PlayerMode !== 'undefined') {
             PlayerMode._onSessionUpdate(session);
         } else if (typeof SidelineView !== 'undefined') {

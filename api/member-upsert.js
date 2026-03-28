@@ -46,7 +46,13 @@ export default async function handler(req, res) {
 
     // Sanitise
     const trimmedName = String(player_name).trim().slice(0, 50);
-    const code        = String(room_code).trim().toUpperCase();
+
+    // Normalize room code: remove non-alphanumeric and insert hyphen if length is 8
+    let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (code.length === 8) {
+        code = code.slice(0, 4) + '-' + code.slice(4);
+    }
+
     const uuid        = String(player_uuid).trim();
 
     // --- Input Validation ---
