@@ -27,20 +27,36 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-const hdrs = () => ({
+const hdrs = (method = 'GET') => {
+    const h = {
     'apikey':        SUPABASE_KEY,
     'Authorization': `Bearer ${SUPABASE_KEY}`,
     'Content-Type':  'application/json',
-    'Prefer':        'return=representation',
-});
+    };
+    // Preference header is only valid for write operations
+    if (method !== 'GET') {
+        h['Prefer'] = 'return=representation';
+    }
+    return h;
+};
 
 async function sbFetch(path, options = {}) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
-        headers: { ...hdrs(), ...(options.headers || {}) },
-        method:  options.method || 'GET',
+    const method = options.method || 'GET';
+    // Robust URL construction: ensure no double slashes and handle trailing slashes
+    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    
+    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+        headers: { ...hdrs(method), ...(options.headers || {}) },
+        method:  method,
         body:    options.body ? JSON.stringify(options.body) : undefined,
     });
+
     const text = await res.text();
+    if (!res.ok) {
+        console.error(`[sbFetch] Supabase Error ${res.status}:`, text);
+    }
+
     let data = null;
     try {
         if (text) data = JSON.parse(text);
@@ -82,7 +98,8 @@ export default async function handler(req, res) {
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
         // ── Step 0: Validate Session Exists ──────────────────────────────────
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list,last_active&limit=1`);
+        // Use quoted values ("") in the query to prevent PostgREST from choking on hyphens
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=id,is_open_party,guest_list,last_active&limit=1`);
 
         if (!sessionCheck.ok) {
             return res.status(500).json({ error: `Database communication error (${sessionCheck.status}).` });
@@ -111,7 +128,7 @@ export default async function handler(req, res) {
          // ── Step 1: Check if player is already approved ─────────────────────
         if (uuid && !force) {
             const existing = await sbFetch(
-                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status,player_name&limit=1`
+                `/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq."${encodeURIComponent(uuid)}"&select=status,player_name&limit=1`
             );
             if (existing.ok && existing.data?.length > 0) {
                 const member = existing.data[0];
@@ -149,7 +166,7 @@ export default async function handler(req, res) {
         // ── Step 3: Handle Manual Approval (Closed Party) ────────────────────
         // Duplicate guard for pending notifications to prevent spam        
         if (uuid) {
-            const dup = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=id&limit=1`);
+            const dup = await sbFetch(`/play_requests?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq."${encodeURIComponent(uuid)}"&select=id&limit=1`);
             if (dup.ok && dup.data?.length > 0) {
                 return res.status(200).json({ ok: true, alreadyActive: false });
             }
@@ -186,7 +203,7 @@ export default async function handler(req, res) {
         // Reconciliation support: Fetch currently active members from session_members
         // This allows the host to recover players who are active in the DB but missing locally.
         if (status === 'active') {
-            const r = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active`);
+            const r = await sbFetch(`/session_members?room_code=eq."${encodeURIComponent(code)}"&status=eq.active`);
             const mapped = (Array.isArray(r.data) ? r.data : []).map(m => ({
                 id: m.id,
                 name: m.player_name,
@@ -196,7 +213,7 @@ export default async function handler(req, res) {
         }
 
         const r = await sbFetch(
-            `/play_requests?room_code=eq.${encodeURIComponent(code)}&order=requested_at.asc`
+            `/play_requests?room_code=eq."${encodeURIComponent(code)}"&order=requested_at.asc`
         );
         return res.status(200).json({ requests: r.data || [] });
     }
@@ -235,10 +252,10 @@ export default async function handler(req, res) {
             }
 
             // Delete from session_members
-            const delRes = await sbFetch(`/session_members?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+            const delRes = await sbFetch(`/session_members?player_uuid=eq."${encodeURIComponent(uuid)}"&room_code=eq."${encodeURIComponent(code)}"`, { method: 'DELETE' });
             
             // ALSO delete from play_requests to prevent join-blocking ghosts
-            await sbFetch(`/play_requests?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+            await sbFetch(`/play_requests?player_uuid=eq."${encodeURIComponent(uuid)}"&room_code=eq."${encodeURIComponent(code)}"`, { method: 'DELETE' });
 
             return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
         }
