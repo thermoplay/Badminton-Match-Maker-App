@@ -5096,6 +5096,27 @@ button:active,
     box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 
+/* ── Network Health Icon ────────────────────────────────────────────────── */
+.sl-network-icon {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    opacity: 0.5;
+    transition: all 0.3s ease;
+    cursor: help;
+}
+.sl-network-icon.online {
+    color: var(--accent);
+    opacity: 1;
+}
+.sl-network-icon.weak {
+    color: #facc15; /* Yellow */
+    opacity: 1;
+}
+.sl-network-icon.offline {
+    color: #ef4444; /* Red */
+    opacity: 1;
+}
+
 /* ── Profile View ───────────────────────────────────────────────────────── */
 .sl-profile-card {
     background: var(--surface);

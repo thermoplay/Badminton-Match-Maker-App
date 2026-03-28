@@ -25,6 +25,7 @@ const SidelineView = {
             panel.style.display = 'flex';
             panel.style.flexDirection = 'column'; 
             this._initPullToRefresh();
+                this._initNetworkMonitor();
             this.refresh(); 
         }
     },
@@ -709,8 +710,11 @@ const SidelineView = {
         });
     },
 
-    async _performRefresh() {
+    async _performRefresh(silent = false) {
+        const start = Date.now();
         const code = window.currentRoomCode || localStorage.getItem('cs_player_room_code');
+        const netIcon = document.getElementById('slNetworkIcon');
+
         if (!code) return;
         try {
             const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
@@ -718,9 +722,48 @@ const SidelineView = {
                 const data = await res.json();
                 if (data.session && typeof applyRemoteState === 'function') {
                     applyRemoteState(data.session);
+                    if (!silent && typeof showSessionToast === 'function') showSessionToast('Synced');
+                }
+                if (netIcon && navigator.onLine) {
+                    netIcon.className = 'sl-network-icon online';
+                    netIcon.title = 'Online';
+                }
+            } else {
+                if (netIcon) {
+                    netIcon.className = 'sl-network-icon weak';
+                    netIcon.title = 'Connection Weak';
                 }
             }
-        } catch (e) { console.error('Refresh failed', e); }
+        } catch (e) { 
+            console.error('Refresh failed', e); 
+            if (netIcon) {
+                netIcon.className = 'sl-network-icon weak';
+                netIcon.title = 'Connection Weak';
+            }
+        }
+        // UX: Ensure spinner shows for at least 500ms so it doesn't flicker
+        const elapsed = Date.now() - start;
+        if (elapsed < 500) await new Promise(r => setTimeout(r, 500 - elapsed));
+    },
+
+    _initNetworkMonitor() {
+        const el = document.getElementById('slNetworkIcon');
+        if (!el || el._monitorInit) return;
+        el._monitorInit = true;
+        
+        const update = () => {
+            if (navigator.onLine) {
+                el.className = 'sl-network-icon online';
+                el.title = 'Online';
+            } else {
+                el.className = 'sl-network-icon offline';
+                el.title = 'Offline';
+            }
+        };
+        
+        window.addEventListener('online', update);
+        window.addEventListener('offline', update);
+        update(); // Initial check
     },
 };
 
@@ -1360,7 +1403,7 @@ const PlayerMode = {
         if (this._statePollTimer) clearInterval(this._statePollTimer);
         this._statePollTimer = setInterval(() => {
             if (document.visibilityState === 'visible') {
-                SidelineView._performRefresh();
+                SidelineView._performRefresh(true); // silent refresh
             }
         }, 10000);
     },
