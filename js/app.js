@@ -782,8 +782,8 @@ function showOverlay(type) {
 
                     <div class="sync-divider"></div>
                     <div class="sync-section-label">Navigation</div>
-                    <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); margin-bottom:10px;" onclick="goToPlayerMode()">Join as Player</button>
-                    <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text);" onclick="showLandingPage(); closeOverlay();">Back to Menu</button>
+                    <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); margin-bottom:10px;" onclick="window.location.href='?role=player&join='+(window.currentRoomCode||'')">Switch to Player View</button>
+                    <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text);" onclick="window.location.href=window.location.origin + window.location.pathname">Back to Menu</button>
                 </div>
 
                 ${_supportSectionHTML()}
@@ -840,8 +840,8 @@ function showOverlay(type) {
                 
                 <div class="sync-divider"></div>
                 <div class="sync-section-label">Navigation</div>
-                <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); margin-bottom:10px;" onclick="goToPlayerMode()">Join as Player</button>
-                <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text);" onclick="showLandingPage(); closeOverlay();">Back to Menu</button>
+                <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); margin-bottom:10px;" onclick="goToPlayerMode()">Switch to Player Mode</button>
+                <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text);" onclick="window.location.href=window.location.origin + window.location.pathname">Back to Menu</button>
 
                 ${_supportSectionHTML()}
             `}

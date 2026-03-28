@@ -1645,7 +1645,49 @@ const PlayerMode = {
         if (typeof broadcastStatusUpdate === 'function') {
             broadcastStatusUpdate(passport.playerUUID, newState);
         }
-    }
+    },
+
+    openNavigation() {
+        const code = this._joinCode || window.currentRoomCode || '';
+        const content = `
+            <div class="menu-card">
+                <h2>Navigation</h2>
+                <div style="margin-bottom:20px; display:flex; flex-direction:column; gap:8px;">
+                    <button class="btn-main" style="background:var(--accent); color:#000; height: 54px;" onclick="UIManager.hide(); SidelineView._performRefresh();">🔄 SYNC NOW</button>
+                    
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                        <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="window.location.href=window.location.origin + window.location.pathname">🏠 HOME</button>
+                        <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="PlayerMode.shareRoomCode()">🔗 SHARE</button>
+                    </div>
+
+                    <div style="height:1px; background:var(--border); margin:8px 0;"></div>
+                    
+                    <button class="btn-main btn-danger" style="height: 50px;" onclick="UIManager.hide(); PlayerMode.leaveSession();">🏃 LEAVE SESSION</button>
+                </div>
+                <button class="btn-cancel" onclick="UIManager.hide()">Close</button>
+            </div>
+        `;
+        UIManager.show(content, 'card');
+    },
+
+    shareRoomCode() {
+        const code = this._joinCode || window.currentRoomCode;
+        if (!code) return;
+        const url = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
+        
+        if (navigator.share) {
+            navigator.share({
+                title: 'Join my Match!',
+                text: `I'm playing at CourtSide. Join the session with code: ${code}`,
+                url: url
+            }).catch(() => {
+                navigator.clipboard.writeText(url).then(() => showSessionToast('Invite link copied!'));
+            });
+        } else {
+            navigator.clipboard.writeText(url).then(() => showSessionToast('Invite link copied!'));
+        }
+        UIManager.hide();
+    },
 };
 // =============================================================================
 // "YOU'RE UP!" BANNER — fires once on transition into playing state

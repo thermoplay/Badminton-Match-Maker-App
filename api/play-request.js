@@ -93,9 +93,7 @@ export default async function handler(req, res) {
             (uuid && g === uuid)
         );
 
-        // ── Step 1: Check if player is already approved in session_members ────
-        // Only this check should short-circuit. A pending row does NOT block us.
-        // If 'force' is true (ghost player detected by client), skip this check.
+         // ── Step 1: Check if player is already approved ─────────────────────
         if (uuid && !force) {
             const existing = await sbFetch(
                 `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status,player_name&limit=1`
@@ -107,81 +105,58 @@ export default async function handler(req, res) {
                     return res.status(200).json({ ok: true, alreadyActive: true });
                 }
 
-                // Status is 'pending' — update name if it changed, then FALL THROUGH.
-                // Do NOT return early here — we still need to write play_requests.
-                if (member.player_name !== trimmedName) {
-                    await sbFetch(
-                        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
-                        {
-                            method:  'PATCH',
-                            headers: { 'Prefer': 'return=minimal' },
-                            body:    { player_name: trimmedName, last_seen: new Date().toISOString() },
-                        }
-                    );
-                }
-                // Fall through to Step 2 and Step 3
-            }
+        }
         }
 
-        // If Party is OPEN, return alreadyActive immediately so client skips pending
+        // ── Step 2: Handle Automatic Approval (Open Party or Guest) ──────────
         if (isOpenParty || isGuest) {
-            // Fall through to write the records as ACTIVE
+            if (uuid) {
+                // Set member status to ACTIVE immediately in the database
+                await sbFetch('/session_members', {
+                    method:  'POST',
+                    headers: { 'Prefer': 'resolution=merge-duplicates' },
+                    body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: 'active', last_seen: new Date().toISOString() },
+                });
+            }
+            
+            // Create notification so host's client adds player to squad in local memory.
+            // We ignore failures here (like duplicates) to ensure the join itself succeeds.
+            await sbFetch('/play_requests', {
+                method: 'POST',
+                headers: { 'Prefer': 'resolution=ignore-duplicates' },
+                body: { room_code: code, name: trimmedName, player_uuid: uuid, requested_at: new Date().toISOString() },
+            });
+
+            return res.status(200).json({ ok: true, alreadyActive: true });
         }
 
-        // ── Step 2: Duplicate guard — check play_requests, NOT session_members ─
-        // Prevent spam: if a play_requests row already exists for this player,
-        // the host already has the notification. Don't add a second one.
+        // ── Step 3: Handle Manual Approval (Closed Party) ────────────────────
+        // Duplicate guard for pending notifications to prevent spam        
         if (uuid) {
-            const dupCheck = await sbFetch(
-                `/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=id&limit=1`
-            );
-            if (dupCheck.ok && dupCheck.data?.length > 0) {
+            const dup = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=id&limit=1`);
+            if (dup.ok && dup.data?.length > 0) {
                 return res.status(200).json({ ok: true, alreadyActive: false });
             }
         }
-
-        // ── Step 3: Insert into play_requests (host notification queue) ──────
-        // This is what pollPlayRequests() reads. Always write here.
+        // Insert notification for the host
         const r = await sbFetch('/play_requests', {
             method: 'POST',
-            body: {
-                room_code:    code,
-                name:         trimmedName,
-                player_uuid:  uuid,
-                requested_at: new Date().toISOString(),
-            },
+            body: { room_code: code, name: trimmedName, player_uuid: uuid, requested_at: new Date().toISOString() },
         });
 
-        if (!r.ok) {
-            return res.status(500).json({ ok: false, error: 'Failed to write play request' });
-        }
+        if (!r.ok) return res.status(500).json({ error: 'Failed to create join request' });
 
-        // ── Step 4: Upsert/Update session_members status ────────────────────
+        // Ensure player is recorded as PENDING in the membership table
         if (uuid) {
-            const status = (isOpenParty || isGuest) ? 'active' : 'pending';
-            if (force) {
-                // If forcing (ghost player rejoin), we MUST update the status to pending.
-                await sbFetch(
-                    `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
-                    {
-                        method:  'PATCH',
-                        headers: { 'Prefer': 'return=minimal' },
-                        body:    { status: status, last_seen: new Date().toISOString() },
-                    }
-                );
-            } else {
-                // Standard join: upsert, ignoring if already exists.
-                await sbFetch('/session_members', {
-                    method:  'POST',
-                    headers: { 'Prefer': 'return=minimal,resolution=ignore-duplicates' },
-                    body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: status, joined_at: new Date().toISOString(), last_seen: new Date().toISOString() },
-                });
-            }
+            await sbFetch('/session_members', {
+                method:  'POST',
+                headers: { 'Prefer': 'resolution=merge-duplicates' },
+                body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: 'pending', last_seen: new Date().toISOString() },
+            });
         }
 
-        return res.status(200).json({ ok: true, alreadyActive: (isOpenParty || isGuest) });
+        return res.status(200).json({ ok: true, alreadyActive: false });
     }
-
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {
         const { room_code } = req.query;
