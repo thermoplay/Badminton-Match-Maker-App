@@ -902,6 +902,18 @@ const PlayerMode = {
         const panel = document.getElementById('sidelinePanel');
         if (panel) panel.classList.add('sl-booting');
 
+        // Inject menu button into topbar for navigation
+        const topbar = document.querySelector('.sl-topbar');
+        if (topbar && !document.getElementById('slMenuBtn')) {
+            const btn = document.createElement('button');
+            btn.id = 'slMenuBtn';
+            btn.className = 'sl-icon-btn';
+            btn.style.flexShrink = '0';
+            btn.innerHTML = '⋮';
+            btn.onclick = () => PlayerMode.openNavigation();
+            topbar.appendChild(btn);
+        }
+
         this._renderIdentity(passport);
 
         const codeEl = document.getElementById('slSessionCode');

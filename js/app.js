@@ -779,6 +779,11 @@ function showOverlay(type) {
                         <button class="btn-main" style="width:100%; margin-top:10px; background:#334155; color:#fff;"
                             onclick="leaveSession(); closeOverlay();">Leave Session</button>
                     `}
+
+                    <div class="sync-divider"></div>
+                    <div class="sync-section-label">Navigation</div>
+                    <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); margin-bottom:10px;" onclick="goToPlayerMode()">Join as Player</button>
+                    <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text);" onclick="showLandingPage(); closeOverlay();">Back to Menu</button>
                 </div>
 
                 ${_supportSectionHTML()}
@@ -833,6 +838,11 @@ function showOverlay(type) {
                         onclick="confirmEraseAllData()">WIPE ALL DATA</button>
                 </div>
                 
+                <div class="sync-divider"></div>
+                <div class="sync-section-label">Navigation</div>
+                <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); margin-bottom:10px;" onclick="goToPlayerMode()">Join as Player</button>
+                <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text);" onclick="showLandingPage(); closeOverlay();">Back to Menu</button>
+
                 ${_supportSectionHTML()}
             `}
         `;
