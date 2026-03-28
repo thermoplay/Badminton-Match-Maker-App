@@ -899,6 +899,12 @@ function applyRemoteState(session) {
         } else if (typeof SidelineView !== 'undefined') {
             SidelineView.refresh();
         }
+        
+        // Mark data as fresh
+        if (typeof SidelineView !== 'undefined') {
+            SidelineView._lastUpdateTS = Date.now();
+            SidelineView.refresh();
+        }
     } else {
         // Host boot/rejoin hydration — restore full UI from DB state
         renderSquad();

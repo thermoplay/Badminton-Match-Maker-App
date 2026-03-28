@@ -17,6 +17,7 @@
 const SidelineView = {
     _visible: false,
     _currentTab: 'live',
+    _lastUpdateTS: 0,
 
     show() {
         this._visible = true;
@@ -27,6 +28,7 @@ const SidelineView = {
             this._initPullToRefresh();
                 this._initNetworkMonitor();
             this.refresh(); 
+            this._startStalenessMonitor();
         }
     },
 
@@ -48,6 +50,7 @@ const SidelineView = {
         if (!this._visible) return;
         const passport = Passport.get();
         if (!passport) return;
+        this._lastUpdateTS = Date.now();
 
         const nameEl = document.getElementById('slPassportName');
         if (nameEl) nameEl.textContent = passport.playerName;
@@ -56,6 +59,24 @@ const SidelineView = {
         this._renderNextUp();
         this._renderLastWinner();
         if (this._currentTab === 'profile') this._renderProfile();
+    },
+
+    _startStalenessMonitor() {
+        if (this._stalenessTimer) clearInterval(this._stalenessTimer);
+        this._stalenessTimer = setInterval(() => {
+            if (!this._visible || this._lastUpdateTS === 0) return;
+            
+            const secondsStale = (Date.now() - this._lastUpdateTS) / 1000;
+            const container = document.getElementById('slCurrentMatches');
+            const netIcon = document.getElementById('slNetworkIcon');
+
+            if (secondsStale > 30) {
+                if (container) container.classList.add('sl-stale-data');
+                if (netIcon) netIcon.className = 'sl-network-icon weak';
+            } else {
+                if (container) container.classList.remove('sl-stale-data');
+            }
+        }, 5000);
     },
 
     _renderMatches() {
@@ -1671,6 +1692,11 @@ const PlayerMode = {
                 val = val.slice(0, 4) + '-' + val.slice(4, 8);
             }
             e.target.value = val;
+            
+            // Proactive Validation: Auto-check code when fully typed
+            if (val.length === 9) {
+                this._validateRoomProactively(val);
+            }
         });
     },
  
@@ -1716,6 +1742,27 @@ const PlayerMode = {
             input?.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
             setTimeout(() => input?.focus(), 80);
         });
+    },
+
+    async _validateRoomProactively(code) {
+        const btn = document.getElementById('slJoinManualCodeBtn');
+        if (!btn) return;
+        
+        const originalText = btn.textContent;
+        btn.textContent = 'Checking...';
+        
+        try {
+            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
+            if (res.ok) {
+                btn.textContent = 'Room Found! Tap to Join';
+                btn.style.background = 'var(--accent)';
+            } else {
+                btn.textContent = 'Room Not Found';
+                btn.style.background = '#334155';
+            }
+        } catch (e) {
+            btn.textContent = originalText;
+        }
     },
 
     toggleStatus(currentActiveState) {

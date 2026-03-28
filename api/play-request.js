@@ -81,13 +81,6 @@ export default async function handler(req, res) {
             return res.status(404).json({ error: 'Session not found' });
         }
 
-        // Host Presence Check: If session hasn't been touched in 5 minutes, it's "dead"
-        const lastActive = new Date(sessionCheck.data[0].last_active).getTime();
-        const isStale = (Date.now() - lastActive) > 5 * 60 * 1000;
-        if (isStale) {
-            return res.status(410).json({ error: 'Host is offline. Ask the host to refresh their screen.' });
-        }
-
         const isOpenParty = !!sessionCheck.data[0].is_open_party;
         const guestList   = sessionCheck.data[0].guest_list || [];
         const isGuest = guestList.some(g => 
