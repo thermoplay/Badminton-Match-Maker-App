@@ -266,49 +266,6 @@ function toggleRestingState() {
     saveToDisk();
 }
 
-function toggleOpenParty() {
-    const current = StateStore.get('isOpenParty') || false;
-    const newVal = !current;
-    StateStore.set('isOpenParty', newVal);
-    saveToDisk();
-    if (isOnlineSession && isOperator) {
-        pushStateToSupabase();
-    }
-    showSessionToast(`Party is now ${newVal ? 'OPEN 🔓' : 'CLOSED 🔒'}`);
-    showOverlay('sync'); // Refresh overlay to show updated state
-    Haptic.tap();
-}
-window.toggleOpenParty = toggleOpenParty;
-
-function addToGuestList() {
-    UIManager.prompt({
-        title: 'Add to Guest List',
-        placeholder: 'Enter Player Name',
-        confirmText: 'Add',
-        onConfirm: (name) => {
-            const trimmed = name.trim();
-            if (!trimmed) return;
-            const current = StateStore.get('guestList') || [];
-            if (current.includes(trimmed)) return;
-            StateStore.set('guestList', [...current, trimmed]);
-            saveToDisk();
-            if (isOnlineSession && isOperator) pushStateToSupabase();
-            showOverlay('sync');
-            showSessionToast(`👥 ${trimmed} added to guest list`);
-        }
-    });
-}
-window.addToGuestList = addToGuestList;
-
-function removeFromGuestList(name) {
-    const current = StateStore.get('guestList') || [];
-    StateStore.set('guestList', current.filter(n => n !== name));
-    saveToDisk();
-    if (isOnlineSession && isOperator) pushStateToSupabase();
-    showOverlay('sync');
-}
-window.removeFromGuestList = removeFromGuestList;
-
 function _autoAddHostToSquad() {
     // This function runs on app start for the host.
     // If the host has a player passport from a previous session,
@@ -737,40 +694,6 @@ function showOverlay(type) {
                         ${isOperator ? 'Share this code — anyone can join as spectator' : 'You are viewing as spectator'}
                     </p>
                     <div id="qrcode" style="display:flex;justify-content:center;margin:0 auto 8px;"></div>
-
-                    ${isOperator ? `
-                    <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg2); padding:12px; border-radius:12px; margin: 20px 0; border:1px solid var(--border);">
-                        <div style="text-align:left;">
-                            <div style="font-size:0.75rem; font-weight:700; color:var(--text);">Open Party Mode</div>
-                            <div style="font-size:0.65rem; color:var(--text-muted);">${StateStore.get('isOpenParty') ? 'Anyone can join without approval' : 'New players need your approval'}</div>
-                        </div>
-                        <button class="btn-main" style="width:auto; flex:none; padding:8px 16px; font-size:0.7rem; background:${StateStore.get('isOpenParty') ? 'var(--accent)' : 'var(--surface2)'}; color:${StateStore.get('isOpenParty') ? '#000' : 'var(--text)'};" onclick="toggleOpenParty()">
-                            ${StateStore.get('isOpenParty') ? 'ON' : 'OFF'}
-                        </button>
-                    </div>
-                    ` : ''}
-
-                    ${isOperator ? `
-                    <div class="sync-divider"></div>
-                    <div style="margin-bottom:24px;">
-                        <div class="sync-section-label">Guest List (Auto-Approve)</div>
-                        <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
-                            Players on this list are approved automatically.
-                        </p>
-                        <div id="guestListContainer" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
-                            ${(StateStore.get('guestList') || []).map(name => `
-                                <div class="story-badge" style="display:flex; align-items:center; gap:6px; padding:6px 10px; font-size:0.7rem;">
-                                    ${escapeHTML(name)}
-                                    <span onclick="removeFromGuestList('${escapeHTML(name)}')" style="cursor:pointer; opacity:0.6; padding: 0 4px;">✕</span>
-                                </div>
-                            `).join('')}
-                            ${(StateStore.get('guestList') || []).length === 0 ? '<span style="font-size:0.7rem; color:var(--text-muted);">List is empty</span>' : ''}
-                        </div>
-                        <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); height: 44px; font-size: 0.8rem;" onclick="addToGuestList()">
-                            + Add to Guest List
-                        </button>
-                    </div>
-                    ` : ''}
 
                     <button class="btn-main" style="width:100%; margin-top:16px; background:var(--accent); color:#000;"
                         onclick="copySyncToken()">Copy Room Code</button>
@@ -1831,23 +1754,8 @@ async function pollPlayRequests() {
         const incoming = data.requests || [];
         playRequests = incoming;
 
-        const isOpen = StateStore.get('isOpenParty');
-        const guestList = StateStore.get('guestList') || [];
-
         for (const r of incoming) {
-            const isGuest = guestList.some(g => 
-                g.toLowerCase() === r.name.toLowerCase() || 
-                (r.player_uuid && g === r.player_uuid)
-            );
-
-            if (isOpen || isGuest) {
-                const inSquad = StateStore.squad.some(p => (p.uuid && p.uuid === r.player_uuid) || p.name === r.name);
-                if (!inSquad) {
-                    await approvePlayRequest(r.name, r.id, r.player_uuid || null);
-                } else {
-                    await denyPlayRequest(r.id);
-                }
-            } else if (!_lastSeenRequestIds.has(r.id)) {
+            if (!_lastSeenRequestIds.has(r.id)) {
                 _lastSeenRequestIds.add(r.id);
                 showJoinNotification(r.name, r.id, r.player_uuid || null);
             }
@@ -2067,22 +1975,6 @@ async function denyPlayRequest(id) {
 // Called by sync.js when a Realtime INSERT event occurs on play_requests table
 window.onPlayRequestInsert = function(record) {
     if (!record) return;
-    const guestList = StateStore.get('guestList') || [];
-    const isGuest = guestList.some(g => 
-        g.toLowerCase() === record.name.toLowerCase() || 
-        (record.player_uuid && g === record.player_uuid)
-    );
-
-    if (StateStore.get('isOpenParty') || isGuest) {
-        // Only auto-approve if not already in local squad to prevent duplicate entries
-        const inSquad = StateStore.squad.some(p => (p.uuid && p.uuid === record.player_uuid) || p.name === record.name);
-        if (!inSquad) {
-            approvePlayRequest(record.name, record.id, record.player_uuid || null);
-        } else {
-            denyPlayRequest(record.id); // Clean up stale notification
-        }
-        return;
-    }
     if (!_lastSeenRequestIds.has(record.id)) {
         _lastSeenRequestIds.add(record.id);
         showJoinNotification(record.name, record.id, record.player_uuid || null);

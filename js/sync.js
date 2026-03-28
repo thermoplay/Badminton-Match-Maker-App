@@ -800,12 +800,6 @@ function _handlePostgresChange(payload) {
     if (table === 'play_requests' || payload?.data?.table === 'play_requests') {
         if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
             window.onPlayRequestInsert(record);
-            
-            // For Open Rooms, push an immediate game state broadcast
-            // so the joining player doesn't have to wait for the 800ms debounce.
-            if (window.StateStore?.get('isOpenParty')) {
-                setTimeout(() => broadcastGameState(), 200);
-            }
         }
         return;
     }

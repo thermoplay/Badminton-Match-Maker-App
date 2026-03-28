@@ -98,8 +98,8 @@ export default async function handler(req, res) {
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
         // ── Step 0: Validate Session Exists ──────────────────────────────────
-        // PostgREST eq. filters must NOT be quoted for hyphenated strings.
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list,last_active&limit=1`);
+        // Simplified query to check if the room exists
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id&limit=1`);
 
         if (!sessionCheck.ok) {
             return res.status(500).json({ error: `Database communication error (${sessionCheck.status}).` });
@@ -108,13 +108,6 @@ export default async function handler(req, res) {
         if (!sessionCheck.data || sessionCheck.data.length === 0) {
             return res.status(404).json({ error: `Room "${code}" not found. Please verify the code with the host.` });
         }
-
-        const isOpenParty = !!sessionCheck.data[0].is_open_party;
-        const guestList   = sessionCheck.data[0].guest_list || [];
-        const isGuest = Array.isArray(guestList) && guestList.some(g => 
-            (typeof g === 'string' && g.toLowerCase() === trimmedName.toLowerCase()) || 
-            (uuid && g === uuid)
-        );
 
         // --- Input Validation ---
         if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
@@ -132,35 +125,11 @@ export default async function handler(req, res) {
             );
             if (existing.ok && existing.data?.length > 0) {
                 const member = existing.data[0];
-                // If already active, return true immediately. 
-                // This allows returning players to bypass the pending screen.
+                // If already active, allow the player to bypass the waiting screen
                 if (member.status === 'active') {
                     return res.status(200).json({ ok: true, alreadyActive: true });
                 }
             }
-        }
-
-        // ── Step 2: Handle Automatic Approval (Open Party or Guest) ──────────
-        if (isOpenParty || isGuest) {
-            if (uuid) {
-                // Set member status to ACTIVE immediately in the database
-                await sbFetch('/session_members', {
-                    method:  'POST',
-                    headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
-                    body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: 'active', last_seen: new Date().toISOString() },
-                });
-            }
-            
-            // Create notification so host's client adds player to squad in local memory.
-            // We ignore failures here (like duplicates) to ensure the join itself succeeds.
-            await sbFetch('/play_requests', {
-                method: 'POST',
-                headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
-                body: { room_code: code, name: trimmedName, player_uuid: uuid, requested_at: new Date().toISOString() },
-            });
-
-            // For Open Parties/Guests, if we auto-approved, the player is immediately active.
-            return res.status(200).json({ ok: true, alreadyActive: true });
         }
 
         // ── Step 3: Handle Manual Approval (Closed Party) ────────────────────
