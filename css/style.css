@@ -5137,6 +5137,11 @@ button:active,
     top: 12px; right: 12px;
 }
 
+.sl-profile-top-left {
+    position: absolute;
+    top: 12px; left: 12px;
+}
+
 .sl-icon-btn {
     background: var(--bg2);
     border: 1px solid var(--border);

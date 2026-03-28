@@ -428,6 +428,13 @@ function broadcastStatusUpdate(playerUUID, isActive) {
 }
 
 /**
+ * Player broadcasts their spirit animal update to the host.
+ */
+function broadcastSpiritAnimalUpdate(playerUUID, emoji) {
+    if (sbManager) sbManager.broadcast('spirit_animal_update', { playerUUID, emoji });
+}
+
+/**
  * BUG 1 FIX — broadcast approval to the specific player.
  * Contains: playerUUID (so player can match), token (for sessionStorage),
  * current squad + matches (so sideline view is immediately populated).
@@ -663,6 +670,14 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // Feature #4: Spirit animal update — host applies the change
+    if (type === 'spirit_animal_update') {
+        if (isOperator) {
+            _applySpiritAnimalUpdate(payload.playerUUID, payload.emoji);
+        }
+        return;
+    }
+
     // Feature #5: Status update — host applies the change
     if (type === 'player_status_update') {
         if (isOperator) {
@@ -715,6 +730,19 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     saveToDisk();
     if (matchUpdated) broadcastGameState(); // Ensure players see the new name on match cards
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
+}
+
+// Host applies a spirit animal update broadcast from a player
+function _applySpiritAnimalUpdate(playerUUID, emoji) {
+    const player = StateStore.squad.find(p => p.uuid === playerUUID);
+    if (!player) return;
+
+    if (player.spiritAnimal !== emoji) {
+        player.spiritAnimal = emoji;
+        renderSquad();
+        saveToDisk();
+        broadcastGameState();
+    }
 }
 
 // Host applies a status change broadcast from a player
@@ -1125,23 +1153,41 @@ async function tryAutoRejoin() {
         _syncState();
 
         // CONFLICT RESOLUTION:
-        // If we are the Host and have offline changes (pending sync),
-        // authoritative local state should overwrite the stale server state.
+        // Enhanced strategy: Check if local state has unsaved changes.
         const hasPending = localStorage.getItem('cs_pending_sync') === 'true';
         
         _isBootingSession = true;
         if (isOperator && hasPending) {
-            console.log('[CourtSide] Offline changes detected. Pushing local state to server.');
-            pushStateToSupabase();
+            // Conflict! Prompt host.
+            UIManager.confirm({
+                title: 'Sync Conflict',
+                message: 'You have unsaved local changes from a previous connection. Keep local state or load from server?',
+                confirmText: 'Keep Local',
+                onConfirm: () => {
+                    console.log('[CourtSide] Host choosing local state.');
+                    pushStateToSupabase();
+                    _finalizeRejoin(savedCode);
+                },
+                onCancel: () => {
+                    console.log('[CourtSide] Host choosing server state.');
+                    applyRemoteState(session);
+                    localStorage.removeItem('cs_pending_sync');
+                    _finalizeRejoin(savedCode);
+                }
+            });
         } else {
             applyRemoteState(session);
+            _finalizeRejoin(savedCode);
         }
-        _isBootingSession = false;
-        if (!sbManager) sbManager = new SupabaseRealtimeManager(_RT_URL, _RT_KEY);
-        sbManager.connect(savedCode);
-        updateSessionUI();
-        showSessionToast(isOperator ? `✅ Reconnected as host` : `👁 Rejoined session`);
     } catch { /* silently stay offline */ }
+}
+
+function _finalizeRejoin(savedCode) {
+    _isBootingSession = false;
+    if (!sbManager) sbManager = new SupabaseRealtimeManager(_RT_URL, _RT_KEY);
+    sbManager.connect(savedCode);
+    updateSessionUI();
+    showSessionToast(isOperator ? `✅ Reconnected as host` : `👁 Rejoined session`);
 }
 
 // ---------------------------------------------------------------------------

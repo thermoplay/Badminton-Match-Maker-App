@@ -314,14 +314,18 @@ const SidelineView = {
         const titleData = getTitle(me);
         const avatarColor = window.Avatar ? Avatar.color(passport.playerName) : '#666';
         const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
+        const emoji = passport.spiritAnimal || '';
 
         header.innerHTML = `
             <div class="sl-profile-card">
+                <div class="sl-profile-top-left">
+                    <button class="sl-icon-btn" onclick="PlayerMode.pickSpiritAnimal()" title="Set Spirit Animal">${emoji || '🐾'}</button>
+                </div>
                 <div class="sl-profile-top-right">
                     <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
                 </div>
-                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
-                    ${avatarInitial}
+                <div class="sl-profile-avatar-large" style="background:${avatarColor}; font-style: ${emoji ? 'normal' : 'italic'};">
+                    ${emoji || avatarInitial}
                     ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
                 </div>
                 <div class="sl-profile-name-large">${esc(passport.playerName)}</div>
@@ -1501,6 +1505,10 @@ const PlayerMode = {
         if (nameEl)   nameEl.textContent   = passport.playerName || 'Tap to set name';
         if (avatarEl) {
             avatarEl.textContent = (passport.playerName || '?').charAt(0).toUpperCase();
+            if (passport.spiritAnimal) {
+                avatarEl.textContent = passport.spiritAnimal;
+                avatarEl.style.fontStyle = 'normal';
+            }
             // Apply deterministic avatar color from polish.js if available
             if (passport.playerName && window.Avatar) {
                 avatarEl.style.background = Avatar.color(passport.playerName);
@@ -1508,6 +1516,33 @@ const PlayerMode = {
         }
         // Render play count badge (will be 0 until squad data arrives)
         _renderPlayCount(passport.playerName);
+    },
+
+    async pickSpiritAnimal() {
+        const emojis = ['🏸', '👟', '🏸', '🔥', '🦁', '🐯', '🦅', '🦈', '🦍', '🐺', '🐉', '⚡', '🌟', '🎯', '👑', '🦾'];
+        const content = `
+            <div class="menu-card">
+                <h2>Spirit Animal</h2>
+                <p>Choose an emoji to represent you on court.</p>
+                <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-bottom:20px;">
+                    ${emojis.map(e => `<button class="btn-icon" style="width:auto; font-size:1.5rem;" onclick="PlayerMode.updateSpiritAnimal('${e}')">${e}</button>`).join('')}
+                </div>
+                <button class="btn-main btn-danger" style="margin-bottom:10px;" onclick="PlayerMode.updateSpiritAnimal(null)">Remove Emoji</button>
+                <button class="btn-cancel" onclick="UIManager.hide()">Cancel</button>
+            </div>
+        `;
+        UIManager.show(content, 'card');
+    },
+
+    updateSpiritAnimal(emoji) {
+        const passport = Passport.setSpiritAnimal(emoji);
+        UIManager.hide();
+        this._renderIdentity(passport);
+        SidelineView.refresh();
+        if (typeof broadcastSpiritAnimalUpdate === 'function') {
+            broadcastSpiritAnimalUpdate(passport.playerUUID, emoji);
+        }
+        if (window.Haptic) Haptic.success();
     },
 
     _joinWithManualCode() {

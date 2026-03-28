@@ -100,10 +100,11 @@ const Avatar = (() => {
     /**
      * Returns full avatar HTML for use inside a chip or card.
      */
-    function html(name) {
+    function html(name, emoji = null) {
         const bg  = color(name);
         const ini = initials(name);
-        return `<span class="avatar" style="background:${bg};">${ini}</span>`;
+        const content = emoji || ini;
+        return `<span class="avatar" style="background:${bg}; font-style: ${emoji ? 'normal' : 'italic'};">${content}</span>`;
     }
 
     return { color, initials, html };

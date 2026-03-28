@@ -37,6 +37,7 @@ const Passport = {
             p = {
                 playerUUID: this._uuid(),
                 playerName: name || '',
+                spiritAnimal: null,
                 createdAt:  Date.now(),
             };
             this.save(p);
@@ -62,6 +63,14 @@ const Passport = {
         const p = this.get();
         if (!p) return null;
         p.playerName = newName.trim();
+        this.save(p);
+        return p;
+    },
+
+    setSpiritAnimal(emoji) {
+        const p = this.get();
+        if (!p) return null;
+        p.spiritAnimal = emoji;
         this.save(p);
         return p;
     },

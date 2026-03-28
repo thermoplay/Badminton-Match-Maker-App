@@ -57,6 +57,7 @@ function migratePlayer(p) {
     if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
     if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
+    if (p.spiritAnimal     == null) p.spiritAnimal     = null;
     return p;
 }
 
@@ -131,6 +132,7 @@ function addPlayer() {
         opponentHistory:   {},
         partnerStats:      {},
         achievements:      [],
+        spiritAnimal:      null,
     });
     el.value = '';
     if (!StateStore.playerQueue.includes(name)) StateStore.playerQueue.push(name);
@@ -392,7 +394,7 @@ function renderSquad() {
     StateStore.squad.forEach(p => {
         const isNew = p.games === 0 && p.wins === 0;
         const chipContent = `
-            ${Avatar.html(p.name)}
+            ${Avatar.html(p.name, p.spiritAnimal)}
             <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
         `;
         const isSwapping = p.uuid === swapSourceUUID;
@@ -1482,7 +1484,7 @@ async function openPlayerCard(idx) {
 
     document.getElementById('playerCardContent').innerHTML = `
         <div class="pc-avatar-wrap">
-            <div class="pc-avatar" style="background:${bg};">${ini}</div>
+            <div class="pc-avatar" style="background:${bg}; font-style: ${p.spiritAnimal ? 'normal' : 'italic'};">${p.spiritAnimal || ini}</div>
             ${p.streak >= 3 ? '<div class="pc-streak-ring"></div>' : ''}
         </div>
         <div class="pc-title-badge">

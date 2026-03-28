@@ -624,7 +624,7 @@ function renderQueueStrip() {
             ${waiting.map((p, idx) => `
                 <div class="queue-item" draggable="true" data-name="${escapeHTML(p.name)}">
                     <span class="queue-pos">${idx + 1}</span>
-                    ${Avatar.html(p.name)}
+                    ${Avatar.html(p.name, p.spiritAnimal)}
                     <span class="queue-name">${escapeHTML(p.name)}</span>
                     ${idx < openSlots ? '<span class="queue-next-badge">NEXT</span>' : ''}
                 </div>

@@ -200,16 +200,23 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
 
     // ── Share ────────────────────────────────────────────────────────────────
     canvas.toBlob(async (blob) => {
-        const file = new File([blob], 'courtside-matchup.png', { type: 'image/png' });
-        
-        const tAStr = Array.isArray(teamA) ? teamA.join(' & ') : teamA;
-        const tBStr = Array.isArray(teamB) ? teamB.join(' & ') : teamB;
-        const shareText = `🏸 ${tAStr} vs ${tBStr} — who you got? #CourtSide`;
+        if (!blob) return;
+        try {
+            const file = new File([blob], 'courtside-matchup.png', { type: 'image/png' });
+            
+            const tAStr = Array.isArray(teamA) ? teamA.join(' & ') : teamA;
+            const tBStr = Array.isArray(teamB) ? teamB.join(' & ') : teamB;
+            const shareText = `🏸 ${tAStr} vs ${tBStr} — who you got? #CourtSide`;
 
-        if (navigator.share && navigator.canShare({ files: [file] })) {
-            await navigator.share({ title: 'CourtSide Live', text: shareText, files: [file] })
-                .catch(() => _downloadShareImage(blob));
-        } else {
+            // Check if navigator.canShare is a function before calling it to prevent TypeErrors
+            if (navigator.share && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+                await navigator.share({ title: 'CourtSide Live', text: shareText, files: [file] })
+                    .catch(() => _downloadShareImage(blob));
+            } else {
+                _downloadShareImage(blob);
+            }
+        } catch (e) {
+            console.error('[CourtSide] Share failed:', e);
             _downloadShareImage(blob);
         }
     }, 'image/png');
