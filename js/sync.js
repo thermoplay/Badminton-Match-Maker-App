@@ -118,7 +118,7 @@ class SupabaseRealtimeManager {
             config: {
                 broadcast: { self: false },
                 presence: { key: '' },
-                postgres_changes: [{ event: 'UPDATE', schema: 'public', table: 'sessions', filter: `room_code=eq.${roomCode}` }]
+                postgres_changes: [{ event: 'UPDATE', schema: 'public', table: 'sessions', filter: `room_code=eq."${roomCode}"` }]
             }
         });
 
@@ -130,7 +130,7 @@ class SupabaseRealtimeManager {
             config: {
                 broadcast: { self: false },
                 presence: { key: '' },
-                postgres_changes: [{ event: '*', schema: 'public', table: 'session_members', filter: `room_code=eq.${roomCode}` }]
+                postgres_changes: [{ event: '*', schema: 'public', table: 'session_members', filter: `room_code=eq."${roomCode}"` }]
             }
         });
 
@@ -140,7 +140,7 @@ class SupabaseRealtimeManager {
                 config: {
                     broadcast: { self: false },
                     presence: { key: '' },
-                    postgres_changes: [{ event: 'INSERT', schema: 'public', table: 'play_requests', filter: `room_code=eq.${roomCode}` }]
+                    postgres_changes: [{ event: 'INSERT', schema: 'public', table: 'play_requests', filter: `room_code=eq."${roomCode}"` }]
                 }
             });
         }

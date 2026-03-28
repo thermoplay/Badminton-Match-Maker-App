@@ -98,8 +98,8 @@ export default async function handler(req, res) {
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
         // ── Step 0: Validate Session Exists ──────────────────────────────────
-        // Use quoted values ("") in the query to prevent PostgREST from choking on hyphens
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=id,is_open_party,guest_list,last_active&limit=1`);
+        // PostgREST eq. filters must NOT be quoted for hyphenated strings.
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list,last_active&limit=1`);
 
         if (!sessionCheck.ok) {
             return res.status(500).json({ error: `Database communication error (${sessionCheck.status}).` });
@@ -128,7 +128,7 @@ export default async function handler(req, res) {
          // ── Step 1: Check if player is already approved ─────────────────────
         if (uuid && !force) {
             const existing = await sbFetch(
-                `/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq."${encodeURIComponent(uuid)}"&select=status,player_name&limit=1`
+                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status,player_name&limit=1`
             );
             if (existing.ok && existing.data?.length > 0) {
                 const member = existing.data[0];
@@ -166,7 +166,7 @@ export default async function handler(req, res) {
         // ── Step 3: Handle Manual Approval (Closed Party) ────────────────────
         // Duplicate guard for pending notifications to prevent spam        
         if (uuid) {
-            const dup = await sbFetch(`/play_requests?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq."${encodeURIComponent(uuid)}"&select=id&limit=1`);
+            const dup = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=id&limit=1`);
             if (dup.ok && dup.data?.length > 0) {
                 return res.status(200).json({ ok: true, alreadyActive: false });
             }
@@ -203,7 +203,7 @@ export default async function handler(req, res) {
         // Reconciliation support: Fetch currently active members from session_members
         // This allows the host to recover players who are active in the DB but missing locally.
         if (status === 'active') {
-            const r = await sbFetch(`/session_members?room_code=eq."${encodeURIComponent(code)}"&status=eq.active`);
+            const r = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active`);
             const mapped = (Array.isArray(r.data) ? r.data : []).map(m => ({
                 id: m.id,
                 name: m.player_name,
@@ -213,7 +213,7 @@ export default async function handler(req, res) {
         }
 
         const r = await sbFetch(
-            `/play_requests?room_code=eq."${encodeURIComponent(code)}"&order=requested_at.asc`
+            `/play_requests?room_code=eq.${encodeURIComponent(code)}&order=requested_at.asc`
         );
         return res.status(200).json({ requests: r.data || [] });
     }
@@ -252,10 +252,10 @@ export default async function handler(req, res) {
             }
 
             // Delete from session_members
-            const delRes = await sbFetch(`/session_members?player_uuid=eq."${encodeURIComponent(uuid)}"&room_code=eq."${encodeURIComponent(code)}"`, { method: 'DELETE' });
+            const delRes = await sbFetch(`/session_members?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
             
             // ALSO delete from play_requests to prevent join-blocking ghosts
-            await sbFetch(`/play_requests?player_uuid=eq."${encodeURIComponent(uuid)}"&room_code=eq."${encodeURIComponent(code)}"`, { method: 'DELETE' });
+            await sbFetch(`/play_requests?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
 
             return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
         }
