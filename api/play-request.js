@@ -81,13 +81,11 @@ export default async function handler(req, res) {
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
-        // ── Step 0: Validate Session Exists (Hyphen-Agnostic) ────────────────
-        const plainCode = code.replace(/-/g, '');
-        // Use 'or' filter for better compatibility and to avoid quote encoding issues in URLs
-        const sessionCheck = await sbFetch(`/sessions?or=(room_code.eq.${encodeURIComponent(code)},room_code.eq.${encodeURIComponent(plainCode)})&select=id,is_open_party,guest_list,last_active&limit=1`);
+        // ── Step 0: Validate Session Exists ──────────────────────────────────
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list,last_active&limit=1`);
 
         if (!sessionCheck.ok) {
-            return res.status(500).json({ error: `Database verification failed (${sessionCheck.status}).` });
+            return res.status(500).json({ error: `Database communication error (${sessionCheck.status}).` });
         }
 
         if (!sessionCheck.data || sessionCheck.data.length === 0) {
