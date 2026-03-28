@@ -75,13 +75,17 @@ export default async function handler(req, res) {
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
-        // ── Step 0: Validate Session Exists ──────────────────────────────────
-        // Support both hyphenated and plain formats in the DB query for robustness
+        // ── Step 0: Validate Session Exists (Hyphen-Agnostic) ────────────────
         const plainCode = code.replace(/-/g, '');
-        const sessionCheck = await sbFetch(`/sessions?or=(room_code.eq.${encodeURIComponent(code)},room_code.eq.${encodeURIComponent(plainCode)})&select=id,is_open_party,guest_list,last_active&limit=1`);
+        // Use 'in' filter with quoted values for maximum robustness in PostgREST
+        const sessionCheck = await sbFetch(`/sessions?room_code=in.("${encodeURIComponent(code)}","${encodeURIComponent(plainCode)}")&select=id,is_open_party,guest_list,last_active&limit=1`);
 
-        if (!sessionCheck.ok || !sessionCheck.data?.length) {
-            return res.status(404).json({ error: 'Session not found' });
+        if (!sessionCheck.ok) {
+            return res.status(500).json({ error: 'Failed to verify session with database.' });
+        }
+
+        if (!sessionCheck.data || sessionCheck.data.length === 0) {
+            return res.status(404).json({ error: `Room "${code}" not found. Please verify the code with the host.` });
         }
 
         const isOpenParty = !!sessionCheck.data[0].is_open_party;

@@ -1430,7 +1430,7 @@ const PlayerMode = {
                 const safeCode = typeof escapeHTML === 'function' ? escapeHTML(joinCode) : joinCode;
 
                 if (res.status === 404) {
-                    this.setStatus('pending', 'Room Not Found', `Code "${joinCode}" is invalid.`);
+                    this.setStatus('pending', 'Room Not Found', data.error || `Code "${safeCode}" is invalid.`);
                     if (container) {
                         container.innerHTML = `
                             <div class="sl-code-entry" style="text-align:center; padding: 2rem 1.5rem;">
