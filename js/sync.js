@@ -308,7 +308,11 @@ async function createOnlineSession() {
 // ---------------------------------------------------------------------------
 
 async function joinOnlineSession(roomCode) {
-    const code = (roomCode || '').trim().toUpperCase();
+    let code = (roomCode || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (code.length === 8) {
+        code = code.slice(0, 4) + '-' + code.slice(4);
+    }
+
     if (!code) return;
     showSyncStatus('Joining…', 'info');
     try {

@@ -66,7 +66,12 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Missing fields for join' });
         }
 
-        const code = String(room_code).trim().toUpperCase();
+        // Normalize room code: remove non-alphanumeric and insert hyphen if length is 8
+        let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (code.length === 8) {
+            code = code.slice(0, 4) + '-' + code.slice(4);
+        }
+
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
@@ -168,7 +173,12 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
         const { room_code } = req.query;
         if (!room_code) return res.status(400).json({ error: 'Missing room_code' });
-        const code = String(room_code).trim().toUpperCase();
+
+        let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (code.length === 8) {
+            code = code.slice(0, 4) + '-' + code.slice(4);
+        }
+
         const r = await sbFetch(
             `/play_requests?room_code=eq.${encodeURIComponent(code)}&order=requested_at.asc`
         );
@@ -183,7 +193,10 @@ export default async function handler(req, res) {
         // This is an authenticated action that deletes a row from `session_members`.
         // It is triggered by the host UI (e.g., player leaves, host kicks player).
         if (player_uuid && room_code && operator_key) {
-            const code = String(room_code).trim().toUpperCase();
+            let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            if (code.length === 8) {
+                code = code.slice(0, 4) + '-' + code.slice(4);
+            }
             const uuid = String(player_uuid).trim();
 
             // --- Input Validation ---
@@ -218,7 +231,10 @@ export default async function handler(req, res) {
         // This deletes a row from `play_requests` using its unique ID.
         // It's called when the host approves or denies a join notification.
         if (id && room_code && operator_key) {
-            const code = String(room_code).trim().toUpperCase();
+            let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            if (code.length === 8) {
+                code = code.slice(0, 4) + '-' + code.slice(4);
+            }
 
             // Verify operator key
             const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);

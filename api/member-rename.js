@@ -38,7 +38,11 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const code    = String(room_code).trim().toUpperCase();
+    let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (code.length === 8) {
+        code = code.slice(0, 4) + '-' + code.slice(4);
+    }
+
     const uuid    = String(player_uuid).trim();
     const trimmed = String(new_name).trim().slice(0, 50);
 
