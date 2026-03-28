@@ -76,15 +76,18 @@ export default async function handler(req, res) {
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
         // ── Step 0: Validate Session Exists ──────────────────────────────────
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list,last_active&limit=1`);
+        // Support both hyphenated and plain formats in the DB query for robustness
+        const plainCode = code.replace(/-/g, '');
+        const sessionCheck = await sbFetch(`/sessions?or=(room_code.eq.${encodeURIComponent(code)},room_code.eq.${encodeURIComponent(plainCode)})&select=id,is_open_party,guest_list,last_active&limit=1`);
+
         if (!sessionCheck.ok || !sessionCheck.data?.length) {
             return res.status(404).json({ error: 'Session not found' });
         }
 
         const isOpenParty = !!sessionCheck.data[0].is_open_party;
         const guestList   = sessionCheck.data[0].guest_list || [];
-        const isGuest = guestList.some(g => 
-            g.toLowerCase() === trimmedName.toLowerCase() || 
+        const isGuest = Array.isArray(guestList) && guestList.some(g => 
+            (typeof g === 'string' && g.toLowerCase() === trimmedName.toLowerCase()) || 
             (uuid && g === uuid)
         );
 
@@ -104,9 +107,9 @@ export default async function handler(req, res) {
             );
             if (existing.ok && existing.data?.length > 0) {
                 const member = existing.data[0];
-                // Only skip the notification for Closed Parties. For Open Parties,
-                // we proceed to Step 2 to ensure the Host's local state is synced.
-                if (member.status === 'active' && !isOpenParty && !isGuest) {
+                // If already active, return true immediately. 
+                // This allows returning players to bypass the pending screen.
+                if (member.status === 'active') {
                     return res.status(200).json({ ok: true, alreadyActive: true });
                 }
             }
@@ -118,7 +121,7 @@ export default async function handler(req, res) {
                 // Set member status to ACTIVE immediately in the database
                 await sbFetch('/session_members', {
                     method:  'POST',
-                    headers: { 'Prefer': 'resolution=merge-duplicates' },
+                    headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
                     body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: 'active', last_seen: new Date().toISOString() },
                 });
             }
@@ -127,7 +130,7 @@ export default async function handler(req, res) {
             // We ignore failures here (like duplicates) to ensure the join itself succeeds.
             await sbFetch('/play_requests', {
                 method: 'POST',
-                headers: { 'Prefer': 'resolution=ignore-duplicates' },
+                headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
                 body: { room_code: code, name: trimmedName, player_uuid: uuid, requested_at: new Date().toISOString() },
             });
 

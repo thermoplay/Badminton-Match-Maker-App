@@ -813,6 +813,12 @@ const PlayerMode = {
     _retryInterval: null,
     _joinRetryTimeout: null,
 
+    resetAndTryAgain() {
+        this._joinCode = null;
+        localStorage.removeItem('cs_player_room_code');
+        this._promptForCode();
+    },
+
     leaveSession() {
         const doLeave = () => {
             const passport = Passport.get();
@@ -1419,7 +1425,34 @@ const PlayerMode = {
             });
 
             if (!res.ok) {
-                this.setStatus('pending', 'Could not join', 'Check the room code and try again');
+                const data = await res.json().catch(() => ({}));
+                const container = document.getElementById('slCurrentMatches');
+                const safeCode = typeof escapeHTML === 'function' ? escapeHTML(joinCode) : joinCode;
+
+                if (res.status === 404) {
+                    this.setStatus('pending', 'Room Not Found', `Code "${joinCode}" is invalid.`);
+                    if (container) {
+                        container.innerHTML = `
+                            <div class="sl-code-entry" style="text-align:center; padding: 2rem 1.5rem;">
+                                <div style="font-size:2.5rem; margin-bottom:1rem;">❌</div>
+                                <div class="sl-code-label" style="margin-bottom:0.5rem; color:var(--red);">ROOM NOT FOUND</div>
+                                <div class="sl-queued-sub" style="margin-bottom:1.5rem;">
+                                    The code <strong>${safeCode}</strong> was not found.
+                                </div>
+                                <button class="sl-code-btn" onclick="PlayerMode.resetAndTryAgain()">
+                                    Try Another Code
+                                </button>
+                                <button class="sl-back-btn" onclick="window.location.href=window.location.origin + window.location.pathname">
+                                    ← Back to Host View
+                                </button>
+                            </div>`;
+                    }
+                } else if (res.status === 400) {
+                    this.setStatus('pending', 'Invalid Request', data.error || 'Check your entry and try again.');
+                } else {
+                    const subMsg = data.error || 'The server had trouble processing your request. Try again?';
+                    this.setStatus('pending', 'Could not join', subMsg);
+                }
                 return;
             }
 
@@ -1757,7 +1790,13 @@ const PlayerMode = {
                 btn.textContent = 'Room Found! Tap to Join';
                 btn.style.background = 'var(--accent)';
             } else {
-                btn.textContent = 'Room Not Found';
+                if (res.status === 404) {
+                    btn.textContent = 'Room Not Found';
+                } else if (res.status === 400) {
+                    btn.textContent = 'Invalid Format';
+                } else {
+                    btn.textContent = 'Check Code';
+                }
                 btn.style.background = '#334155';
             }
         } catch (e) {
