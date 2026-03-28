@@ -532,6 +532,24 @@ const SidelineView = {
         }
 
         // Render Achievements List
+        let achLabel = document.getElementById('slProfileAchLabel');
+        if (!achLabel && profileView) {
+            achLabel = document.createElement('div');
+            achLabel.id = 'slProfileAchLabel';
+            achLabel.className = 'sl-section-label';
+            achLabel.style.marginTop = '24px';
+            const achList = document.getElementById('slProfileAchievements');
+            if (achList) profileView.insertBefore(achLabel, achList);
+        }
+        if (achLabel) {
+            achLabel.innerHTML = `
+                <span>🏆 ACHIEVEMENTS</span>
+                <button class="sl-rename-btn" style="margin-left:auto; font-size:0.6rem;" onclick="PlayerMode.openTrophyRoom()">
+                    VIEW TROPHY ROOM →
+                </button>
+            `;
+        }
+
         const container = document.getElementById('slProfileAchievements');
         if (container && window.Achievements) {
             const myAch = me ? (me.achievements || []) : [];
@@ -1861,6 +1879,43 @@ const PlayerMode = {
             navigator.clipboard.writeText(url).then(() => showSessionToast('Invite link copied!'));
         }
         UIManager.hide();
+    },
+
+    openTrophyRoom() {
+        const passport = Passport.get();
+        if (!passport) return;
+        const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+        const myAch = me ? (me.achievements || []) : [];
+        
+        if (!window.Achievements) return;
+
+        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        const listHTML = Object.keys(window.Achievements).map(key => {
+            const def = window.Achievements[key];
+            const unlocked = myAch.includes(key);
+            return `
+                <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="margin-bottom:8px; text-align:left; border-color: ${unlocked ? 'var(--border-accent)' : 'var(--border)'}">
+                    <div class="sl-ach-icon">${unlocked ? def.icon : '🔒'}</div>
+                    <div class="sl-ach-text">
+                        <div class="sl-ach-title">${esc(def.name)}</div>
+                        <div class="sl-ach-desc">${esc(def.description)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        const content = `
+            <div class="menu-card" style="max-width:400px; width:95%; max-height:80vh; overflow-y:auto; padding:24px 16px;">
+                <h2 style="margin-bottom:4px;">Trophy Room</h2>
+                <p style="margin-bottom:20px;">Detailed view of your session progress.</p>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    ${listHTML}
+                </div>
+                <button class="btn-main" style="margin-top:20px; background:var(--surface2); color:var(--text);" onclick="UIManager.hide()">Close</button>
+            </div>
+        `;
+        UIManager.show(content, 'card');
     },
 };
 // =============================================================================
