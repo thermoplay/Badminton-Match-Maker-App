@@ -70,6 +70,19 @@ export default async function handler(req, res) {
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = player_uuid ? String(player_uuid).trim() : null;
 
+        // ── Step 0: Validate Session Exists ──────────────────────────────────
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list&limit=1`);
+        if (!sessionCheck.ok || !sessionCheck.data?.length) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        const isOpenParty = !!sessionCheck.data[0].is_open_party;
+        const guestList   = sessionCheck.data[0].guest_list || [];
+        const isGuest = guestList.some(g => 
+            g.toLowerCase() === trimmedName.toLowerCase() || 
+            (uuid && g === uuid)
+        );
+
         // --- Input Validation ---
         if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
             return res.status(400).json({ error: 'Invalid room code format' });
@@ -79,20 +92,6 @@ export default async function handler(req, res) {
         }
         // ------------------------
 
-        // ── Step 0: Validate Session Exists ──────────────────────────────────
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id,is_open_party,guest_list&limit=1`);
-        if (!sessionCheck.ok || !sessionCheck.data?.length) {
-            return res.status(404).json({ error: 'Session not found' });
-        }
-
-        const isOpenParty = !!sessionCheck.data[0].is_open_party;
-        const guestList   = sessionCheck.data[0].guest_list || [];
-
-        const isGuest = guestList.some(g => 
-            g.toLowerCase() === trimmedName.toLowerCase() || 
-            (uuid && g === uuid)
-        );
-
          // ── Step 1: Check if player is already approved ─────────────────────
         if (uuid && !force) {
             const existing = await sbFetch(
@@ -100,12 +99,12 @@ export default async function handler(req, res) {
             );
             if (existing.ok && existing.data?.length > 0) {
                 const member = existing.data[0];
-
-                if (member.status === 'active') {
+                // Only skip the notification for Closed Parties. For Open Parties,
+                // we proceed to Step 2 to ensure the Host's local state is synced.
+                if (member.status === 'active' && !isOpenParty && !isGuest) {
                     return res.status(200).json({ ok: true, alreadyActive: true });
                 }
-
-        }
+            }
         }
 
         // ── Step 2: Handle Automatic Approval (Open Party or Guest) ──────────
@@ -119,6 +118,14 @@ export default async function handler(req, res) {
                 });
             }
             
+            // Duplicate guard for notifications
+            if (uuid) {
+                const dup = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=id&limit=1`);
+                if (dup.ok && dup.data?.length > 0) {
+                    return res.status(200).json({ ok: true, alreadyActive: true });
+                }
+            }
+
             // Create notification so host's client adds player to squad in local memory.
             // We ignore failures here (like duplicates) to ensure the join itself succeeds.
             await sbFetch('/play_requests', {

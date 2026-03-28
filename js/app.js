@@ -1816,21 +1816,38 @@ function checkIWTPSmartRecognition() {
 
 let _lastSeenRequestIds = new Set();
 let _pollingInterval = null;
+let _isPolling = false;
 
 async function pollPlayRequests() {
-    if (!isOnlineSession || !isOperator || !currentRoomCode) return;
+    if (_isPolling || !isOnlineSession || !isOperator || !currentRoomCode) return;
+    _isPolling = true;
     try {
         const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}`);
         const data = await res.json();
         const incoming = data.requests || [];
         playRequests = incoming;
 
-        incoming.forEach(r => {
-            if (!_lastSeenRequestIds.has(r.id)) {
+        const isOpen = StateStore.get('isOpenParty');
+        const guestList = StateStore.get('guestList') || [];
+
+        for (const r of incoming) {
+            const isGuest = guestList.some(g => 
+                g.toLowerCase() === r.name.toLowerCase() || 
+                (r.player_uuid && g === r.player_uuid)
+            );
+
+            if (isOpen || isGuest) {
+                const inSquad = StateStore.squad.some(p => (p.uuid && p.uuid === r.player_uuid) || p.name === r.name);
+                if (!inSquad) {
+                    await approvePlayRequest(r.name, r.id, r.player_uuid || null);
+                } else {
+                    await denyPlayRequest(r.id);
+                }
+            } else if (!_lastSeenRequestIds.has(r.id)) {
                 _lastSeenRequestIds.add(r.id);
                 showJoinNotification(r.name, r.id, r.player_uuid || null);
             }
-        });
+        }
 
         const badge = document.getElementById('playRequestsBadge');
         const count = document.getElementById('playRequestsCount');
@@ -1838,7 +1855,9 @@ async function pollPlayRequests() {
             badge.style.display = playRequests.length > 0 ? 'flex' : 'none';
             count.textContent   = playRequests.length;
         }
-    } catch { /* silent */ }
+    } catch { /* silent */ } finally {
+        _isPolling = false;
+    }
 }
 
 const _notifQueue = [];
@@ -2051,7 +2070,13 @@ window.onPlayRequestInsert = function(record) {
     );
 
     if (StateStore.get('isOpenParty') || isGuest) {
-        approvePlayRequest(record.name, record.id, record.player_uuid || null);
+        // Only auto-approve if not already in local squad to prevent duplicate entries
+        const inSquad = StateStore.squad.some(p => (p.uuid && p.uuid === record.player_uuid) || p.name === record.name);
+        if (!inSquad) {
+            approvePlayRequest(record.name, record.id, record.player_uuid || null);
+        } else {
+            denyPlayRequest(record.id); // Clean up stale notification
+        }
         return;
     }
     if (!_lastSeenRequestIds.has(record.id)) {

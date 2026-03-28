@@ -1389,7 +1389,7 @@ const PlayerMode = {
 
             if (data.alreadyActive) {
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "You're in the squad ✅");
+                this.setStatus('approved', "You're in!", "Connected to court ✅");
                 SidelineView.refresh();
                 setTimeout(() => this._updateStatus(passport), 800);
                 return;
