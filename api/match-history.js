@@ -43,56 +43,55 @@ export default async function handler(req, res) {
                 return res.status(400).json({ error: 'Missing fields for match_result' });
             }
 
-            // Verify operator key to ensure only the host can archive results
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
-            if (!sessionRes.ok || !sessionRes.data?.[0]) {
-                // Silently fail if session not found, could be an old request
-                return res.status(404).json({ error: 'Session not found' });
-            }
-            if (sessionRes.data[0].operator_key !== operator_key) {
-                // Invalid key
-                return res.status(403).json({ error: 'Invalid operator key' });
-            }
-
-            const rows = [];
+            const results = [];
             matches.forEach(m => {
                 if (m.winnerTeamIndex === null) return;
                 const winIdx  = m.winnerTeamIndex;
                 const loseIdx = winIdx === 0 ? 1 : 0;
-                m.teams[winIdx].forEach(name => {
-                    rows.push({ room_code, player_name: name, won: true,  played_at: new Date(timestamp).toISOString() });
-                });
-                m.teams[loseIdx].forEach(name => {
-                    rows.push({ room_code, player_name: name, won: false, played_at: new Date(timestamp).toISOString() });
-                });
+                m.teams[winIdx].forEach(name => results.push({ player_name: name, won: true }));
+                m.teams[loseIdx].forEach(name => results.push({ player_name: name, won: false }));
             });
 
-            if (rows.length === 0) return res.status(200).json({ archived: 0 });
+            if (results.length === 0) return res.status(200).json({ archived: 0 });
 
-            const result = await sb('/match_history', { method: 'POST', body: rows });
-            return res.status(result.ok ? 200 : 500).json({ archived: rows.length });
+            // ── ATOMIC RPC CALL ──────────────────────────────────────────────
+            // Verification and batch insertion happen in one database transaction.
+            const r = await sb('/rpc/archive_round', {
+                method: 'POST',
+                prefer: 'return=representation',
+                body: {
+                    p_room_code:    room_code,
+                    p_operator_key: operator_key,
+                    p_timestamp:    new Date(timestamp).toISOString(),
+                    p_results:      results,
+                    p_achievements: req.body.achievements || []
+                }
+            });
+
+            if (!r.ok) return res.status(r.status || 500).json({ error: r.data?.message || 'Database error' });
+            if (r.data?.error) return res.status(r.data.status || 400).json({ error: r.data.error });
+
+            return res.status(200).json(r.data);
         }
 
         // --- Unlock an Achievement ---
         if (type === 'achievement_unlock') {
             const { player_uuid, achievement_id, room_code, operator_key } = req.body;
             
-            // Verify operator key (only host can unlock)
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
-            if (!sessionRes.ok || !sessionRes.data?.[0]) {
-                return res.status(404).json({ error: 'Session not found' });
-            }
-            if (sessionRes.data[0].operator_key !== operator_key) {
-                return res.status(403).json({ error: 'Invalid operator key' });
-            }
-
-            const result = await sb('/player_achievements', {
+            const r = await sb('/rpc/unlock_achievement', {
                 method: 'POST',
-                body: { player_uuid, achievement_id, room_code, unlocked_at: new Date().toISOString() }
+                prefer: 'return=representation',
+                body: {
+                    p_room_code:      room_code,
+                    p_operator_key:   operator_key,
+                    p_player_uuid:    player_uuid,
+                    p_achievement_id: achievement_id
+                }
             });
 
-            // Ignore 409 (Conflict) if achievement already exists, otherwise report error
-            if (!result.ok && result.status !== 409) return res.status(500).json({ error: 'Failed to save' });
+            if (!r.ok) return res.status(r.status || 500).json({ error: r.data?.message || 'Database error' });
+            if (r.data?.error) return res.status(r.data.status || 400).json({ error: r.data.error });
+
             return res.status(200).json({ ok: true });
         }
 
