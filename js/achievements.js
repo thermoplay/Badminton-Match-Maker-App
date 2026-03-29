@@ -31,11 +31,6 @@ const Achievements = {
         description: 'Play with 3 different partners.',
         icon: '🦋'
     },
-    'veteran': {
-        name: 'Veteran',
-        description: 'Play 10 games in a single session.',
-        icon: '🎖️'
-    }
 };
 
 /**
@@ -69,11 +64,14 @@ async function checkAndAwardAchievements(match, squad) {
                 unlockAchievement(player.uuid, 'first_win');
                 showAchievementToast(player.name, Achievements.first_win);
             }
-            // Check for 'streak_3'
-            if (!unlocked.has('streak_3') && player.streak === 3) {
-                unlockAchievement(player.uuid, 'streak_3');
-                showAchievementToast(player.name, Achievements.streak_3);
-            }
+            // Check for 'streak' tiers
+            Achievements.streak.tiers.forEach(tier => {
+                const tid = `streak_${tier.id}`;
+                if (!unlocked.has(tid) && player.streak >= tier.count) {
+                    unlockAchievement(player.uuid, tid);
+                    showAchievementToast(player.name, { ...tier, icon: Achievements.streak.icon });
+                }
+            });
             // Check for 'underdog'
             const winnerTeamRating = match.teams[winIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
             const loserTeamRating = match.teams[loseIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
@@ -84,16 +82,13 @@ async function checkAndAwardAchievements(match, squad) {
         }
 
         // --- CHECK PARTICIPATION ACHIEVEMENTS ---
-        // Check for 'iron_man'
-        if (!unlocked.has('iron_man') && player.sessionPlayCount === 5) {
-            unlockAchievement(player.uuid, 'iron_man');
-            showAchievementToast(player.name, Achievements.iron_man);
-        }
-        // Check for 'veteran'
-        if (!unlocked.has('veteran') && player.games === 10) {
-            unlockAchievement(player.uuid, 'veteran');
-            showAchievementToast(player.name, Achievements.veteran);
-        }
+        Achievements.endurance.tiers.forEach(tier => {
+            const tid = `endurance_${tier.id}`;
+            if (!unlocked.has(tid) && player.sessionPlayCount >= tier.count) {
+                unlockAchievement(player.uuid, tid);
+                showAchievementToast(player.name, { ...tier, icon: Achievements.endurance.icon });
+            }
+        });
         // Check for 'socialite'
         const uniquePartners = Object.keys(player.partnerStats || {}).length;
         if (!unlocked.has('socialite') && uniquePartners >= 3) {
@@ -177,12 +172,33 @@ function showAchievementToast(playerName, achievement) {
 /**
  * Shows a toast with the achievement's full details.
  */
-function showAchievementDescription(key) {
-    const def = Achievements[key];
-    if (!def) return;
+function showAchievementDescription(key, unlockedIds = []) {
+    const display = getAchievementDisplay(key, unlockedIds);
+    if (!display) return;
     if (typeof showSessionToast === 'function') {
-        showSessionToast(`${def.icon} ${def.name}: ${def.description}`);
+        showSessionToast(`${display.icon} ${display.name}: ${display.description}`);
     }
+}
+
+function getAchievementDisplay(key, unlockedIds) {
+    const def = Achievements[key];
+    const ids = Array.isArray(unlockedIds) ? unlockedIds : [];
+    if (!def) return null;
+    if (!def.tiers) {
+        return { unlocked: ids.includes(key), icon: def.icon, name: def.name, description: def.description, color: 'inherit' };
+    }
+    let highest = null;
+    def.tiers.forEach(tier => { if (ids.includes(`${key}_${tier.id}`)) highest = tier; });
+    if (!highest) {
+        return { unlocked: false, icon: def.icon, name: def.name, description: def.tiers[0].description, color: 'inherit' };
+    }
+    return {
+        unlocked: true,
+        icon: def.icon,
+        name: highest.name,
+        description: highest.description,
+        color: highest.color
+    };
 }
 
 // Make these functions available to the other scripts.
@@ -190,3 +206,4 @@ window.checkAndAwardAchievements = checkAndAwardAchievements;
 window.fetchPlayerAchievements = fetchPlayerAchievements;
 window.Achievements = Achievements;
 window.showAchievementDescription = showAchievementDescription;
+window.getAchievementDisplay = getAchievementDisplay;

@@ -19,10 +19,15 @@ let swapSourceUUID = null;
 // ACHIEVEMENT PRESS HANDLERS
 // ---------------------------------------------------------------------------
 let achPressTimer = null;
-function startAchPress(key) {
+function startAchPress(key, pUUID = null) {
     achPressTimer = setTimeout(() => {
         if (typeof showAchievementDescription === 'function') {
-            showAchievementDescription(key);
+            let p = null;
+            const squad = (typeof StateStore !== 'undefined' ? StateStore.squad : null) || window.squad || [];
+            if (pUUID) p = squad.find(x => x.uuid === pUUID);
+            else if (typeof selectedPlayerIndex !== 'undefined' && selectedPlayerIndex !== null) p = StateStore.squad[selectedPlayerIndex];
+            
+            showAchievementDescription(key, p ? (p.achievements || []) : []);
             if (window.Haptic) Haptic.bump();
         }
         achPressTimer = null;
@@ -78,6 +83,7 @@ function migratePlayer(p) {
     if (p.partnerStats     == null) p.partnerStats     = {};
     if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
+    if (p.matchHistory     == null) p.matchHistory     = [];
     if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
     if (p.spiritAnimal     == null) p.spiritAnimal     = null;
     return p;
@@ -199,17 +205,22 @@ function editPlayerName() {
             // Update name in player queue
             StateStore.set('playerQueue', StateStore.playerQueue.map(n => (n === oldName ? p.name : n)));
 
-            // Update name in all history objects (teammate/opponent) for ALL players
-            StateStore.squad.forEach(squadPlayer => {
-                if (squadPlayer.teammateHistory && oldName in squadPlayer.teammateHistory) {
-                    squadPlayer.teammateHistory[p.name] = squadPlayer.teammateHistory[oldName];
-                    delete squadPlayer.teammateHistory[oldName];
+            // Update metadata maps for consistency
+            const uuidMap = window._sessionUUIDMap || {};
+            if (p.uuid && uuidMap[oldName] === p.uuid) delete uuidMap[oldName];
+            if (p.uuid) uuidMap[p.name] = p.uuid;
+            window._sessionUUIDMap = uuidMap;
+
+            if (window._approvedPlayers) {
+                const entry = window._approvedPlayers[p.uuid] || window._approvedPlayers[oldName];
+                if (entry) {
+                    entry.name = p.name;
+                    if (window._approvedPlayers[oldName]) {
+                        delete window._approvedPlayers[oldName];
+                        window._approvedPlayers[p.uuid] = entry;
+                    }
                 }
-                if (squadPlayer.opponentHistory && oldName in squadPlayer.opponentHistory) {
-                    squadPlayer.opponentHistory[p.name] = squadPlayer.opponentHistory[oldName];
-                    delete squadPlayer.opponentHistory[oldName];
-                }
-            });
+            }
 
             renderSquad();
             if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
@@ -1325,7 +1336,8 @@ function renderStatsTab(tab) {
             if (me.opponentHistory) {
                 const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
                 if (rivals.length > 0) {
-                    rivalName = rivals[0][0];
+                    const rivalP = StateStore.squad.find(s => s.uuid === rivals[0][0]);
+                    rivalName = rivalP ? rivalP.name : 'Unknown';
                     rivalCount = rivals[0][1];
                 }
             }
@@ -1361,13 +1373,14 @@ function renderStatsTab(tab) {
             });
             const best = partners[0];
             if (best) {
-                const [name, stats] = best;
+                const [uuid, stats] = best;
+                const partnerP = StateStore.squad.find(s => s.uuid === uuid);
                 const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
                 chemHTML = `
                     <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
                     <div class="sl-chem-card">
                         <div class="sl-chem-details">
-                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(name)}</strong></div>
+                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
                             <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
                         </div>
                     </div>`;
@@ -1379,14 +1392,14 @@ function renderStatsTab(tab) {
         if (window.Achievements) {
             const myAch = me ? (me.achievements || []) : [];
             const list = Object.keys(window.Achievements).map(key => {
-                const def = window.Achievements[key];
-                const unlocked = myAch.includes(key);
+                const data = window.getAchievementDisplay(key, myAch);
+                const unlocked = data.unlocked;
                 return `
-                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}">
-                        <div class="sl-ach-icon">${def.icon}</div>
+                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="${unlocked ? `border-left: 3px solid ${data.color}` : ''}">
+                        <div class="sl-ach-icon">${data.icon}</div>
                         <div class="sl-ach-text">
-                            <div class="sl-ach-title">${def.name}</div>
-                            <div class="sl-ach-desc">${def.description}</div>
+                            <div class="sl-ach-title">${data.name}</div>
+                            <div class="sl-ach-desc">${data.description}</div>
                         </div>
                     </div>
                 `;
@@ -1525,7 +1538,10 @@ async function openPlayerCard(idx) {
     let rival = '—';
     if (p.opponentHistory) {
         const rivals = Object.entries(p.opponentHistory).sort(([,a], [,b]) => b - a);
-        if (rivals.length) rival = `${rivals[0][0]} (${rivals[0][1]}g)`;
+        if (rivals.length) {
+            const rivalP = StateStore.squad.find(s => s.uuid === rivals[0][0]);
+            rival = `${rivalP ? rivalP.name : 'Unknown'} (${rivals[0][1]}g)`;
+        }
     }
 
     // Calculate Partner Chemistry
@@ -1539,14 +1555,15 @@ async function openPlayerCard(idx) {
         });
         const best = partners[0];
         if (best) {
-            const [name, stats] = best;
+            const [uuid, stats] = best;
+            const partnerP = StateStore.squad.find(s => s.uuid === uuid);
             const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
             chemistryHTML = `
                 <div class="pc-section-title" style="margin-top:24px;">Partner Chemistry</div>
                 <div class="pc-chemistry-card">
                     <div class="pc-chem-icon">🤝</div>
                     <div class="pc-chem-details">
-                        <div class="pc-chem-name">Best with: <strong>${escapeHTML(name)}</strong></div>
+                        <div class="pc-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
                         <div class="pc-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
                     </div>
                 </div>
@@ -1603,15 +1620,16 @@ async function openPlayerCard(idx) {
     if (achievementsContainer) {
         if (window.Achievements) {
             const allAchHTML = Object.keys(window.Achievements).map(key => {
-                const def = window.Achievements[key];
-                const isUnlocked = p.achievements && p.achievements.includes(key);
+                const data = window.getAchievementDisplay(key, p.achievements);
+                const isUnlocked = data.unlocked;
                 return `
                     <div class="pc-achievement-badge ${isUnlocked ? 'unlocked' : 'locked'}" 
-                         title="${def.name}: ${def.description}"
-                         onmousedown="startAchPress('${key}')" onmouseup="endAchPress()"
-                         ontouchstart="startAchPress('${key}')" ontouchend="endAchPress()"
+                         style="${isUnlocked ? `border-color:${data.color}; box-shadow: 0 0 10px ${data.color}44; color:${data.color}` : ''}"
+                         title="${data.name}: ${data.description}"
+                         onmousedown="startAchPress('${key}', '${p.uuid}')" onmouseup="endAchPress()"
+                         ontouchstart="startAchPress('${key}', '${p.uuid}')" ontouchend="endAchPress()"
                          oncontextmenu="event.preventDefault(); return false;">
-                        ${def.icon}
+                        ${data.icon}
                     </div>
                 `;
             }).join('');
@@ -1813,6 +1831,32 @@ async function pollPlayRequests() {
         for (const r of incoming) {
             if (!_lastSeenRequestIds.has(r.id)) {
                 _lastSeenRequestIds.add(r.id);
+
+                // BUG FIX: Check if player is already in the squad before alerting host.
+                const existing = StateStore.squad.find(p => 
+                    (r.player_uuid && p.uuid === r.player_uuid) || 
+                    (p.name.toLowerCase() === r.name.toLowerCase())
+                );
+
+                if (existing) {
+                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad)`);
+
+                    // UUID Correction: If manually added by host, adopt the player's real UUID
+                    // so memberApprove() and future syncs use the correct canonical ID.
+                    if (r.player_uuid && existing.uuid !== r.player_uuid) {
+                        existing.uuid = r.player_uuid;
+                        renderSquad(); // Update DOM datasets
+                        saveToDisk();
+                    }
+
+                    if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+                    fetch('/api/play-request', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: r.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+                    }).catch(() => {});
+                    continue;
+                }
                 showJoinNotification(r.name, r.id, r.player_uuid || null);
             }
         }
@@ -2033,6 +2077,30 @@ window.onPlayRequestInsert = function(record) {
     if (!record) return;
     if (!_lastSeenRequestIds.has(record.id)) {
         _lastSeenRequestIds.add(record.id);
+
+        // BUG FIX: Same duplicate guard for realtime events
+        const existing = StateStore.squad.find(p => 
+            (record.player_uuid && p.uuid === record.player_uuid) || 
+            (p.name.toLowerCase() === record.name.toLowerCase())
+        );
+
+        if (existing) {
+            // Adopt real UUID for manual additions triggered by realtime events
+            if (record.player_uuid && existing.uuid !== record.player_uuid) {
+                existing.uuid = record.player_uuid;
+                renderSquad();
+                saveToDisk();
+            }
+
+            if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+            fetch('/api/play-request', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: record.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+            }).catch(() => {});
+            return;
+        }
+
         showJoinNotification(record.name, record.id, record.player_uuid || null);
     }
     pollPlayRequests(); // Fetch full list to ensure badge count is accurate
@@ -2183,7 +2251,38 @@ function passportRename() {
                 if (me) {
                     me.name = trimmed;
                     StateStore.set('playerQueue', StateStore.playerQueue.map(n => n === oldName ? trimmed : n));
+
+                    // Update name in current matches if playing
+                    let matchUpdated = false;
+                    StateStore.currentMatches.forEach(m => {
+                        m.teams = m.teams.map(team =>
+                            team.map(n => {
+                                if (n === oldName) { matchUpdated = true; return trimmed; }
+                                return n;
+                            })
+                        );
+                    });
+
+                    // Update metadata maps for consistency
+                    const uuidMap = window._sessionUUIDMap || {};
+                    if (me.uuid && uuidMap[oldName] === me.uuid) delete uuidMap[oldName];
+                    if (me.uuid) uuidMap[me.name] = me.uuid;
+                    window._sessionUUIDMap = uuidMap;
+
+                    if (window._approvedPlayers) {
+                        const entry = window._approvedPlayers[me.uuid] || window._approvedPlayers[oldName];
+                        if (entry) {
+                            entry.name = me.name;
+                            if (window._approvedPlayers[oldName]) {
+                                delete window._approvedPlayers[oldName];
+                                window._approvedPlayers[me.uuid] = entry;
+                            }
+                        }
+                    }
+
                     renderSquad();
+                    if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+                    if (typeof renderQueueStrip === 'function') renderQueueStrip();
                     saveToDisk();
                 }
             }

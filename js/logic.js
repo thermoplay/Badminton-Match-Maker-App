@@ -93,14 +93,26 @@ function _recordMatchStats(match) {
     const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
     const allPlayers = [...tA, ...tB];
 
-    allPlayers.forEach(p => p.sessionPlayCount++);
+    allPlayers.forEach(p => {
+        p.sessionPlayCount++;
+        
+        // Performance Lab: Record match for history list using UUIDs
+        const isTeamA = tA.includes(p);
+        const opponents = isTeamA ? tB : tA;
+        const winIdx = match.winnerTeamIndex;
+        const isWin = winIdx !== null && winIdx === (isTeamA ? 0 : 1);
+        
+        p.matchHistory = p.matchHistory || [];
+        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), time: Date.now() });
+        if (p.matchHistory.length > 5) p.matchHistory.pop();
+    });
 
     const addHistory = (p, teammate, opponents) => {
         p.teammateHistory = p.teammateHistory || {};
         p.opponentHistory = p.opponentHistory || {};
-        if (teammate) p.teammateHistory[teammate.name] = (p.teammateHistory[teammate.name] || 0) + 1;
+        if (teammate) p.teammateHistory[teammate.uuid] = (p.teammateHistory[teammate.uuid] || 0) + 1;
         opponents.forEach(o => {
-            p.opponentHistory[o.name] = (p.opponentHistory[o.name] || 0) + 1;
+            p.opponentHistory[o.uuid] = (p.opponentHistory[o.uuid] || 0) + 1;
         });
     };
 
@@ -214,13 +226,13 @@ function applyELOForMatch(m) {
         p1.partnerStats = p1.partnerStats || {};
         p2.partnerStats = p2.partnerStats || {};
         
-        const updateStat = (p, partnerName) => {
-             const s = p.partnerStats[partnerName] || { wins: 0, games: 0 };
+        const updateStat = (p, partner) => {
+             const s = p.partnerStats[partner.uuid] || { wins: 0, games: 0 };
              s.games++; s.wins++;
-             p.partnerStats[partnerName] = s;
+             p.partnerStats[partner.uuid] = s;
         };
-        updateStat(p1, p2.name);
-        updateStat(p2, p1.name);
+        updateStat(p1, p2);
+        updateStat(p2, p1);
     }
     winners.forEach(p => {
         const cur = safeRating(p);
@@ -234,10 +246,10 @@ function applyELOForMatch(m) {
         p1.partnerStats = p1.partnerStats || {};
         p2.partnerStats = p2.partnerStats || {};
         // Only increment games for losers
-        p1.partnerStats[p2.name] = p1.partnerStats[p2.name] || { wins: 0, games: 0 };
-        p1.partnerStats[p2.name].games++;
-        p2.partnerStats[p1.name] = p2.partnerStats[p1.name] || { wins: 0, games: 0 };
-        p2.partnerStats[p1.name].games++;
+        p1.partnerStats[p2.uuid] = p1.partnerStats[p2.uuid] || { wins: 0, games: 0 };
+        p1.partnerStats[p2.uuid].games++;
+        p2.partnerStats[p1.uuid] = p2.partnerStats[p1.uuid] || { wins: 0, games: 0 };
+        p2.partnerStats[p1.uuid].games++;
     }
     losers.forEach(p => {
         const cur = safeRating(p);
@@ -343,7 +355,7 @@ function determineStoryBadges(teamA, teamB) {
     let isRematch = false;
     for (const pA of teamA) {
         for (const pB of teamB) {
-            if (pA.opponentHistory && pA.opponentHistory[pB.name] > 0) {
+            if (pA.opponentHistory && pA.opponentHistory[pB.uuid] > 0) {
                 isRematch = true;
                 break;
             }
@@ -353,16 +365,16 @@ function determineStoryBadges(teamA, teamB) {
     if (isRematch) badges.add('⚔️ Rematch');
 
     // Badge: Dynamic Duo (if teammates have played together 2+ times)
-    if (teamA.length === 2 && teamA[0].teammateHistory && teamA[0].teammateHistory[teamA[1].name] >= 2) badges.add('⚡ Dynamic Duo');
-    if (teamB.length === 2 && teamB[0].teammateHistory && teamB[0].teammateHistory[teamB[1].name] >= 2) badges.add('⚡ Dynamic Duo');
+    if (teamA.length === 2 && teamA[0].teammateHistory && teamA[0].teammateHistory[teamA[1].uuid] >= 2) badges.add('⚡ Dynamic Duo');
+    if (teamB.length === 2 && teamB[0].teammateHistory && teamB[0].teammateHistory[teamB[1].uuid] >= 2) badges.add('⚡ Dynamic Duo');
 
     return Array.from(badges);
 }
 
 // Score a single team split — lower = fresher matchup
 function scoreSplit(tA, tB) {
-    const tm  = (a, b) => (a.teammateHistory  || {})[b.name] || 0;
-    const opp = (a, b) => (a.opponentHistory  || {})[b.name] || 0;
+    const tm  = (a, b) => (a.teammateHistory  || {})[b.uuid] || 0;
+    const opp = (a, b) => (a.opponentHistory  || {})[b.uuid] || 0;
     return (
         tm(tA[0], tA[1]) * 2 + tm(tB[0], tB[1]) * 2 +
         opp(tA[0], tB[0]) + opp(tA[0], tB[1]) +

@@ -617,6 +617,7 @@ async function memberApprove(playerUUID) {
         if (!r.ok) console.error('[CourtSide] member-approve failed:', r.status);
     } catch (e) { console.error('[CourtSide] member-approve error:', e); }
 }
+window.memberApprove = memberApprove;
 
 /**
  * Called by passportRename() in app.js after the player updates their name.
@@ -833,8 +834,10 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     }
 
     renderSquad();
+    if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
     saveToDisk();
-    if (matchUpdated) broadcastGameState(); // Ensure players see the new name on match cards
+    broadcastGameState(); // Always broadcast so spectators see name change in squad/queue
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
 window._applyNameUpdate = _applyNameUpdate;

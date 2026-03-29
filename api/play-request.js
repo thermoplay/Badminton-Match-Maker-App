@@ -79,85 +79,38 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
         const { room_code, name, player_uuid, force } = req.body;
 
-        // The `leave: true` functionality has been removed. Player removal is now
-        // exclusively handled by the authenticated DELETE endpoint, which is triggered
-        // by the host. This prevents a player from being able to remove another
-        // player from a session without authorization.
-
-        if (!room_code || !name) {
+        if (!room_code || !name || !player_uuid) {
             return res.status(400).json({ error: 'Missing fields for join' });
         }
 
-        // Normalize room code: remove non-alphanumeric and insert hyphen if length is 8
+        // Normalize room code
         let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        if (code.length === 8) {
-            code = code.slice(0, 4) + '-' + code.slice(4);
-        }
+        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
 
         const trimmedName = String(name).trim().slice(0, 50);
-        const uuid = player_uuid ? String(player_uuid).trim() : null;
+        const uuid = String(player_uuid).trim();
 
-        // ── Step 0: Validate Session Exists ──────────────────────────────────
-        // Simplified query to check if the room exists
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=id&limit=1`);
+        // Input Validation
+        if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
+        if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) return res.status(400).json({ error: 'Invalid player UUID format' });
 
-        if (!sessionCheck.ok) {
-            return res.status(500).json({ error: `Database communication error (${sessionCheck.status}).` });
-        }
-
-        if (!sessionCheck.data || sessionCheck.data.length === 0) {
-            return res.status(404).json({ error: `Room "${code}" not found. Please verify the code with the host.` });
-        }
-
-        // --- Input Validation ---
-        if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
-            return res.status(400).json({ error: 'Invalid room code format' });
-        }
-        if (uuid && !/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
-            return res.status(400).json({ error: 'Invalid player UUID format' });
-        }
-        // ------------------------
-
-         // ── Step 1: Check if player is already approved ─────────────────────
-        if (uuid && !force) {
-            const existing = await sbFetch(
-                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status,player_name&limit=1`
-            );
-            if (existing.ok && existing.data?.length > 0) {
-                const member = existing.data[0];
-                // If already active, allow the player to bypass the waiting screen
-                if (member.status === 'active') {
-                    return res.status(200).json({ ok: true, alreadyActive: true });
-                }
-            }
-        }
-
-        // ── Step 3: Handle Manual Approval (Closed Party) ────────────────────
-        // Duplicate guard for pending notifications to prevent spam        
-        if (uuid) {
-            const dup = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=id&limit=1`);
-            if (dup.ok && dup.data?.length > 0) {
-                return res.status(200).json({ ok: true, alreadyActive: false });
-            }
-        }
-        // Insert notification for the host
-        const r = await sbFetch('/play_requests', {
-            method: 'POST',
-            body: { room_code: code, name: trimmedName, player_uuid: uuid, requested_at: new Date().toISOString() },
+        // ── SINGLE ATOMIC RPC CALL ───────────────────────────────────────────
+        // This moves session validation, existing status checks, and multiple 
+        // upserts into a single database transaction for improved reliability.
+        const r = await sbFetch('/rpc/join_session', {
+            method:  'POST',
+            body:    { 
+                p_room_code: code, 
+                p_player_name: trimmedName, 
+                p_player_uuid: uuid,
+                p_force: !!force 
+            },
         });
 
-        if (!r.ok) return res.status(500).json({ error: 'Failed to create join request' });
+        if (!r.ok) return res.status(r.status || 500).json({ error: r.data?.message || 'Database error' });
+        if (r.data?.error) return res.status(r.data.status || 400).json({ error: r.data.error });
 
-        // Ensure player is recorded as PENDING in the membership table
-        if (uuid) {
-            await sbFetch('/session_members', {
-                method:  'POST',
-                headers: { 'Prefer': 'resolution=merge-duplicates' },
-                body:    { room_code: code, player_uuid: uuid, player_name: trimmedName, status: 'pending', last_seen: new Date().toISOString() },
-            });
-        }
-
-        return res.status(200).json({ ok: true, alreadyActive: false });
+        return res.status(200).json(r.data);
     }
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {

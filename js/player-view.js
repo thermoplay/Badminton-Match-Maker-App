@@ -342,6 +342,24 @@ const SidelineView = {
         const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
         const emoji = passport.spiritAnimal || '';
 
+        // Calculate Trophy Counts (Gold, Silver, Bronze Tiers)
+        const myAch = me ? (me.achievements || []) : [];
+        const counts = { gold: 0, silver: 0, bronze: 0 };
+        if (window.Achievements) {
+            Object.keys(window.Achievements).forEach(key => {
+                const def = window.Achievements[key];
+                if (def.tiers) {
+                    def.tiers.forEach(tier => {
+                        if (myAch.includes(`${key}_${tier.id}`)) {
+                            if (tier.color === '#ffd700') counts.gold++;
+                            else if (tier.color === '#c0c0c0') counts.silver++;
+                            else if (tier.color === '#cd7f32') counts.bronze++;
+                        }
+                    });
+                }
+            });
+        }
+
         header.innerHTML = `
             <div class="sl-profile-card">
                 <div class="sl-profile-top-left">
@@ -358,6 +376,20 @@ const SidelineView = {
                 <div class="sl-profile-title-badge">
                     <span>${titleData.icon}</span>
                     <span>${titleData.title}</span>
+                </div>
+                <div class="sl-trophy-tally" style="display:flex; gap:12px; margin-top:14px; padding:8px 16px; background:var(--bg2); border-radius:12px; border:1px solid var(--border);">
+                    <div style="display:flex; align-items:center; gap:4px;" title="Gold Trophies">
+                        <span style="color:#ffd700; font-size:0.9rem;">🥇</span>
+                        <span style="font-family:var(--font-display); font-size:1rem; font-weight:800; color:#ffd700; line-height:1;">${counts.gold}</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:4px;" title="Silver Trophies">
+                        <span style="color:#c0c0c0; font-size:0.9rem;">🥈</span>
+                        <span style="font-family:var(--font-display); font-size:1rem; font-weight:800; color:#c0c0c0; line-height:1;">${counts.silver}</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:4px;" title="Bronze Trophies">
+                        <span style="color:#cd7f32; font-size:0.9rem;">🥉</span>
+                        <span style="font-family:var(--font-display); font-size:1rem; font-weight:800; color:#cd7f32; line-height:1;">${counts.bronze}</span>
+                    </div>
                 </div>
             </div>`;
 
@@ -480,7 +512,8 @@ const SidelineView = {
             if (me.opponentHistory) {
                 const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
                 if (rivals.length > 0) {
-                    rivalName = rivals[0][0];
+                    const rivalP = (window.squad || []).find(p => p.uuid === rivals[0][0]);
+                    rivalName = rivalP ? rivalP.name : 'Unknown';
                     rivalCount = rivals[0][1];
                 }
             }
@@ -491,8 +524,36 @@ const SidelineView = {
                 `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'rgba(239,68,68,0.2)'}; color:${r==='W'?'#000':'#ef4444'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
             ).join('');
 
+            // Performance Lab: History List with UUID name resolution
+            let historyHTML = '';
+            if (me.matchHistory && me.matchHistory.length > 0) {
+                historyHTML = `
+                    <div class="sl-lab-history" style="margin-top:12px;">
+                        ${me.matchHistory.map(h => {
+                            const oppNames = (h.oppUUIDs || []).map(id => {
+                                const p = (window.squad || []).find(s => s.uuid === id);
+                                return p ? esc(p.name) : 'Former Player';
+                            }).join(' &amp; ');
+                            const timeAgo = Math.floor((Date.now() - h.time) / 60000);
+                            const timeStr = timeAgo < 1 ? 'Just now' : `${timeAgo}m ago`;
+                            return `
+                                <div class="sl-hist-item ${h.win ? 'sl-hist-win' : 'sl-hist-loss'}">
+                                    <div class="sl-hist-badge">${h.win ? 'W' : 'L'}</div>
+                                    <div class="sl-hist-details">
+                                        <div class="sl-hist-label">${h.win ? 'Victory' : 'Defeat'}</div>
+                                        <div class="sl-hist-opp">vs ${oppNames}</div>
+                                    </div>
+                                    <div class="sl-hist-time">${timeStr}</div>
+                                </div>`;
+                        }).join('')}
+                    </div>`;
+            }
+
             analyticsContainer.innerHTML = `
-                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
+                <div class="sl-section-label sl-section-lab" style="margin-top:24px;">
+                    <span class="sl-dot-lab">📊</span> PERFORMANCE LAB
+                    <span class="sl-lab-badge">SESSION LOG</span>
+                </div>
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
                     <div style="text-align:center; flex:1;">
                         <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
@@ -504,7 +565,8 @@ const SidelineView = {
                         <div style="font-size:0.9rem; font-weight:700;">${esc(rivalName)}</div>
                         <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
                     </div>
-                </div>`;
+                </div>
+                ${historyHTML}`;
         }
 
         this._renderH2H(profileView, me);
@@ -520,13 +582,14 @@ const SidelineView = {
                 });
                 const best = partners[0];
                 if (best) {
-                    const [name, stats] = best;
+                    const [uuid, stats] = best;
+                    const partnerP = (window.squad || []).find(p => p.uuid === uuid);
                     const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
                     chemContainer.innerHTML = `
                         <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
                         <div class="sl-chem-card">
                             <div class="sl-chem-details">
-                                <div class="sl-chem-name">Best with: <strong>${esc(name)}</strong></div>
+                                <div class="sl-chem-name">Best with: <strong>${esc(partnerP ? partnerP.name : 'Unknown')}</strong></div>
                                 <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
                             </div>
                         </div>`;
@@ -559,19 +622,19 @@ const SidelineView = {
         if (container && window.Achievements) {
             const myAch = me ? (me.achievements || []) : [];
             const html = Object.keys(window.Achievements).map(key => {
-                const def = window.Achievements[key];
-                const unlocked = myAch.includes(key);
-                const safeName = esc(def.name);
-                const safeDesc = esc(def.description);
+                const data = window.getAchievementDisplay(key, myAch);
+                const unlocked = data.unlocked;
+                const safeName = esc(data.name);
+                const safeDesc = esc(data.description);
                 const statusClass = unlocked ? 'unlocked' : 'locked';
                 const tapAction = `showSessionToast('${unlocked ? '🏆' : '🔒'} ${safeName}: ${safeDesc}')`;
                 
                 return `
-                    <div class="sl-achievement-badge ${statusClass}" onclick="${tapAction}"
-                         onmousedown="startAchPress('${key}')" onmouseup="endAchPress()"
-                         ontouchstart="startAchPress('${key}')" ontouchend="endAchPress()"
+                    <div class="sl-achievement-badge ${statusClass}" onclick="${tapAction}" style="${unlocked ? `border-color:${data.color}; box-shadow: 0 0 10px ${data.color}44;` : ''}"
+                         onmousedown="startAchPress('${key}', '${me.uuid}')" onmouseup="endAchPress()"
+                         ontouchstart="startAchPress('${key}', '${me.uuid}')" ontouchend="endAchPress()"
                          oncontextmenu="event.preventDefault(); return false;">
-                        <div class="sl-ach-icon-large">${def.icon}</div>
+                        <div class="sl-ach-icon-large">${data.icon}</div>
                         <div class="sl-ach-label">${safeName}</div>
                     </div>
                 `;
@@ -638,7 +701,7 @@ const SidelineView = {
             <div class="sl-h2h-select-wrap">
                 <select id="slH2HSelect" class="sl-h2h-select" onchange="SidelineView._renderH2HStats()">
                     <option value="" disabled ${selectedVal ? '' : 'selected'}>Compare with...</option>
-                    ${others.map(p => `<option value="${esc(p.name)}" ${p.name === selectedVal ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                    ${others.map(p => `<option value="${p.uuid}" ${p.uuid === selectedVal ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
                 </select>
                 <div class="sl-h2h-arrow">▼</div>
             </div>
@@ -653,15 +716,15 @@ const SidelineView = {
         const container = document.getElementById('slH2HStats');
         if (!select || !container) return;
         
-        const targetName = select.value;
-        if (!targetName) { container.innerHTML = ''; return; }
+        const targetUUID = select.value;
+        if (!targetUUID) { container.innerHTML = ''; return; }
 
         const passport = Passport.get();
         const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
         if (!me) return;
 
-        const vsGames = (me.opponentHistory || {})[targetName] || 0;
-        const withStats = (me.partnerStats || {})[targetName] || { wins: 0, games: 0 };
+        const vsGames = (me.opponentHistory || {})[targetUUID] || 0;
+        const withStats = (me.partnerStats || {})[targetUUID] || { wins: 0, games: 0 };
         const withWr = withStats.games > 0 ? Math.round((withStats.wins / withStats.games) * 100) : 0;
 
         container.innerHTML = `
@@ -907,6 +970,7 @@ const PlayerMode = {
         clearInterval(this._statePollTimer);
         localStorage.removeItem('cs_player_room_code');
         try { sessionStorage.removeItem(SS_APPROVED); } catch {}
+        this._clearApprovedInSession(this._joinCode);
 
         if (typeof showSessionToast === 'function') {
             showSessionToast('You have been removed from the session.');
@@ -1630,6 +1694,14 @@ const PlayerMode = {
         } catch { }
     },
 
+    _clearApprovedInSession(roomCode) {
+        try {
+            const m = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
+            delete m[roomCode];
+            sessionStorage.setItem(SS_APPROVED, JSON.stringify(m));
+        } catch { }
+    },
+
     _loadToken(roomCode) {
         try { return JSON.parse(localStorage.getItem(LS_TOKENS) || '{}')[roomCode] || null; }
         catch { return null; }
@@ -1928,14 +2000,14 @@ const PlayerMode = {
         const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
         const listHTML = Object.keys(window.Achievements).map(key => {
-            const def = window.Achievements[key];
-            const unlocked = myAch.includes(key);
+            const data = window.getAchievementDisplay(key, myAch);
+            const unlocked = data.unlocked;
             return `
-                <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="margin-bottom:8px; text-align:left; border-color: ${unlocked ? 'var(--border-accent)' : 'var(--border)'}">
-                    <div class="sl-ach-icon">${unlocked ? def.icon : '🔒'}</div>
+                <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="margin-bottom:8px; text-align:left; border-color: ${unlocked ? data.color : 'var(--border)'}">
+                    <div class="sl-ach-icon">${unlocked ? data.icon : '🔒'}</div>
                     <div class="sl-ach-text">
-                        <div class="sl-ach-title">${esc(def.name)}</div>
-                        <div class="sl-ach-desc">${esc(def.description)}</div>
+                        <div class="sl-ach-title">${esc(data.name)}</div>
+                        <div class="sl-ach-desc">${esc(data.description)}</div>
                     </div>
                 </div>
             `;
