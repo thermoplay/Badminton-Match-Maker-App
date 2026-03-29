@@ -52,14 +52,18 @@ function calculateOdds(teamA, teamB) {
 /**
  * Creates a snapshot of the current state for the undo history.
  * @param {object} finishedMatch - The match that just ended.
+ * @param {Array} achievements - New achievements earned in this match.
+ * @param {Array} preSquad - The squad state BEFORE the match was processed.
+ * @param {Array} preQueue - The queue state BEFORE the match was processed.
  */
-function _createRoundSnapshot(finishedMatch) {
+function _createRoundSnapshot(finishedMatch, achievements = [], preSquad, preQueue) {
     finishedMatch.endedAt = Date.now();
     const snapshot = {
-        squadSnapshot: StateStore.squad.map(p => ({ ...p })),
-        matches:       StateStore.currentMatches.map(m => ({ ...m, teams: m.teams.map(t => [...t]) })),
-        queueSnapshot: [...StateStore.playerQueue],
+        squadSnapshot: preSquad || JSON.parse(JSON.stringify(StateStore.squad)),
+        matches:       JSON.parse(JSON.stringify(StateStore.currentMatches)),
+        queueSnapshot: preQueue || [...StateStore.playerQueue],
         timestamp:     Date.now(),
+        achievements:  achievements,
     };
     StateStore.roundHistory.push(snapshot);
     if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
@@ -72,16 +76,10 @@ function _createRoundSnapshot(finishedMatch) {
  */
 function _processFinishedMatch(match, mIdx) {
     applyELOForMatch(match);
-    if (window.checkAndAwardAchievements) {
-        // Fire and forget: check for achievements in the background
-        // without blocking the UI update for the next game.
-        checkAndAwardAchievements(match, StateStore.squad);
-    }
     if (typeof dispatchWinSignals === 'function') {
         dispatchWinSignals(mIdx, true); // skipBroadcast = true
     }
     _recordMatchStats(match);
-    rotateCourtPlayers(match);
 }
 
 /**
@@ -166,8 +164,6 @@ function _finalizeCourtResultUpdate() {
     renderQueueStrip();
     checkNextButtonState();
     updateUndoButton();
-    saveToDisk();
-    if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.bump();
 }
 
@@ -178,8 +174,21 @@ async function processCourtResult(mIdx) {
         return;
     }
 
-    _createRoundSnapshot(match);
+    // 1. Capture state for Undo snapshot BEFORE changes are applied
+    const preSquad = JSON.parse(JSON.stringify(StateStore.squad));
+    const preQueue = [...StateStore.playerQueue];
+
+    // 2. Apply ELO and record stats
     _processFinishedMatch(match, mIdx);
+    
+    // 3. Award achievements and capture results for the batch sync
+    const newlyUnlocked = await checkAndAwardAchievements(match, StateStore.squad);
+
+    // 4. Create snapshot including the achievements and pre-change state
+    _createRoundSnapshot(match, newlyUnlocked, preSquad, preQueue);
+
+    // 5. Rotate players for the next round
+    rotateCourtPlayers(match);
 
     const onCourtNow = new Set(
         StateStore.currentMatches
@@ -578,7 +587,7 @@ function _renderAndFinalizeGeneration(matchData) {
     renderQueueStrip();
     checkNextButtonState();
     renderSquad();
-    saveToDisk();
+    StateStore.set('currentMatches', StateStore.currentMatches);
     Haptic.bump();
 }
 
@@ -750,11 +759,7 @@ function setWinner(mIdx, tIdx) {
     if (nextBtn) nextBtn.disabled = false;
 
     checkNextButtonState();
-    saveToDisk();
-
-    // Broadcast game state so players see the winner selection on the card.
-    // This does NOT trigger win/loss stat updates, only the UI change.
-    if (typeof broadcastGameState === 'function') broadcastGameState();
+    StateStore.set('currentMatches', StateStore.currentMatches);
 }
 
 // ---------------------------------------------------------------------------

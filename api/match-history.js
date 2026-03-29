@@ -38,7 +38,7 @@ export default async function handler(req, res) {
 
         // --- Archive a completed match/round ---
         if (type === 'match_result') {
-            const { room_code, operator_key, timestamp, matches } = req.body;
+            const { room_code, operator_key, timestamp, matches, squad } = req.body;
             if (!room_code || !matches || !operator_key) {
                 return res.status(400).json({ error: 'Missing fields for match_result' });
             }
@@ -48,8 +48,25 @@ export default async function handler(req, res) {
                 if (m.winnerTeamIndex === null) return;
                 const winIdx  = m.winnerTeamIndex;
                 const loseIdx = winIdx === 0 ? 1 : 0;
-                m.teams[winIdx].forEach(name => results.push({ player_name: name, won: true }));
-                m.teams[loseIdx].forEach(name => results.push({ player_name: name, won: false }));
+
+                const resolveData = (name, won) => {
+                    const p = (squad || []).find(x => x.name === name) || {};
+                    return {
+                        player_uuid: p.uuid || null,
+                        player_name: name,
+                        won: won,
+                        rating: Math.round(p.rating || 1200)
+                    };
+                };
+
+                m.teams[winIdx].forEach(name => {
+                    const d = resolveData(name, true);
+                    if (d.player_uuid) results.push(d);
+                });
+                m.teams[loseIdx].forEach(name => {
+                    const d = resolveData(name, false);
+                    if (d.player_uuid) results.push(d);
+                });
             });
 
             if (results.length === 0) return res.status(200).json({ archived: 0 });

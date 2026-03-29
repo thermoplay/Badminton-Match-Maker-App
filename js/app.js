@@ -33,7 +33,7 @@ function startAchPress(key, pUUID = null) {
         achPressTimer = null;
     }, 600);
 }
-function endAchPress() {
+function endAchPress(key) {
     clearTimeout(achPressTimer);
     achPressTimer = null;
 }
@@ -57,6 +57,7 @@ function saveToDisk() {
             courtNames: StateStore.get('courtNames'),
             isOpenParty: StateStore.get('isOpenParty') || false,
             guestList: StateStore.get('guestList') || [],
+            lastUpdated: StateStore.get('lastUpdated'),
         };
         localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
     } catch (e) {
@@ -115,6 +116,7 @@ function loadFromDisk() {
                 courtNames: data.courtNames || {},
                 isOpenParty: data.isOpenParty || false,
                 guestList: data.guestList || [],
+                lastUpdated: data.lastUpdated || Date.now(),
             });
 
             setTimeout(() => {
@@ -169,7 +171,6 @@ function addPlayer() {
     renderSquad();
     renderQueueStrip();
     checkNextButtonState();
-    saveToDisk();
 }
 
 function editPlayerName() {
@@ -225,8 +226,7 @@ function editPlayerName() {
             renderSquad();
             if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
             renderQueueStrip();
-            saveToDisk();
-            if (typeof broadcastGameState === 'function') broadcastGameState();
+            StateStore.set('squad', StateStore.squad); // Trigger sync
         }
     });
 }
@@ -237,7 +237,6 @@ function toggleBatterySaver() {
     showSessionToast(`🔋 Battery Saver: ${!current ? 'ON' : 'OFF'}`);
     // Refresh overlay to update button text
     showOverlay('sync');
-    saveToDisk();
 }
 window.toggleBatterySaver = toggleBatterySaver;
 
@@ -250,9 +249,6 @@ function resyncQueue() {
     if (typeof initQueue === 'function') {
         initQueue();
         if (typeof renderQueueStrip === 'function') renderQueueStrip();
-        saveToDisk();
-        if (typeof broadcastGameState === 'function') broadcastGameState(true);
-        showSessionToast('🔄 Queue re-synced with squad');
         if (window.Haptic) Haptic.success();
     }
 }
@@ -300,9 +296,7 @@ function completeSwap(targetUUID) {
     if (p1 && p2 && typeof window.swapActivePlayers === 'function') {
         if (window.swapActivePlayers(p1.name, p2.name)) {
             showSessionToast(`Swapped ${p1.name} & ${p2.name}`);
-            Haptic.success();
-            saveToDisk();
-            if (typeof broadcastGameState === 'function') broadcastGameState();
+            Haptic.success(); // StateStore.set in swapActivePlayers will trigger sync
         } else {
             showSessionToast('Could not swap players.');
         }
@@ -321,7 +315,6 @@ function toggleRestingState() {
     closeMenu();
     renderSquad();
     checkNextButtonState();
-    saveToDisk();
 }
 
 function _autoAddHostToSquad() {
@@ -348,7 +341,7 @@ function _autoAddHostToSquad() {
             StateStore.playerQueue.unshift(hostName); // Also add to front of queue
         }
         
-        saveToDisk();
+        StateStore.set('squad', StateStore.squad); // Trigger sync
         renderSquad(); // Re-render the squad list to show the new player
         showSessionToast(`👋 Welcome, ${hostName}! You've been added to the squad.`);
     }
@@ -361,7 +354,7 @@ function _removePlayerFromLocalState(playerIndex) {
     const removedUUID = removedPlayer.uuid || null;
 
     StateStore.squad.splice(playerIndex, 1);
-    StateStore.set('currentMatches', StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedName)));
+    StateStore.set('currentMatches', StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedName))); // This will trigger sync
     StateStore.set('playerQueue', StateStore.playerQueue.filter(n => n !== removedName));
 
     if (window._approvedPlayers) {
@@ -423,15 +416,8 @@ async function removePlayerFromSession(playerUUID, playerName) {
     const { removedName, removedUUID } = _removePlayerFromLocalState(pIndex);
 
     _updateUIAfterPlayerRemoval();
-    saveToDisk();
-
-    if (typeof broadcastGameState === 'function') {
-        broadcastGameState();
-    }
 
     await _removePlayerFromRemoteDB(removedUUID);
-
-    showSessionToast(`👋 ${removedName} left the session.`);
     Haptic.bump();
 }
 
@@ -666,8 +652,6 @@ function movePlayerToFront() {
     
     closeMenu();
     renderQueueStrip();
-    saveToDisk();
-    if (typeof broadcastGameState === 'function') broadcastGameState();
     Haptic.success();
     if (typeof showSessionToast === 'function') showSessionToast(`${p.name} moved to front`);
 }
@@ -695,8 +679,6 @@ function openCourtRename(courtIndex) {
 
             StateStore.set('courtNames', newCourtNames);
             rebuildMatchCardIndices(); // Re-render cards to show new name
-            saveToDisk();
-            if (typeof broadcastGameState === 'function') broadcastGameState();
         }
     });
 }
@@ -1120,9 +1102,7 @@ function importSyncToken() {
         const json = decodeURIComponent(escape(window.atob(val)));
         const data = JSON.parse(json);
         if (!data.squad) throw new Error('Missing squad data');
-        StateStore.set('squad', data.squad);
-        StateStore.set('currentMatches', data.currentMatches || []);
-        saveToDisk();
+                StateStore.setState({ squad: data.squad, currentMatches: data.currentMatches || [] }); // Triggers sync
         closeOverlay();
         renderSquad();
         document.getElementById('matchContainer').innerHTML = '';
@@ -1181,20 +1161,15 @@ function undoLastRound() {
             const snapshot = StateStore.roundHistory.pop();
             // Restore state from the snapshot using the StateStore
             StateStore.setState({
-                squad: snapshot.squadSnapshot.map(s => ({ ...s })),
-                currentMatches: snapshot.matches.map(m => ({ ...m })),
-                playerQueue: snapshot.queueSnapshot ? [...snapshot.queueSnapshot] : StateStore.playerQueue,
+                squad: snapshot.squadSnapshot,
+                currentMatches: snapshot.matches,
+                playerQueue: snapshot.queueSnapshot || StateStore.playerQueue,
             });
             renderSquad();
             rebuildMatchCardIndices();
             renderQueueStrip();
             updateUndoButton();
             checkNextButtonState();
-            saveToDisk();
-            if (isOnlineSession && isOperator) {
-                pushStateToSupabase();
-                if (typeof broadcastGameState === 'function') broadcastGameState();
-            }
             Haptic.bump();
             showSessionToast('↩ Last round undone');
         }
@@ -1214,6 +1189,8 @@ function renderStatsTab(tab) {
                 onclick="renderStatsTab('performance')">Performance</button>
             <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
                 onclick="renderStatsTab('history')">History</button>
+            <button class="stats-tab ${tab === 'leaderboard' ? 'active' : ''}" 
+                onclick="renderStatsTab('leaderboard')">Leaderboard</button>
             <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
                 onclick="renderStatsTab('profile')">My Profile</button>
         </div>
@@ -1993,15 +1970,26 @@ function _resolvePlayerForSession(name, incomingUUID) {
 
 async function approvePlayRequest(name, id, playerUUID = null) {
     console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
+    
+    // Priority 1: Check if achievements were already reconciled by the Join RPC
+    const requestRow = playRequests.find(r => String(r.id) === String(id));
+    const reconciledAchievements = requestRow?.achievements;
+
     const player = _resolvePlayerForSession(name, playerUUID);
     const finalName = player.name;
     const validUUID = player.uuid;
 
-    // Always fetch/refresh achievements if we have a valid UUID (new or adopted)
     if (player.uuid && window.fetchPlayerAchievements) {
         try {
-            const fetched = await window.fetchPlayerAchievements(player.uuid);
-            const achievementIds = fetched.map(a => a.achievement_id);
+            let achievementIds = [];
+            if (Array.isArray(reconciledAchievements)) {
+                achievementIds = reconciledAchievements;
+            } else {
+                // Fallback to manual fetch if reconciled data is missing
+                const fetched = await window.fetchPlayerAchievements(player.uuid);
+                achievementIds = fetched.map(a => a.achievement_id);
+            }
+
             // Merge with existing to avoid losing session-unlocked ones
             // If fetch returns empty but we have local ones, keep local ones (safety)
             const currentSet = new Set(player.achievements || []); 
@@ -2011,8 +1999,6 @@ async function approvePlayRequest(name, id, playerUUID = null) {
             console.error(`Failed to fetch achievements for ${player.name}`, e);
         }
     }
-
-    // Ensure player is active (in case they were previously resting)
     player.active = true;
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};
@@ -2025,12 +2011,9 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     if (!StateStore.playerQueue.includes(player.name)) {
         StateStore.playerQueue.push(player.name);
     }
-
     renderSquad();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    saveToDisk();
-    // Broadcast squad update immediately — don't wait for DB debounce
-    if (typeof broadcastGameState === 'function') broadcastGameState();
+    StateStore.set('squad', StateStore.squad); // Trigger sync for squad and queue
 
     showSessionToast(`✅ ${player.name} added`);
     Haptic.success();
@@ -2089,7 +2072,6 @@ window.onPlayRequestInsert = function(record) {
             if (record.player_uuid && existing.uuid !== record.player_uuid) {
                 existing.uuid = record.player_uuid;
                 renderSquad();
-                saveToDisk();
             }
 
             if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
@@ -2283,7 +2265,6 @@ function passportRename() {
                     renderSquad();
                     if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
                     if (typeof renderQueueStrip === 'function') renderQueueStrip();
-                    saveToDisk();
                 }
             }
             showSessionToast(`✅ Name updated to ${trimmed}`);

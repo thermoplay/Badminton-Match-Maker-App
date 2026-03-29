@@ -16,6 +16,18 @@ const StateStore = (() => {
         isOpenParty: false,
         guestList: [],
         batterySaver: false,
+        lastUpdated: Date.now(),
+    };
+
+    let _syncTimer = null;
+    /** Batches sync operations to the next execution tick to prevent redundant calls. */
+    const _triggerSync = () => {
+        if (_syncTimer) return;
+        _syncTimer = setTimeout(() => {
+            if (typeof window.saveToDisk === 'function') window.saveToDisk();
+            if (typeof window.broadcastGameState === 'function') window.broadcastGameState();
+            _syncTimer = null;
+        }, 0);
     };
 
     // --- Getters ---
@@ -25,6 +37,10 @@ const StateStore = (() => {
     const set = (key, value) => {
         if (key in _state) {
             _state[key] = value;
+            _state.lastUpdated = Date.now();
+            if (['squad', 'currentMatches', 'playerQueue'].includes(key)) {
+                _triggerSync();
+            }
         } else {
             console.warn(`[StateStore] Attempted to set unknown state key: ${key}`);
         }
@@ -33,7 +49,14 @@ const StateStore = (() => {
     // --- Direct Accessors for convenience ---
     const getState = () => ({ ..._state });
     const setState = (newState) => {
-        _state = { ..._state, ...newState };
+        const syncKeys = ['squad', 'currentMatches', 'playerQueue'];
+        const needsSync = Object.keys(newState).some(k => syncKeys.includes(k));
+
+        _state = { ..._state, ...newState, lastUpdated: Date.now() };
+
+        if (needsSync) {
+            _triggerSync();
+        }
     };
 
     return {
@@ -47,6 +70,7 @@ const StateStore = (() => {
         get currentMatches() { return _state.currentMatches; },
         get playerQueue() { return _state.playerQueue; },
         get roundHistory() { return _state.roundHistory; },
+        get lastUpdated() { return _state.lastUpdated; },
     };
 })();
 

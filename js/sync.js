@@ -835,9 +835,7 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
 
     renderSquad();
     if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-    if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    saveToDisk();
-    broadcastGameState(); // Always broadcast so spectators see name change in squad/queue
+    // If this function is called directly, it should trigger a StateStore.set.
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
 window._applyNameUpdate = _applyNameUpdate;
@@ -913,6 +911,30 @@ function applyRemoteState(session) {
     // re-renders the match container mid-game, causing the "Start Session" flash.
     // Only allow host to apply remote state during initial boot/rejoin hydration.
     if (isOperator && !_isBootingSession) {
+        // RECONCILIATION: If re-joining players had their achievements merged in the DB
+        // by the join_session RPC, the Host needs to adopt those changes into local state.
+        if (Array.isArray(session.squad)) {
+            let hasChanges = false;
+            session.squad.forEach(remoteP => {
+                if (!remoteP.uuid) return;
+                const localP = StateStore.squad.find(p => p.uuid === remoteP.uuid);
+                if (localP && Array.isArray(remoteP.achievements)) {
+                    const localSet = new Set(localP.achievements || []);
+                    let pChanged = false;
+                    remoteP.achievements.forEach(a => {
+                        if (!localSet.has(a)) { localSet.add(a); pChanged = true; }
+                    });
+                    if (pChanged) {
+                        localP.achievements = Array.from(localSet);
+                        hasChanges = true;
+                    }
+                }
+            });
+            if (hasChanges) {
+                StateStore.set('squad', StateStore.squad);
+                renderSquad();
+            }
+        }
         _updatePlayerCount();
         return;
     }
@@ -1416,11 +1438,13 @@ async function archiveRoundToSupabase(snapshot) {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
+                type: 'match_result',
                 room_code: currentRoomCode,
                 operator_key: operatorKey,
                 timestamp: snapshot.timestamp,
                 matches:   snapshot.matches,
-                squad:     snapshot.squadSnapshot,
+                achievements: snapshot.achievements || [],
+                squad:     snapshot.squadSnapshot || [],
             }),
         });
     } catch (e) { console.error('CourtSide: archive failed', e); }

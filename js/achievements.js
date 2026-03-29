@@ -11,20 +11,28 @@ const Achievements = {
         description: 'Win your first game.',
         icon: '🏆'
     },
-    'streak_3': {
-        name: 'Triple Threat',
-        description: 'Achieve a 3-game winning streak.',
-        icon: '🔥'
+    'streak': {
+        name: 'Win Streak',
+        icon: '🔥',
+        tiers: [
+            { id: '3',  name: 'Triple Threat', count: 3,  color: '#cd7f32', description: 'Achieve a 3-game winning streak.' },
+            { id: '5',  name: 'High Five',      count: 5,  color: '#c0c0c0', description: 'Achieve a 5-game winning streak.' },
+            { id: '10', name: 'Legendary',     count: 10, color: '#ffd700', description: 'Achieve a 10-game winning streak.' }
+        ]
     },
     'underdog': {
         name: 'Underdog',
         description: 'Win a match against a higher-rated team.',
         icon: '🐶'
     },
-    'iron_man': {
+    'endurance': {
         name: 'Iron Man',
-        description: 'Play 5 games in a single session.',
-        icon: '💪'
+        icon: '💪',
+        tiers: [
+            { id: '5',  name: 'Iron Man',   count: 5,  color: '#cd7f32', description: 'Play 5 games in a single session.' },
+            { id: '10', name: 'Veteran',    count: 10, color: '#c0c0c0', description: 'Play 10 games in a single session.' },
+            { id: '15', name: 'Unstoppable',count: 15, color: '#ffd700', description: 'Play 15 games in a single session.' }
+        ]
     },
     'socialite': {
         name: 'Social Butterfly',
@@ -38,13 +46,15 @@ const Achievements = {
  * It checks for any new achievements unlocked by the players involved.
  * @param {object} match - The completed match object from currentMatches.
  * @param {Array} squad - The global squad array.
+ * @returns {Promise<Array>} - Resolves to a list of newly unlocked achievements { player_uuid, achievement_id }.
  */
 async function checkAndAwardAchievements(match, squad) {
-    if (match.winnerTeamIndex === null || !squad) return;
+    if (match.winnerTeamIndex === null || !squad) return [];
 
     const winIdx = match.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
     const winnerNames = match.teams[winIdx];
+    const newlyUnlocked = [];
 
     const findP = (name) => squad.find(p => p.name === name);
     const winners = winnerNames.map(findP).filter(Boolean);
@@ -55,20 +65,25 @@ async function checkAndAwardAchievements(match, squad) {
     for (const player of allPlayersInMatch) {
         if (!player.uuid) continue; // Cannot save achievements for players without a UUID.
 
-        const unlocked = new Set(Array.isArray(player.achievements) ? player.achievements : []);
+        if (!Array.isArray(player.achievements)) player.achievements = [];
+        const unlocked = new Set(player.achievements);
 
         // --- CHECK WINNER-ONLY ACHIEVEMENTS ---
         if (winners.includes(player)) {
             // Check for 'first_win'
             if (!unlocked.has('first_win') && player.wins === 1) {
-                unlockAchievement(player.uuid, 'first_win');
+                player.achievements.push('first_win');
+                unlocked.add('first_win');
+                newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'first_win' });
                 showAchievementToast(player.name, Achievements.first_win);
             }
             // Check for 'streak' tiers
             Achievements.streak.tiers.forEach(tier => {
                 const tid = `streak_${tier.id}`;
                 if (!unlocked.has(tid) && player.streak >= tier.count) {
-                    unlockAchievement(player.uuid, tid);
+                    player.achievements.push(tid);
+                    unlocked.add(tid);
+                    newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: tid });
                     showAchievementToast(player.name, { ...tier, icon: Achievements.streak.icon });
                 }
             });
@@ -76,7 +91,9 @@ async function checkAndAwardAchievements(match, squad) {
             const winnerTeamRating = match.teams[winIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
             const loserTeamRating = match.teams[loseIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
             if (!unlocked.has('underdog') && winnerTeamRating < loserTeamRating) {
-                unlockAchievement(player.uuid, 'underdog');
+                player.achievements.push('underdog');
+                unlocked.add('underdog');
+                newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'underdog' });
                 showAchievementToast(player.name, Achievements.underdog);
             }
         }
@@ -85,17 +102,24 @@ async function checkAndAwardAchievements(match, squad) {
         Achievements.endurance.tiers.forEach(tier => {
             const tid = `endurance_${tier.id}`;
             if (!unlocked.has(tid) && player.sessionPlayCount >= tier.count) {
-                unlockAchievement(player.uuid, tid);
+                player.achievements.push(tid);
+                unlocked.add(tid);
+                newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: tid });
                 showAchievementToast(player.name, { ...tier, icon: Achievements.endurance.icon });
             }
         });
         // Check for 'socialite'
         const uniquePartners = Object.keys(player.partnerStats || {}).length;
         if (!unlocked.has('socialite') && uniquePartners >= 3) {
-            unlockAchievement(player.uuid, 'socialite');
+            player.achievements.push('socialite');
+            unlocked.add('socialite');
+            newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'socialite' });
             showAchievementToast(player.name, Achievements.socialite);
         }
     }
+
+    if (newlyUnlocked.length > 0 && typeof saveToDisk === 'function') saveToDisk();
+    return newlyUnlocked;
 }
 
 /**
