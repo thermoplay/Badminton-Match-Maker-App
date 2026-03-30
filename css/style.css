@@ -5847,3 +5847,13 @@ button:active,
     border-radius: 50%;
     animation: sl-spin 0.8s linear infinite;
 }
+
+/* ── SESSION ENDED COLLAPSE ────────────────────────────────────────────── */
+body.session-ended #hostRoot,
+body.session-ended #hostNav,
+body.session-ended .session-badge,
+body.session-ended .play-requests-badge,
+body.session-ended .join-notif,
+body.session-ended #nextUpTicker {
+    display: none !important;
+}

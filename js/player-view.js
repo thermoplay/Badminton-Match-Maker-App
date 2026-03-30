@@ -134,7 +134,8 @@ const SidelineView = {
 
         // Guard: don't overwrite queued-state or name-entry UI during join flow
         if (container.querySelector('.sl-queued-state') ||
-            container.querySelector('.sl-name-entry')) return;
+            container.querySelector('.sl-name-entry') ||
+            container.querySelector('.sl-code-entry')) return;
 
         const matches = window.currentMatches || [];
         if (matches.length === 0) {
@@ -284,9 +285,8 @@ const SidelineView = {
         const content = document.getElementById('slRecapContent');
         if (!modal || !content || !recapData) return;
 
-        const { totalGames, mvp, milestones } = recapData;
+        const { totalGames, mvp, ironMan, hotHand, sharpShooter, squad = [] } = recapData;
         const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-        const dur = milestones?.longest?.duration ? Math.round(milestones.longest.duration / 60000) : 0;
 
         content.innerHTML = `
             <div class="sl-recap-item">
@@ -299,10 +299,28 @@ const SidelineView = {
                 <span class="sl-recap-label" style="color:var(--text);">${mvp.wins} Wins · ${mvp.games} Games</span>
                 <button class="sl-share-match-btn" style="margin-top:12px; background:var(--accent); color:#000;" onclick="PlayerMode.shareMVPPoster()">📲 SHARE MVP POSTER</button>
             </div>
-            <div class="sl-section-label" style="margin-top:10px;">🏅 SESSION RECORDS</div>
-            <div class="sl-recap-item" style="text-align:left; padding:12px;">
-                <div style="font-size:0.75rem; margin-bottom:8px;">⏱ <strong>Longest Game:</strong> ${dur}m<br><span style="font-size:0.65rem; color:var(--text-muted);">${esc(milestones?.longest?.teams || '—')}</span></div>
-                <div style="font-size:0.75rem;">🐶 <strong>Biggest Upset:</strong> ${milestones?.upset?.winner || '—'}<br><span style="font-size:0.65rem; color:var(--text-muted);">Won with only ${milestones?.upset?.odds || 0}% probability</span></div>
+            <div class="sl-section-label" style="margin-top:14px;">🏅 SESSION RECORDS</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">
+                <div class="sl-recap-item" style="padding:12px;">
+                    <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); text-transform:uppercase;">IRON MAN</div>
+                    <div style="font-size:0.8rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(ironMan.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${ironMan.sessionPlayCount} Games</div>
+                </div>
+                <div class="sl-recap-item" style="padding:12px;">
+                    <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); text-transform:uppercase;">HOT HAND</div>
+                    <div style="font-size:0.8rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(hotHand.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${hotHand.streak} Win Streak</div>
+                </div>
+            </div>
+            <div class="sl-section-label" style="margin-top:14px;">📊 FINAL STANDINGS</div>
+            <div style="margin-top:10px; background:var(--surface2); border-radius:12px; border:1px solid var(--border); padding:0 12px;">
+                ${squad.slice(0, 5).map((p, i) => `
+                    <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border);">
+                        <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:16px;">${i+1}</div>
+                        <div style="flex:1; font-size:0.8rem; font-weight:600;">${esc(p.name)}</div>
+                        <div style="font-family:var(--font-display); font-weight:800; color:var(--text);">${p.wins}W</div>
+                    </div>
+                `).join('')}
             </div>
         `;
 
@@ -945,6 +963,7 @@ const SS_APPROVED = 'cs_approved';
 
 const PlayerMode = {
 
+    _isJoining: false,
     _joinCode:  null,
     _pollTimer: null,
     _statePollTimer: null,
@@ -1036,6 +1055,14 @@ const PlayerMode = {
      * to subscribing to live updates.
      */
     async boot(passport, joinCode) {
+        // Clean up previous state if rebooting with a new code
+        this._isJoining = false;
+        clearInterval(this._pollTimer);
+        clearInterval(this._statePollTimer);
+        this._clearJoinRetryTimer();
+
+        window.currentMatches = []; // Clear stale matches to ensure a clean UI state
+
         // 1. Determine room code from URL param or localStorage
         if (!joinCode) {
             try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
@@ -1141,6 +1168,13 @@ const PlayerMode = {
                     if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
                         broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
                     }
+                    this._subscribeAndPoll(joinCode, passport);
+                    this.setStatus('approved', `Welcome back, ${passport.playerName}`, "Reconnected ✅");
+                    if (panel) panel.classList.remove('sl-booting');
+                    SidelineView.show();
+                    SidelineView.refresh();
+                    setTimeout(() => this._updateStatus(passport), 800);
+                    return;
                 } else if (requestRes.ok) {
                     // Check if we are already in the pending list to prevent duplicate requests
                     const reqData = await requestRes.json();
@@ -1220,7 +1254,9 @@ const PlayerMode = {
     async _resendRequest() {
         this._clearJoinRetryTimer();
         const passport = Passport.get();
-        if (!passport || !this._joinCode) return;
+        if (!passport || !this._joinCode || this._isJoining) return;
+
+        this._isJoining = true;
         const btn = document.getElementById('slResendBtn');
         if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
         try {
@@ -1242,6 +1278,8 @@ const PlayerMode = {
             } else { throw new Error('non-ok'); }
         } catch {
             if (btn) { btn.disabled = false; btn.textContent = 'Resend Request'; }
+        } finally {
+            this._isJoining = false;
         }
     },
 
@@ -1364,6 +1402,7 @@ const PlayerMode = {
         if (payload.playerUUID !== passport.playerUUID) return;
 
         this._markApprovedInSession(this._joinCode);
+        this._isJoining = false;
         if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
 
         if (payload.squad)           window.squad          = payload.squad;
@@ -1657,6 +1696,9 @@ const PlayerMode = {
     async _submitJoinRequest(passport, joinCode, options = {}) {
         const { force = false, statusMessage, statusSubMessage } = options;
 
+        if (this._isJoining && !force) return;
+        this._isJoining = true;
+
         this.setStatus('pending', statusMessage || 'Request sent!', statusSubMessage || 'Waiting for host to approve… 🏀');
         console.log('[PlayerMode] Joining with UUID:', passport.playerUUID);
         try {
@@ -1707,6 +1749,7 @@ const PlayerMode = {
             const data = await res.json();
 
             if (data.alreadyActive) {
+                this._isJoining = false;
                 this._markApprovedInSession(joinCode);
                 this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "Reconnected to court ✅");
                 SidelineView.show();
@@ -1720,11 +1763,13 @@ const PlayerMode = {
             }
 
             this._showQueuedState(passport.playerName);
+            this._isJoining = false;
 
-            // Start retry timer: if no host broadcast in 5s, auto-resend
+            // Start retry timer: if no host broadcast in 15s, auto-resend
             this._startJoinRetryTimer();
 
         } catch(e) {
+            this._isJoining = false;
             this.setStatus('pending', 'Connection failed', 'Check your internet');
             console.error('[PlayerMode] join request failed:', e);
         }
@@ -1733,7 +1778,7 @@ const PlayerMode = {
     _startJoinRetryTimer() {
         this._clearJoinRetryTimer();
         
-        let secondsLeft = 10; // Increase to 10s to give host more time to approve/sync
+        let secondsLeft = 15; // Increased to 15s for better stability
         const updateText = (s) => {
             const el = document.getElementById('slRetryNote');
             if (el) {
@@ -1755,7 +1800,7 @@ const PlayerMode = {
 
         this._joinRetryTimeout = setTimeout(() => {
             this._resendRequest();
-        }, 10000);
+        }, 15000);
     },
 
     _clearJoinRetryTimer() {
@@ -1796,8 +1841,10 @@ const PlayerMode = {
                 // been dropped from the Host's memory during a crash/refresh.
                 const p = Passport.get();
                 if (this._isApprovedInSession(this._joinCode) && p) {
-                    const inSquad = (window.squad || []).some(m => m.uuid === p.playerUUID);
-                    if (!inSquad) {
+                    const squad = window.squad || [];
+                    // Only self-heal if we HAVE squad data and we aren't in it.
+                    // If squad is empty, the session state is still loading.
+                    if (squad.length > 0 && !squad.some(m => m.uuid === p.playerUUID)) {
                         console.warn('[PlayerMode] Self-healing: Approved but not in squad. Re-notifying host...');
                         this._resendRequest();
                     }

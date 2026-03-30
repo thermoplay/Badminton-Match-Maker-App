@@ -871,50 +871,133 @@ function closeOverlay() {
 }
 
 function confirmEndSession() {
-    // 1. Calculate Recap Stats
-    const totalGames = StateStore.roundHistory.reduce((sum, round) => sum + (round.matches?.length || 0), 0);
-
-    let mostActivePlayer = { name: 'N/A', count: 0 };
-    if (StateStore.squad.length > 0) {
-        const activeSorted = [...StateStore.squad].sort((a, b) => (b.sessionPlayCount || 0) - (a.sessionPlayCount || 0));
-        if (activeSorted.length > 0) {
-            mostActivePlayer = { name: activeSorted[0].name, count: activeSorted[0].sessionPlayCount || 0 };
-        }
-    }
-
-    let bestFormPlayer = { name: 'N/A', streak: 0 };
-    if (StateStore.squad.length > 0) {
-        const streakSorted = [...StateStore.squad].sort((a, b) => (b.streak || 0) - (a.streak || 0));
-        if (streakSorted.length > 0) {
-            bestFormPlayer = { name: streakSorted[0].name, streak: streakSorted[0].streak || 0 };
-        }
-    }
-
-    const recapData = { totalGames, mostActivePlayer, bestFormPlayer };
-
-    // 2. Show Recap Modal with confirmation
     UIManager.confirm({
-        title: 'Session Recap',
-        message: `
-            <div id="recapContentForDownload" style="text-align:left; padding: 16px; background: var(--bg2); border-radius: 10px; border:1px solid var(--border);">
-                <p><strong>Total Games:</strong> ${recapData.totalGames}</p>
-                <p><strong>Most Active:</strong> ${escapeHTML(recapData.mostActivePlayer.name)} (${recapData.mostActivePlayer.count} games)</p>
-                <p><strong>Best Form:</strong> ${escapeHTML(recapData.bestFormPlayer.name)} (${recapData.bestFormPlayer.streak}-game streak)</p>
-            </div>
-            <p style="margin-top:20px; font-size:0.8rem;">End the session for all players and delete it from the server?</p>
-        `,
-        confirmText: 'End Session',
+        title: 'End Session?',
+        message: 'This will end the live broadcast for all players and spectators. You will see a final session recap before exiting.',
+        confirmText: 'End Session & Recap',
         isDestructive: true,
-        onConfirm: () => {
+        onConfirm: async () => {
+            const recapData = _calculateFinalRecapData();
+            const roomCode = window.currentRoomCode;
+            
+            // 1. Broadcast to players so they see their recap
             if (typeof broadcastSessionEnded === 'function') {
                 broadcastSessionEnded(recapData);
             }
-            setTimeout(() => {
-                if (typeof endAndDeleteSession === 'function') endAndDeleteSession();
-                closeOverlay();
-            }, 250); // Delay to allow broadcast to send
+
+            // 2. Stop host sync logic immediately
+            localStorage.removeItem('cs_room_code');
+            localStorage.removeItem('cs_operator_key');
+            localStorage.removeItem('cs_op_key_hash');
+            localStorage.removeItem('cs_pro_vault'); // Clear local vault to return to fresh menu
+
+            // 3. Show the Host Recap View (this also hides hostRoot via CSS)
+            _showHostRecap(recapData);
+
+            // 4. Delete from DB (authenticated call)
+            if (roomCode && window.operatorKey) {
+                fetch('/api/session-delete', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room_code: roomCode, operator_key: window.operatorKey }),
+                }).catch(e => console.error('[CourtSide] Silent delete failed', e));
+            }
         }
     });
+}
+
+function _calculateFinalRecapData() {
+    const squad = StateStore.squad || [];
+    const history = StateStore.roundHistory || [];
+    const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
+    
+    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins || b.rating - a.rating);
+    const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
+    
+    const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
+    const ironMan = sortedByGames[0] || { name: 'N/A', sessionPlayCount: 0 };
+
+    const sortedByStreak = [...squad].sort((a,b) => b.streak - a.streak);
+    const hotHand = sortedByStreak[0] || { name: 'N/A', streak: 0 };
+
+    const eligibleForWR = squad.filter(p => p.games >= 3);
+    const sortedByWR = [...eligibleForWR].sort((a,b) => (b.wins/b.games) - (a.wins/a.games));
+    const sharpShooter = sortedByWR[0] || { name: 'N/A', wins: 0, games: 0 };
+
+    return { 
+        totalGames, 
+        mvp: { name: mvp.name, wins: mvp.wins, games: mvp.games }, 
+        ironMan: { name: ironMan.name, sessionPlayCount: ironMan.sessionPlayCount },
+        hotHand: { name: hotHand.name, streak: hotHand.streak },
+        sharpShooter: { 
+            name: sharpShooter.name, 
+            wr: sharpShooter.games > 0 ? Math.round((sharpShooter.wins / sharpShooter.games) * 100) : 0 
+        },
+        squad: sortedByWins.slice(0, 10) 
+    };
+}
+
+function _showHostRecap(recap) {
+    document.body.classList.add('session-ended');
+    closeOverlay();
+
+    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+
+    const leaderboardHTML = recap.squad.map((p, i) => `
+        <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);">
+            <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
+            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${esc(p.name)}</div>
+            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.wins}W</div>
+        </div>
+    `).join('');
+
+    const content = `
+        <div class="menu-card" style="max-width:440px; width:95%; max-height:90vh; overflow-y:auto; padding:32px 24px; text-align:left;">
+            <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:8px; text-transform:uppercase;">SESSION COMPLETE</div>
+            <h2 style="font-size:2.2rem; margin-bottom:24px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic;">RECAP & RANKINGS</h2>
+            
+            <div style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
+                <div style="font-size:3rem; margin-bottom:10px;">🏆</div>
+                <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
+                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(recap.mvp.name)}</div>
+                <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${recap.mvp.wins} Wins · ${recap.mvp.games} Games</div>
+                <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
+                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border);">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">TOTAL GAMES</div>
+                    <div style="font-family:var(--font-display); font-size:1.8rem; font-weight:900; color:var(--accent);">${recap.totalGames}</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">IRON MAN</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.ironMan.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.ironMan.sessionPlayCount} Games</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">HOT HAND</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.hotHand.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.hotHand.streak} Win Streak</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">SHARP SHOOTER</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.sharpShooter.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.sharpShooter.wr}% Win Rate</div>
+                </div>
+            </div>
+
+            <div class="sync-section-label" style="margin-bottom:12px;">FINAL STANDINGS</div>
+            <div style="margin-bottom:24px; background:var(--surface); border-radius:12px; border:1px solid var(--border); padding:0 16px;">
+                ${leaderboardHTML}
+            </div>
+
+            <button class="btn-main" style="width:100%; height:54px; margin-bottom:12px; background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="window.location.reload()">BACK TO MENU</button>
+            <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.4; text-align:center;">Data has been synced to career records. Session logic disconnected.</p>
+        </div>
+    `;
+
+    UIManager.show(content, 'card');
 }
 // ---------------------------------------------------------------------------
 // QR CODE & SYNC TOKEN
