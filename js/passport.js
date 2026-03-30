@@ -38,6 +38,7 @@ const Passport = {
                 playerUUID: this._uuid(),
                 playerName: name || '',
                 spiritAnimal: null,
+                lastProcessedTS: 0,
                 createdAt:  Date.now(),
             };
             this.save(p);

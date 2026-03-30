@@ -68,6 +68,20 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid name or uuid' });
     }
 
+    // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
+    // This maintains a master registry of all players across all sessions.
+    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&limit=1`);
+    if (!playerLookup.ok || !playerLookup.data || playerLookup.data.length === 0) {
+        await sbFetch('/players', {
+            method: 'POST',
+            body: {
+                uuid: uuid,
+                name: trimmedName,
+                last_active: new Date().toISOString()
+            }
+        });
+    }
+
     // ── Step 1: Check if this player already has a row in this session ──────
     // If they do and status is 'active', just return it — DO NOT reset to pending.
     const existing = await sbFetch(

@@ -3181,7 +3181,157 @@ header {
     border: 1px solid rgba(96,165,250,0.3);
 }
 
-/* legacy responsive block removed */
+/* =============================================================================
+   VISUAL COURT MAP
+   ============================================================================= */
+.sl-court-map {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 2px 0;
+}
+
+.sl-mini-court {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 140px;
+    height: 74px;
+    background: var(--surface2);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.1s, background 0.2s;
+}
+
+.sl-mini-court.active {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, var(--surface2), rgba(0,255,163,0.08));
+    box-shadow: 0 0 15px rgba(0,255,163,0.1);
+}
+
+.sl-mini-court:active { transform: scale(0.97); }
+
+.sl-mini-team {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px;
+}
+
+.sl-mini-net {
+    height: 1.5px;
+    background: var(--border);
+    width: 85%;
+    margin: 0 auto;
+    opacity: 0.4;
+}
+
+.sl-mini-court.active .sl-mini-net { background: var(--accent); opacity: 0.4; }
+
+.sl-mini-label {
+    position: absolute;
+    top: 5px; left: 8px;
+    font-family: var(--font-display);
+    font-size: 0.55rem;
+    font-weight: 900;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.sl-mini-court.active .sl-mini-label { color: var(--accent); opacity: 1; }
+
+.sl-mini-court .avatar {
+    width: 24px; height: 24px;
+    font-size: 0.6rem;
+    border: 1.5px solid var(--bg);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* =============================================================================
+   UNIVERSAL ACTIVE STATES
+   ============================================================================= */
+
+/* =============================================================================
+   VISUAL COURT MAP
+   ============================================================================= */
+.sl-court-map {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 2px 0;
+}
+
+.sl-mini-court {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 140px;
+    height: 74px;
+    background: var(--surface2);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.1s, background 0.2s;
+}
+
+.sl-mini-court.active {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, var(--surface2), rgba(0,255,163,0.08));
+    box-shadow: 0 0 15px rgba(0,255,163,0.1);
+}
+
+.sl-mini-court:active { transform: scale(0.97); }
+
+.sl-mini-team {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px;
+}
+
+.sl-mini-net {
+    height: 1.5px;
+    background: var(--border);
+    width: 85%;
+    margin: 0 auto;
+    opacity: 0.4;
+}
+
+.sl-mini-court.active .sl-mini-net { background: var(--accent); opacity: 0.4; }
+
+.sl-mini-label {
+    position: absolute;
+    top: 5px; left: 8px;
+    font-family: var(--font-display);
+    font-size: 0.55rem;
+    font-weight: 900;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.sl-mini-court.active .sl-mini-label { color: var(--accent); opacity: 1; }
+
+.sl-mini-court .avatar {
+    width: 24px; height: 24px;
+    font-size: 0.6rem;
+    border: 1.5px solid var(--bg);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* =============================================================================
+   UNIVERSAL ACTIVE STATES
+   ============================================================================= */
 
 /* =============================================================================
    UNIVERSAL ACTIVE STATES

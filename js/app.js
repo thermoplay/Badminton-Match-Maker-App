@@ -227,6 +227,9 @@ function editPlayerName() {
             if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
             renderQueueStrip();
             StateStore.set('squad', StateStore.squad); // Trigger sync
+
+            // Force an immediate broadcast to bypass the 200ms throttle for real-time responsiveness
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
         }
     });
 }
@@ -315,6 +318,10 @@ function toggleRestingState() {
     closeMenu();
     renderSquad();
     checkNextButtonState();
+
+    // Trigger reactive sync and immediate broadcast
+    StateStore.set('squad', StateStore.squad);
+    if (typeof broadcastGameState === 'function') broadcastGameState(true);
 }
 
 function _autoAddHostToSquad() {
@@ -563,7 +570,9 @@ function endPress(uuid) {
             Haptic.tap();
             player.active = true;
             renderSquad();
-            saveToDisk();
+            // Trigger reactive sync and immediate broadcast
+            StateStore.set('squad', StateStore.squad);
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
         }
     }
 }
@@ -1386,7 +1395,36 @@ function renderStatsTab(tab) {
 
         content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
 
-    } else {
+    } else if (tab === 'leaderboard') {
+        content.innerHTML = tabs + `
+            <div class="sl-searching" style="margin-top:40px;">
+                <div class="sl-searching-spinner"></div>
+                <div class="sl-searching-text">FETCHING GLOBAL RANKINGS…</div>
+            </div>`;
+
+        fetch('/api/leaderboard-get')
+            .then(res => res.json())
+            .then(data => {
+                // Guard: only render if user is still on the leaderboard tab
+                if (document.querySelector('.stats-tab.active')?.textContent.toLowerCase() !== 'leaderboard') return;
+                
+                const players = data.players || [];
+                const html = players.map((p, i) => `
+                    <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
+                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
+                        <div style="flex:1;">
+                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || 'Unknown')}</div>
+                            <div class="stats-meta">${p.total_wins || p.wins || 0} Wins · ${p.total_games || p.games || 0} Games</div>
+                        </div>
+                        <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.elo || p.rating || 1200}</div>
+                    </div>`).join('');
+                content.innerHTML = tabs + `<div class="history-list">${html || '<div class="sl-empty">No rankings available yet.</div>'}</div>`;
+            })
+            .catch(() => {
+                content.innerHTML = tabs + '<div class="sl-empty">Failed to load global leaderboard.</div>';
+            });
+
+    } else if (tab === 'history') {
         if (StateStore.roundHistory.length === 0) {
             content.innerHTML = tabs + `
                 <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
@@ -1694,6 +1732,7 @@ async function shareAuraPoster(matchIdx) {
 // ---------------------------------------------------------------------------
 
 let playRequests = [];
+window.playRequests = playRequests;
 
 function _iwtpShow(id) {
     ['iwtpChoiceView','iwtpNewPlayerView','iwtpExistingView','iwtpSpectatorView'].forEach(v => {
@@ -1804,15 +1843,20 @@ async function pollPlayRequests() {
         const data = await res.json();
         const incoming = data.requests || [];
         playRequests = incoming;
+        window.playRequests = playRequests;
 
         for (const r of incoming) {
             if (!_lastSeenRequestIds.has(r.id)) {
+                // Always mark as seen immediately to prevent race-induced duplicate processing
                 _lastSeenRequestIds.add(r.id);
 
                 // BUG FIX: Check if player is already in the squad before alerting host.
+                const uuidMap = window._sessionUUIDMap || {};
                 const existing = StateStore.squad.find(p => 
                     (r.player_uuid && p.uuid === r.player_uuid) || 
-                    (p.name.toLowerCase() === r.name.toLowerCase())
+                    (p.name.toLowerCase() === r.name.toLowerCase()) ||
+                    (r.player_uuid && uuidMap[r.name] === r.player_uuid) ||
+                    (r.name && StateStore.playerQueue.includes(r.name)) // Proactive queue check
                 );
 
                 if (existing) {
@@ -1834,7 +1878,7 @@ async function pollPlayRequests() {
                     }).catch(() => {});
                     continue;
                 }
-                showJoinNotification(r.name, r.id, r.player_uuid || null);
+                showJoinNotification(r.name, r.id, r.player_uuid || null, r.spirit_animal || null);
             }
         }
 
@@ -1852,8 +1896,8 @@ async function pollPlayRequests() {
 const _notifQueue = [];
 let   _notifShowing = false;
 
-function showJoinNotification(name, id, uuid = null) {
-    _notifQueue.push({ name, id, uuid });
+function showJoinNotification(name, id, uuid = null, emoji = null) {
+    _notifQueue.push({ name, id, uuid, emoji });
     if (!_notifShowing) processNotifQueue();
 }
 
@@ -1861,12 +1905,12 @@ function processNotifQueue() {
     if (_notifQueue.length === 0) { _notifShowing = false; return; }
     _notifShowing = true;
 
-    const { name, id, uuid } = _notifQueue.shift();
+    const { name, id, uuid, emoji } = _notifQueue.shift();
     const notif  = document.getElementById('joinNotification');
     const nameEl = document.getElementById('joinNotifName');
     if (!notif || !nameEl) return;
 
-    nameEl.textContent  = name;
+    nameEl.innerHTML    = emoji ? `<span style="margin-right:8px">${emoji}</span>${escapeHTML(name)}` : escapeHTML(name);
     notif.dataset.id    = id;
     notif.dataset.name  = name;
     notif.dataset.uuid  = uuid || '';
@@ -1916,6 +1960,7 @@ function showPlayRequests() {
         ? '<p style="text-align:center;color:var(--text-muted);padding:20px 0;">No pending requests.</p>'
         : playRequests.map(r => `
             <div class="pr-row">
+                ${r.spirit_animal ? `<span style="font-size:1.2rem;margin-right:8px;">${r.spirit_animal}</span>` : ''}
                 <span class="pr-name">${escapeHTML(r.name)}</span>
                 <button class="pr-add-btn" onclick="approvePlayRequest('${escapeHTML(r.name)}', '${r.id}', '${r.player_uuid||''}')">+ Add</button>
                 <button class="pr-deny-btn" onclick="denyPlayRequest('${r.id}')">✕</button>
@@ -1974,10 +2019,13 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     // Priority 1: Check if achievements were already reconciled by the Join RPC
     const requestRow = playRequests.find(r => String(r.id) === String(id));
     const reconciledAchievements = requestRow?.achievements;
+    const initialEmoji = requestRow?.spirit_animal;
 
     const player = _resolvePlayerForSession(name, playerUUID);
     const finalName = player.name;
     const validUUID = player.uuid;
+
+    if (initialEmoji) player.spiritAnimal = initialEmoji;
 
     if (player.uuid && window.fetchPlayerAchievements) {
         try {
@@ -2062,9 +2110,12 @@ window.onPlayRequestInsert = function(record) {
         _lastSeenRequestIds.add(record.id);
 
         // BUG FIX: Same duplicate guard for realtime events
+        const uuidMap = window._sessionUUIDMap || {};
         const existing = StateStore.squad.find(p => 
             (record.player_uuid && p.uuid === record.player_uuid) || 
-            (p.name.toLowerCase() === record.name.toLowerCase())
+            (p.name.toLowerCase() === record.name.toLowerCase()) ||
+            (record.player_uuid && uuidMap[record.name] === record.player_uuid) ||
+            (record.name && StateStore.playerQueue.includes(record.name)) // Proactive queue check
         );
 
         if (existing) {
@@ -2083,7 +2134,7 @@ window.onPlayRequestInsert = function(record) {
             return;
         }
 
-        showJoinNotification(record.name, record.id, record.player_uuid || null);
+        showJoinNotification(record.name, record.id, record.player_uuid || null, record.spirit_animal || null);
     }
     pollPlayRequests(); // Fetch full list to ensure badge count is accurate
 };
@@ -2315,7 +2366,7 @@ async function handlePassportSignal(signal, passport) {
  * the winner selection on their feed the instant the host taps a team box —
  * not after the next round is generated.
  */
-async function dispatchWinSignals(mIdx, skipBroadcast = false) {
+async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.now()) {
     if (!isOperator || !currentRoomCode) return;
     const m = StateStore.currentMatches[mIdx];
     if (!m || m.winnerTeamIndex === null) return;
@@ -2343,6 +2394,7 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false) {
             winnerUUIDs,
             loserUUIDs,
             gameLabel:    label,
+            timestamp:    timestamp
         });
     }
 
@@ -2350,7 +2402,7 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false) {
     //    Skip when caller (processCourtResult) will broadcast after building
     //    the new lineup — so players receive one clean update with the next game.
     if (!skipBroadcast && typeof broadcastGameState === 'function' && isOnlineSession) {
-        broadcastGameState();
+        broadcastGameState(false, timestamp);
     }
 
     // 3. Durable DB fallback

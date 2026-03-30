@@ -42,16 +42,65 @@ export default async function handler(req, res) {
 
     // Verify operator_key server-side — never trust the client
     const checkResult = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`
+        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key,squad&limit=1`
     );
 
     if (!checkResult.ok || !checkResult.data || checkResult.data.length === 0) {
         return res.status(404).json({ error: 'Session not found' });
     }
 
-    if (checkResult.data[0].operator_key !== operator_key) {
+    const session = checkResult.data[0];
+    if (session.operator_key !== operator_key) {
         // Wrong key — refuse silently (don't tell them why — makes brute force harder)
         return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // --- SMART SQUAD MERGE ---
+    // Prevent overwriting server-side updates (like achievements merged during join_session RPC)
+    // with stale local state from the host.
+    const existingSquad = Array.isArray(session.squad) ? session.squad : [];
+    const incomingSquad = Array.isArray(squad) ? squad : [];
+
+    // Perform a Server-Centric merge to support Differential Sync. 
+    // We map through the existing squad and apply updates only for players 
+    // included in the incoming payload. This allows the host to send only 
+    // the 4 players involved in a match, reducing bandwidth significantly.
+    const mergedSquadMap = new Map(existingSquad.map(p => [p.uuid, p]));
+
+    for (const p of incomingSquad) {
+        if (!p.uuid) continue;
+        const serverP = mergedSquadMap.get(p.uuid);
+
+        const mergedP = serverP ? {
+            ...p,
+            achievements:    [...new Set([...(p.achievements || []), ...(serverP.achievements || [])])],
+            spiritAnimal:    p.spiritAnimal || serverP.spiritAnimal || null,
+            teammateHistory: { ...(serverP.teammateHistory || {}), ...(p.teammateHistory || {}) },
+            opponentHistory: { ...(serverP.opponentHistory || {}), ...(p.opponentHistory || {}) },
+            partnerStats:    { ...(serverP.partnerStats || {}),    ...(p.partnerStats || {}) },
+            matchHistory:    (p.matchHistory && p.matchHistory.length > 0) ? p.matchHistory : (serverP.matchHistory || [])
+        } : p;
+
+        mergedSquadMap.set(p.uuid, mergedP);
+    }
+
+    const mergedSquad = Array.from(mergedSquadMap.values());
+
+    // ── NORMALIZE: Sync career stats to global 'players' table ──────────────
+    // Update the master registry with latest career ratings and achievements.
+    // This ensures stats are preserved even after a session is deleted.
+    for (const p of incomingSquad) {
+        if (!p.uuid) continue;
+        await sbFetch(`/players?uuid=eq.${encodeURIComponent(p.uuid)}`, {
+            method: 'PATCH',
+            body: {
+                rating:       p.rating,
+                career_wins:  p.wins,
+                career_games: p.games,
+                achievements: p.achievements || [],
+                last_active:  new Date().toISOString()
+            }
+        });
     }
 
     // Key matches — apply the update
@@ -60,7 +109,7 @@ export default async function handler(req, res) {
         {
             method: 'PATCH',
             body: {
-                squad,
+                squad:            mergedSquad,
                 current_matches,
                 player_queue:     player_queue || [],
                 uuid_map:         req.body.uuid_map         || {},

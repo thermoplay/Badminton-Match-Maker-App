@@ -25,6 +25,7 @@ const SidelineView = {
         if (panel) { 
             panel.style.display = 'flex';
             panel.style.flexDirection = 'column'; 
+            this._ensureContainers();
             this._initPullToRefresh();
                 this._initNetworkMonitor();
             this.refresh(); 
@@ -36,6 +37,17 @@ const SidelineView = {
         this._visible = false;
         const panel = document.getElementById('sidelinePanel');
         if (panel) panel.style.display = 'none';
+    },
+
+    _ensureContainers() {
+        if (document.getElementById('slCourtMap')) return;
+        const matchesContainer = document.getElementById('slCurrentMatches');
+        if (!matchesContainer) return;
+        
+        const map = document.createElement('div');
+        map.id = 'slCourtMap';
+        map.className = 'sl-court-map';
+        matchesContainer.parentNode.insertBefore(map, matchesContainer);
     },
 
     switchTab(tab) {
@@ -55,6 +67,7 @@ const SidelineView = {
         const nameEl = document.getElementById('slPassportName');
         if (nameEl) nameEl.textContent = passport.playerName;
 
+        this._renderCourtMap();
         this._renderMatches();
         this._renderNextUp();
         this._renderLastWinner();
@@ -77,6 +90,42 @@ const SidelineView = {
                 if (container) container.classList.remove('sl-stale-data');
             }
         }, 5000);
+    },
+
+    /**
+     * Visual Court Map: Renders a high-level grid of active courts
+     * using player profile icons for instant recognition.
+     */
+    _renderCourtMap() {
+        const container = document.getElementById('slCourtMap');
+        if (!container) return;
+
+        const matches = window.currentMatches || [];
+        if (matches.length === 0 || this._currentTab !== 'live') {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = 'flex';
+        const squad = window.squad || [];
+        const findP = (name) => squad.find(p => p.name === name);
+
+        container.innerHTML = matches.map((m, i) => {
+            const tA = (m.teams[0] || []).map(n => findP(n)).filter(Boolean);
+            const tB = (m.teams[1] || []).map(n => findP(n)).filter(Boolean);
+            
+            const renderIcons = (team) => team.map(p => Avatar.html(p.name, p.spiritAnimal)).join('');
+            const isPlaying = (m.teams.flat().map(n => n.toLowerCase()).includes(Passport.get()?.playerName?.toLowerCase()));
+
+            return `
+                <div class="sl-mini-court ${isPlaying ? 'active' : ''}" onclick="SidelineView.openMatchPreview(${i})">
+                    <div class="sl-mini-team">${renderIcons(tA)}</div>
+                    <div class="sl-mini-net"></div>
+                    <div class="sl-mini-team">${renderIcons(tB)}</div>
+                    <div class="sl-mini-label">${i + 1}</div>
+                </div>
+            `;
+        }).join('');
     },
 
     _renderMatches() {
@@ -1073,11 +1122,49 @@ const PlayerMode = {
     async _joinAndSync(passport, joinCode) {
         const panel = document.getElementById('sidelinePanel');
 
+        // PROACTIVE CHECK: Try to fetch session first. If we are already in the squad, 
+        // we can skip the join request entirely. This prevents redundant notifications 
+        // for players the host has already manually added or approved previously.
+        try {
+            const [sessionRes, requestRes] = await Promise.all([
+                fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`),
+                fetch(`/api/play-request?room_code=${encodeURIComponent(joinCode)}`)
+            ]);
+
+            if (sessionRes.ok) {
+                const data = await sessionRes.json();
+                const inSquad = (data.session?.squad || []).some(p => p.uuid === passport.playerUUID);
+                if (inSquad) {
+                    this._markApprovedInSession(joinCode);
+                    console.log('[PlayerMode] Proactive bypass: already in squad.');
+                    // Ensure spirit animal is synced on reconnection bypass
+                    if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
+                        broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
+                    }
+                } else if (requestRes.ok) {
+                    // Check if we are already in the pending list to prevent duplicate requests
+                    const reqData = await requestRes.json();
+                    const isPending = (reqData.requests || []).some(r => r.player_uuid === passport.playerUUID);
+                    if (isPending) {
+                        console.log('[PlayerMode] Proactive bypass: already in pending requests.');
+                        this._subscribeAndPoll(joinCode, passport);
+                        this._showQueuedState(passport.playerName);
+                        if (panel) panel.classList.remove('sl-booting');
+                        return;
+                    }
+                }
+            }
+        } catch (e) {}
+
         // Shortcut: If already approved in this browser session, go straight to live view.
         if (this._isApprovedInSession(joinCode)) {
             if (panel) panel.classList.remove('sl-booting');
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
             this._subscribeAndPoll(joinCode, passport);
+            // Re-sync spirit animal on reload to ensure Host/Spectators have it
+            if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
+                broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
+            }
             return;
         }
         
@@ -1307,7 +1394,58 @@ const PlayerMode = {
             }).catch(() => {});
         }
 
+        // Ensure host has our current spirit animal after approval
+        if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
+            broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
+        }
+
         setTimeout(() => this._updateStatus(passport), 800);
+    },
+
+    /**
+     * Deep Connection Resilience: Catch-Up Mechanism
+     * Checks the player's session history for results that occurred while offline.
+     */
+    _checkForMissedResults(squad) {
+        const passport = Passport.get();
+        if (!passport || !squad) return;
+
+        const me = squad.find(p => p.uuid === passport.playerUUID);
+        if (!me || !me.matchHistory || me.matchHistory.length === 0) return;
+
+        const lastTS = passport.lastProcessedTS || 0;
+        // Find matches newer than our last processed one, oldest first
+        const missed = me.matchHistory.filter(h => h.time > lastTS).reverse();
+
+        if (missed.length > 0) {
+            console.log(`[PlayerMode] Catching up on ${missed.length} missed results.`);
+            missed.forEach((h, i) => {
+                // Stagger animations so they don't overlap too much
+                setTimeout(() => {
+                    this._triggerResultFeedback(h.win, h.oppUUIDs, squad);
+                }, i * 1500);
+                
+                // Update local tracker
+                if (h.time > lastTS) passport.lastProcessedTS = h.time;
+            });
+            Passport.save(passport);
+        }
+    },
+
+    _triggerResultFeedback(isWin, oppUUIDs, squad) {
+        const oppNames = (oppUUIDs || []).map(uuid => {
+            const p = squad.find(s => s.uuid === uuid);
+            return p ? p.name : 'Unknown';
+        }).join(' & ');
+
+        if (typeof Passport.recordGame === 'function') Passport.recordGame(isWin);
+        if (window.Haptic) isWin ? Haptic.success() : Haptic.bump();
+        if (isWin && typeof Confetti !== 'undefined') {
+            Confetti.burst(window.innerWidth / 2, window.innerHeight * 0.4);
+        }
+        if (typeof showSessionToast === 'function') {
+            showSessionToast(isWin ? `🏆 Victory against ${oppNames}!` : `💔 Defeat vs ${oppNames}`);
+        }
     },
 
     _onGameStateUpdate(payload) {
@@ -1327,6 +1465,7 @@ const PlayerMode = {
 
         if (payload.next_up) window._lastNextUp = payload.next_up;
         SidelineView.refresh();
+        this._checkForMissedResults(payload.squad);
         this._updateStatus(passport);
     },
 
@@ -1344,6 +1483,7 @@ const PlayerMode = {
             return;
         }
         this._updateLiveFeed(session, passport);
+        if (session.squad) this._checkForMissedResults(session.squad);
     },
 
     _updateLiveFeed(session, passport) {
@@ -1501,6 +1641,11 @@ const PlayerMode = {
             }).catch(() => {});
         }
 
+        // Ensure host has our current spirit animal after approval (Postgres change path)
+        if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
+            broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
+        }
+
         setTimeout(() => this._updateStatus(p), 1200);
 
         if (window.Haptic) Haptic.success();
@@ -1522,6 +1667,7 @@ const PlayerMode = {
                     room_code:   joinCode,
                     name:        passport.playerName,
                     player_uuid: passport.playerUUID,
+                    spirit_animal: passport.spiritAnimal,
                     force:       force,
                 }),
             });
@@ -1565,6 +1711,10 @@ const PlayerMode = {
                 this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "Reconnected to court ✅");
                 SidelineView.show();
                 SidelineView.refresh();
+                // Ensure host has spirit animal on reconnection
+                if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
+                    broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
+                }
                 setTimeout(() => this._updateStatus(passport), 800);
                 return;
             }
@@ -1583,7 +1733,7 @@ const PlayerMode = {
     _startJoinRetryTimer() {
         this._clearJoinRetryTimer();
         
-        let secondsLeft = 5;
+        let secondsLeft = 10; // Increase to 10s to give host more time to approve/sync
         const updateText = (s) => {
             const el = document.getElementById('slRetryNote');
             if (el) {
@@ -1605,7 +1755,7 @@ const PlayerMode = {
 
         this._joinRetryTimeout = setTimeout(() => {
             this._resendRequest();
-        }, 5000);
+        }, 10000);
     },
 
     _clearJoinRetryTimer() {
@@ -1795,6 +1945,10 @@ const PlayerMode = {
         SidelineView.refresh();
         if (typeof broadcastSpiritAnimalUpdate === 'function') {
             broadcastSpiritAnimalUpdate(passport.playerUUID, emoji);
+        }
+        // Persist to database so the update is visible if host reloads while we are pending
+        if (typeof memberRename === 'function') {
+            memberRename(passport.playerUUID, null, emoji);
         }
         if (window.Haptic) Haptic.success();
     },

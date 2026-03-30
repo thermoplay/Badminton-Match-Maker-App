@@ -27,6 +27,8 @@ let sbManager         = null; // Instance of SupabaseRealtimeManager
 let syncDebounceTimer = null;
 let _isBootingSession = false; // true only during initial rejoin hydration
 let _pendingActions   = [];    // Queue for actions attempted while offline
+let _dirtyUUIDs       = new Set();
+let _fullSyncPending  = false;
 
 // ---------------------------------------------------------------------------
 // STATE MIRROR — keeps window.X in sync with module-level `let` vars.
@@ -416,8 +418,20 @@ async function joinOnlineSession(roomCode) {
 // PUSH STATE — heavy sync, debounced
 // ---------------------------------------------------------------------------
 
-function pushStateToSupabase() {
+/**
+ * Pushes session state to the cloud. 
+ * @param {boolean} force - If true, bypasses the 800ms debounce.
+ * @param {Array<string>} targetUUIDs - Optional list of UUIDs for differential sync.
+ * If omitted, a full squad sync is performed.
+ */
+function pushStateToSupabase(force = false, targetUUIDs = null) {
     if (!isOnlineSession || !isOperator) return;
+
+    if (targetUUIDs && Array.isArray(targetUUIDs)) {
+        targetUUIDs.forEach(id => _dirtyUUIDs.add(id));
+    } else {
+        _fullSyncPending = true;
+    }
 
     // OFFLINE GUARD: Queue changes if offline
     if (!navigator.onLine) {
@@ -427,17 +441,25 @@ function pushStateToSupabase() {
     }
 
     clearTimeout(syncDebounceTimer);
-    syncDebounceTimer = setTimeout(async () => {
+
+    const doPush = async () => {
+        // Differential Sync: Only send the full squad if requested, otherwise send 
+        // only the players marked as dirty (e.g., the 4 players from the last match).
+        const squadToSend = _fullSyncPending 
+            ? StateStore.squad 
+            : StateStore.squad.filter(p => _dirtyUUIDs.has(p.uuid));
+
+        _fullSyncPending = false;
+        _dirtyUUIDs = new Set();
+
         try {
             const res = await apiCall('session-update', {
                 method: 'PATCH',
                 body: {
                     room_code:        currentRoomCode,
                     operator_key:     operatorKey,
-                    squad:            StateStore.squad,
+                    squad:            squadToSend,
                     current_matches:  StateStore.currentMatches,
-                    // round_history intentionally excluded — undo is local only,
-                    // removing this cuts DB payload size significantly
                     player_queue:     StateStore.playerQueue,
                     uuid_map:         window._sessionUUIDMap  || {},
                     court_names:      StateStore.get('courtNames'),
@@ -450,7 +472,6 @@ function pushStateToSupabase() {
             if (res.ok) {
                 localStorage.removeItem('cs_pending_sync');
                 showSyncStatus('Saved to cloud', 'success');
-                // Clear success message after 2s
                 setTimeout(() => {
                     const el = document.getElementById('syncStatusMsg');
                     if (el && el.textContent === 'Saved to cloud') el.style.display = 'none';
@@ -461,7 +482,13 @@ function pushStateToSupabase() {
             localStorage.setItem('cs_pending_sync', 'true');
             showSyncStatus('Sync failed. Retrying...', 'error');
         }
-    }, 800);
+    };
+
+    if (force) {
+        doPush();
+    } else {
+        syncDebounceTimer = setTimeout(doPush, 800);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +552,7 @@ function broadcastApproval(playerUUID, playerName, token) {
  * Players update their live feed immediately without waiting for DB.
  */
 let _broadcastThrottleTimer = null;
-function broadcastGameState(immediate = false) {
+function broadcastGameState(immediate = false, lastResolvedTS = null) {
     if (!isOperator || !isOnlineSession) return;
 
     if (!immediate && _broadcastThrottleTimer) return;
@@ -546,7 +573,8 @@ function broadcastGameState(immediate = false) {
         player_queue: StateStore.playerQueue,
         courtNames: StateStore.get('courtNames'),
         next_up: (document.getElementById('nextUpNames')?.textContent || '').trim(),
-        hash: _generateStateHash(StateStore.squad, StateStore.playerQueue)
+        hash: _generateStateHash(StateStore.squad, StateStore.playerQueue),
+        lastResolvedTS: lastResolvedTS || Date.now()
     });
         _broadcastThrottleTimer = null;
     };
@@ -623,8 +651,8 @@ window.memberApprove = memberApprove;
  * Called by passportRename() in app.js after the player updates their name.
  * Updates session_members.player_name → triggers host realtime listener.
  */
-async function memberRename(playerUUID, newName) {
-    if (!currentRoomCode || !playerUUID || !newName) return;
+async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
+    if (!currentRoomCode || !playerUUID) return;
     try {
         const r = await fetch('/api/member-rename', {
             method:  'PATCH',
@@ -632,7 +660,8 @@ async function memberRename(playerUUID, newName) {
             body:    JSON.stringify({
                 room_code:   currentRoomCode,
                 player_uuid: playerUUID,
-                new_name:    newName,
+                new_name:    newName || null,
+                spirit_animal: spiritAnimal
             }),
         });
         if (!r.ok) console.error('[CourtSide] member-rename failed:', r.status);
@@ -788,7 +817,20 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     // 2. Fallback: find by oldName if uuid not yet on squad member
     if (!player) player = StateStore.squad.find(p => p.name === oldName);
 
-    if (!player) return;  // player not in squad yet, ignore
+    if (!player) {
+        // If player is pending (not in squad yet), update the local playRequests cache
+        // so the Join Notification UI shows the new name immediately.
+        if (typeof window.playRequests !== 'undefined') {
+            const req = window.playRequests.find(r => r.player_uuid === playerUUID || r.name === oldName);
+            if (req) {
+                req.name = trimmed;
+                if (typeof showPlayRequests === 'function' && document.getElementById('playRequestsModal')?.style.display === 'flex') {
+                    showPlayRequests();
+                }
+            }
+        }
+        return;
+    }
 
     const prevName = player.name;
     player.name    = trimmed;
@@ -835,7 +877,14 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
 
     renderSquad();
     if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-    // If this function is called directly, it should trigger a StateStore.set.
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    
+    // Reactive sync via StateStore ensures DB and spectators stay updated
+    StateStore.set('squad', StateStore.squad);
+
+    // Force an immediate broadcast to bypass the 200ms throttle for real-time responsiveness
+    if (typeof broadcastGameState === 'function') broadcastGameState(true);
+
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
 window._applyNameUpdate = _applyNameUpdate;
@@ -843,14 +892,29 @@ window._generateStateHash = _generateStateHash;
 
 // Host applies a spirit animal update broadcast from a player
 function _applySpiritAnimalUpdate(playerUUID, emoji) {
-    const player = StateStore.squad.find(p => p.uuid === playerUUID);
-    if (!player) return;
+    let player = StateStore.squad.find(p => p.uuid === playerUUID);
+
+    if (!player) {
+        // If player is pending (not in squad yet), update the local playRequests cache
+        if (typeof window.playRequests !== 'undefined') {
+            const req = window.playRequests.find(r => r.player_uuid === playerUUID);
+            if (req) {
+                req.spirit_animal = emoji;
+                if (typeof showPlayRequests === 'function' && document.getElementById('playRequestsModal')?.style.display === 'flex') {
+                    showPlayRequests();
+                }
+            }
+        }
+        return;
+    }
 
     if (player.spiritAnimal !== emoji) {
         player.spiritAnimal = emoji;
         renderSquad();
-        saveToDisk();
-        broadcastGameState();
+        StateStore.set('squad', StateStore.squad);
+
+        // Force immediate broadcast so profile updates feel instant for all spectators
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
     }
 }
 
@@ -865,8 +929,11 @@ function _applyStatusUpdate(playerUUID, isActive) {
     if (oldStatus !== player.active) {
         renderSquad();
         checkNextButtonState();
-        saveToDisk();
-        broadcastGameState(); // Push new squad state to all players
+        StateStore.set('squad', StateStore.squad);
+
+        // Force immediate broadcast so the Ready/Resting status updates instantly for everyone
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
+
         showSessionToast(`${player.name} is now ${player.active ? 'Ready 🏸' : 'Resting ☕'}`);
     }
 }
@@ -918,12 +985,42 @@ function applyRemoteState(session) {
             session.squad.forEach(remoteP => {
                 if (!remoteP.uuid) return;
                 const localP = StateStore.squad.find(p => p.uuid === remoteP.uuid);
-                if (localP && Array.isArray(remoteP.achievements)) {
+                if (localP) {
                     const localSet = new Set(localP.achievements || []);
                     let pChanged = false;
-                    remoteP.achievements.forEach(a => {
-                        if (!localSet.has(a)) { localSet.add(a); pChanged = true; }
-                    });
+
+                    // Reconcile achievements
+                    if (Array.isArray(remoteP.achievements)) {
+                        remoteP.achievements.forEach(a => {
+                            if (!localSet.has(a)) { localSet.add(a); pChanged = true; }
+                        });
+                    }
+
+                    // Reconcile names and spirit animals (DB-driven fallback if broadcast missed)
+                    if (remoteP.name && remoteP.name !== localP.name) {
+                        localP.name = remoteP.name;
+                        pChanged = true;
+                    }
+                    if (remoteP.spiritAnimal && remoteP.spiritAnimal !== localP.spiritAnimal) {
+                        localP.spiritAnimal = remoteP.spiritAnimal;
+                        pChanged = true;
+                    }
+
+                    // Reconcile history and stats (merge server data into local state)
+                    if (remoteP.teammateHistory) {
+                        localP.teammateHistory = { ...remoteP.teammateHistory, ...(localP.teammateHistory || {}) };
+                    }
+                    if (remoteP.opponentHistory) {
+                        localP.opponentHistory = { ...remoteP.opponentHistory, ...(localP.opponentHistory || {}) };
+                    }
+                    if (remoteP.partnerStats) {
+                        localP.partnerStats = { ...remoteP.partnerStats, ...(localP.partnerStats || {}) };
+                    }
+                    if (remoteP.matchHistory && (!localP.matchHistory || localP.matchHistory.length === 0)) {
+                        localP.matchHistory = remoteP.matchHistory;
+                        pChanged = true;
+                    }
+
                     if (pChanged) {
                         localP.achievements = Array.from(localSet);
                         hasChanges = true;

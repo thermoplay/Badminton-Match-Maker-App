@@ -32,9 +32,9 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { room_code, player_uuid, new_name } = req.body;
+    const { room_code, player_uuid, new_name, spirit_animal } = req.body;
 
-    if (!room_code || !player_uuid || !new_name) {
+    if (!room_code || !player_uuid || (!new_name && spirit_animal === undefined)) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -55,23 +55,52 @@ export default async function handler(req, res) {
     }
     // ------------------------
 
-    if (!trimmed) {
-        return res.status(400).json({ error: 'Name cannot be empty' });
-    }
+    const sessionUpdates = { last_seen: new Date().toISOString() };
+    if (new_name) sessionUpdates.player_name = trimmed;
+    if (spirit_animal !== undefined) sessionUpdates.spirit_animal = spirit_animal;
+
+    const profileUpdates = {};
+    if (new_name) profileUpdates.name = trimmed;
+    if (spirit_animal !== undefined) profileUpdates.spirit_animal = spirit_animal;
 
     const res2 = await fetch(
         `${SUPABASE_URL}/rest/v1/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
         {
             method:  'PATCH',
             headers: hdrs,
-            body:    JSON.stringify({ player_name: trimmed, last_seen: new Date().toISOString() }),
+            body:    JSON.stringify(sessionUpdates),
         }
     );
+
+    // Sync profile changes to global players table to maintain identity integrity
+    if (Object.keys(profileUpdates).length > 0) {
+        await fetch(`${SUPABASE_URL}/rest/v1/players?uuid=eq.${encodeURIComponent(uuid)}`, {
+            method:  'PATCH',
+            headers: hdrs,
+            body:    JSON.stringify(profileUpdates),
+        });
+    }
 
     if (!res2.ok) {
         const err = await res2.text();
         console.error('member-rename patch failed:', res2.status, err);
         return res.status(500).json({ error: 'Rename failed' });
+    }
+
+    const reqUpdates = {};
+    if (new_name) reqUpdates.name = trimmed;
+    if (spirit_animal !== undefined) reqUpdates.spirit_animal = spirit_animal;
+
+    // Also update any pending play_requests for this player so the Host sees the new name
+    if (Object.keys(reqUpdates).length > 0) {
+        await fetch(
+            `${SUPABASE_URL}/rest/v1/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+            {
+                method:  'PATCH',
+                headers: hdrs,
+                body:    JSON.stringify(reqUpdates),
+            }
+        );
     }
 
     return res.status(200).json({ ok: true, updated: true });

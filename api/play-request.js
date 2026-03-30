@@ -77,7 +77,7 @@ export default async function handler(req, res) {
 
     // ── POST: player submits join request ────────────────────────────────────
     if (req.method === 'POST') {
-        const { room_code, name, player_uuid, force } = req.body;
+        const { room_code, name, player_uuid, force, spirit_animal } = req.body;
 
         if (!room_code || !name || !player_uuid) {
             return res.status(400).json({ error: 'Missing fields for join' });
@@ -103,6 +103,7 @@ export default async function handler(req, res) {
                 p_room_code: code, 
                 p_player_name: trimmedName, 
                 p_player_uuid: uuid,
+                p_spirit_animal: spirit_animal || null,
                 p_force: !!force 
             },
         });
@@ -134,8 +135,10 @@ export default async function handler(req, res) {
             return res.status(200).json({ requests: mapped });
         }
 
+        // Filter: only show requests from the last 3 hours to prevent zombie prompts.
+        const since = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
         const r = await sbFetch(
-            `/play_requests?room_code=eq.${encodeURIComponent(code)}&order=requested_at.asc`
+            `/play_requests?room_code=eq.${encodeURIComponent(code)}&requested_at=gte.${encodeURIComponent(since)}&order=requested_at.asc`
         );
         return res.status(200).json({ requests: r.data || [] });
     }

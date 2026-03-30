@@ -73,20 +73,22 @@ function _createRoundSnapshot(finishedMatch, achievements = [], preSquad, preQue
  * Applies ELO, checks achievements, signals results, and rotates players for a finished match.
  * @param {object} match - The completed match object.
  * @param {number} mIdx - The index of the match.
+ * @param {number} timestamp - The unique resolution timestamp.
  */
-function _processFinishedMatch(match, mIdx) {
+function _processFinishedMatch(match, mIdx, timestamp) {
+    match.resolvedAt = timestamp;
     applyELOForMatch(match);
     if (typeof dispatchWinSignals === 'function') {
-        dispatchWinSignals(mIdx, true); // skipBroadcast = true
+        dispatchWinSignals(mIdx, true, timestamp); // skipBroadcast = true
     }
-    _recordMatchStats(match);
+    _recordMatchStats(match, timestamp);
 }
 
 /**
  * Records participation stats and history for a completed match.
  * Moved here from buildMatchFromPlayers to ensure accuracy.
  */
-function _recordMatchStats(match) {
+function _recordMatchStats(match, timestamp = Date.now()) {
     const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
     const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
     const allPlayers = [...tA, ...tB];
@@ -101,16 +103,20 @@ function _recordMatchStats(match) {
         const isWin = winIdx !== null && winIdx === (isTeamA ? 0 : 1);
         
         p.matchHistory = p.matchHistory || [];
-        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), time: Date.now() });
+        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), time: timestamp });
         if (p.matchHistory.length > 5) p.matchHistory.pop();
     });
 
     const addHistory = (p, teammate, opponents) => {
         p.teammateHistory = p.teammateHistory || {};
         p.opponentHistory = p.opponentHistory || {};
-        if (teammate) p.teammateHistory[teammate.uuid] = (p.teammateHistory[teammate.uuid] || 0) + 1;
+        if (teammate && teammate.uuid) {
+            p.teammateHistory[teammate.uuid] = (p.teammateHistory[teammate.uuid] || 0) + 1;
+        }
         opponents.forEach(o => {
-            p.opponentHistory[o.uuid] = (p.opponentHistory[o.uuid] || 0) + 1;
+            if (o.uuid) {
+                p.opponentHistory[o.uuid] = (p.opponentHistory[o.uuid] || 0) + 1;
+            }
         });
     };
 
@@ -159,11 +165,26 @@ function _generateAndRenderNextMatchForCourt(mIdx, next4) {
 
 /**
  * Finalizes the court result update by refreshing UI, saving state, and broadcasting.
+ * @param {number} lastResolvedTS - The timestamp of the match that just finished.
+ * @param {Array<string>} playerUUIDs - UUIDs of players involved in the match for differential sync.
  */
-function _finalizeCourtResultUpdate() {
+function _finalizeCourtResultUpdate(lastResolvedTS = Date.now(), playerUUIDs = null) {
     renderQueueStrip();
     checkNextButtonState();
     updateUndoButton();
+    // Trigger sync for both matches and squad since ratings/history updated
+    StateStore.setState({
+        currentMatches: StateStore.currentMatches,
+        squad: StateStore.squad
+    });
+
+    // Connectivity Improvement: Force immediate sync to cloud on match resolution.
+    // Performance: Pass the UUIDs of the 4 players to perform a differential sync,
+    // significantly reducing bandwidth and database load during match transitions.
+    if (window.isOnlineSession && window.isOperator && typeof pushStateToSupabase === 'function') {
+        pushStateToSupabase(true, playerUUIDs);
+    }
+    if (typeof broadcastGameState === 'function') broadcastGameState(true, lastResolvedTS);
     Haptic.bump();
 }
 
@@ -178,9 +199,18 @@ async function processCourtResult(mIdx) {
     const preSquad = JSON.parse(JSON.stringify(StateStore.squad));
     const preQueue = [...StateStore.playerQueue];
 
+    const resolutionTS = Date.now();
+
     // 2. Apply ELO and record stats
-    _processFinishedMatch(match, mIdx);
-    
+    _processFinishedMatch(match, mIdx, resolutionTS);
+
+    // Performance: Capture UUIDs of the players involved for differential sync
+    const matchPlayerUUIDs = match.teams.flat().map(n => findP(n)?.uuid).filter(Boolean);
+
+     // Connectivity Durability: Trigger a state save and broadcast immediately.
+    // This ensures that if the host reloads or achievement processing is slow,
+    // the ELO ratings are already persisted and visible to spectators.
+    StateStore.set('squad', StateStore.squad);
     // 3. Award achievements and capture results for the batch sync
     const newlyUnlocked = await checkAndAwardAchievements(match, StateStore.squad);
 
@@ -203,7 +233,7 @@ async function processCourtResult(mIdx) {
     }
 
     _generateAndRenderNextMatchForCourt(mIdx, next4);
-    _finalizeCourtResultUpdate();
+    _finalizeCourtResultUpdate(resolutionTS, matchPlayerUUIDs);
 }
 
 // ---------------------------------------------------------------------------
@@ -382,13 +412,27 @@ function determineStoryBadges(teamA, teamB) {
 
 // Score a single team split — lower = fresher matchup
 function scoreSplit(tA, tB) {
-    const tm  = (a, b) => (a.teammateHistory  || {})[b.uuid] || 0;
-    const opp = (a, b) => (a.opponentHistory  || {})[b.uuid] || 0;
-    return (
-        tm(tA[0], tA[1]) * 2 + tm(tB[0], tB[1]) * 2 +
-        opp(tA[0], tB[0]) + opp(tA[0], tB[1]) +
-        opp(tA[1], tB[0]) + opp(tA[1], tB[1])
-    );
+    // Pairing Accuracy: Uses player UUIDs for history lookups. This ensures variety 
+    // scoring remains consistent even if players rename themselves mid-session.
+    const tm  = (a, b) => (a && b && b.uuid) ? (a.teammateHistory  || {})[b.uuid] || 0 : 0;
+    const opp = (a, b) => (a && b && b.uuid) ? (a.opponentHistory  || {})[b.uuid] || 0 : 0;
+
+    if (tA.length === 2 && tB.length === 2) {
+        return (
+            tm(tA[0], tA[1]) * 2 + tm(tB[0], tB[1]) * 2 +
+            opp(tA[0], tB[0]) + opp(tA[0], tB[1]) +
+            opp(tA[1], tB[0]) + opp(tA[1], tB[1])
+        );
+    }
+
+    // Fallback for non-doubles configurations
+    let totalScore = 0;
+    tA.forEach(pa => {
+        tB.forEach(pb => {
+            totalScore += opp(pa, pb);
+        });
+    });
+    return totalScore;
 }
 
 // Score a group of 4 — best possible split score for this combination
