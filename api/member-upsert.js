@@ -107,7 +107,7 @@ export default async function handler(req, res) {
                 {
                     method:  'PATCH',
                     headers: { 'Prefer': 'return=representation' },
-                    body:    { player_name: trimmedName, spirit_animal: spirit_animal || member.spirit_animal || null, last_seen: new Date().toISOString() },
+                    body:    { player_name: trimmedName, spirit_animal: (spirit_animal !== undefined) ? spirit_animal : member.spirit_animal, last_seen: new Date().toISOString() },
                 }
             );
         }
