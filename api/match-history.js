@@ -77,45 +77,57 @@ export default async function handler(req, res) {
 
             if (results.length === 0) return res.status(200).json({ archived: 0 });
 
-            // ── ATOMIC RPC CALL ──────────────────────────────────────────────
-            // Verification and batch insertion happen in one database transaction.
-            const r = await sb('/rpc/archive_round', {
-                method: 'POST',
-                prefer: 'return=representation',
-                body: {
-                    p_room_code:    room_code,
-                    p_operator_key: operator_key,
-                    p_timestamp:    new Date(timestamp).toISOString(),
-                    p_results:      results,
-                    p_achievements: req.body.achievements || []
-                }
-            });
+            // ── REVERTED: MANUAL UPDATES ─────────────────────────────────────
+            // Bypassing the RPC to avoid persistent "text = uuid" type mismatches.
+            
+            // 1. Verify operator key
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
+            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== operator_key) {
+                return res.status(403).json({ error: 'Unauthorized' });
+            }
 
-            if (!r.ok) return res.status(r.status || 500).json({ error: r.data?.message || 'Database error' });
-            if (r.data?.error) return res.status(r.data.status || 400).json({ error: r.data.error });
+            // 2. Update individual player ratings
+            for (const res of results) {
+                await sb(`/players?uuid=eq.${encodeURIComponent(res.player_uuid)}`, {
+                    method: 'PATCH',
+                    body: {
+                        rating: res.rating,
+                        last_active: new Date().toISOString()
+                    }
+                });
+            }
 
-            return res.status(200).json(r.data);
+            // 3. Log achievements directly
+            for (const ach of (req.body.achievements || [])) {
+                await sb('/player_achievements', {
+                    method: 'POST',
+                    body: { player_uuid: ach.player_uuid, achievement_id: ach.achievement_id }
+                });
+            }
+
+            return res.status(200).json({ ok: true });
         }
 
         // --- Unlock an Achievement ---
         if (type === 'achievement_unlock') {
             const { player_uuid, achievement_id, room_code, operator_key } = req.body;
             
-            const r = await sb('/rpc/unlock_achievement', {
+            // 1. Verify operator key
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
+            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== operator_key) {
+                return res.status(403).json({ error: 'Unauthorized' });
+            }
+
+            // 2. Insert achievement directly into the table
+            const r = await sb('/player_achievements', {
                 method: 'POST',
-                prefer: 'return=representation',
                 body: {
-                    p_room_code:      room_code,
-                    p_operator_key:   operator_key,
-                    p_player_uuid:    player_uuid,
-                    p_achievement_id: achievement_id
+                    player_uuid:    player_uuid,
+                    achievement_id: achievement_id
                 }
             });
 
-            if (!r.ok) return res.status(r.status || 500).json({ error: r.data?.message || 'Database error' });
-            if (r.data?.error) return res.status(r.data.status || 400).json({ error: r.data.error });
-
-            return res.status(200).json({ ok: true });
+            return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
         }
 
         return res.status(400).json({ error: 'Invalid POST type specified' });

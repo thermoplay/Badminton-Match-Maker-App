@@ -974,6 +974,7 @@ function _handlePostgresChange(payload) {
 
     if (table === 'play_requests' || payload?.data?.table === 'play_requests') {
         if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
+            console.log('[CourtSide] Realtime: New play request received', record);
             window.onPlayRequestInsert(record);
         }
         return;

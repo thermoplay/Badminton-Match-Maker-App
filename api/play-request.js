@@ -90,24 +90,36 @@ export default async function handler(req, res) {
         if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
         if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) return res.status(400).json({ error: 'Invalid player UUID format' });
 
-        // ── SINGLE ATOMIC RPC CALL ───────────────────────────────────────────
-        // This moves session validation, existing status checks, and multiple 
-        // upserts into a single database transaction for improved reliability.
-        const r = await sbFetch('/rpc/join_session', {
-            method:  'POST',
-            body:    { 
-                p_room_code: code, 
-                p_player_name: trimmedName, 
-                p_player_uuid: uuid,
-                p_spirit_animal: spirit_animal || null,
-                p_force: Boolean(force)
-            },
+        // ── REVERTED: Standard Table Operations ──────────────────────────────
+        // Reverting to standard PostgREST calls because the RPC is hitting 
+        // persistent type mismatch errors. Standard calls handle strings better.
+        
+        // 1. Verify Room Exists
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code&limit=1`);
+        if (!sessionCheck.ok || !sessionCheck.data?.length) {
+            return res.status(404).json({ error: 'Room not found' });
+        }
+
+        // 2. Check if player is already active in this session
+        const memberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
+        if (memberCheck.ok && memberCheck.data?.[0]?.status === 'active' && !force) {
+            return res.status(200).json({ alreadyActive: true, ok: true });
+        }
+
+        // 3. Create the notification request for the Host
+        const insertReq = await sbFetch('/play_requests', {
+            method: 'POST',
+            body: {
+                room_code: code,
+                player_uuid: uuid,
+                name: trimmedName,
+                spirit_animal: spirit_animal || null
+            }
         });
 
-        if (!r.ok) return res.status(r.status || 500).json({ error: r.data?.message || 'Database error' });
-        if (r.data?.error) return res.status(r.data.status || 400).json({ error: r.data.error });
+        if (!insertReq.ok) return res.status(500).json({ error: 'Failed to send join request' });
 
-        return res.status(200).json(r.data);
+        return res.status(200).json({ ok: true, status: 'pending' });
     }
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {
