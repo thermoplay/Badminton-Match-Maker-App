@@ -2897,28 +2897,38 @@ header {
    PLAY REQUESTS (Host badge + modal)
    ============================================================================= */
 
+.host-dashboard {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 12px;
+    width: 100%;
+    animation: panelFadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 .play-requests-badge {
-    position: fixed;
-    top: 60px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--accent);
-    color: #000;
+    background: var(--surface2);
+    color: var(--accent);
+    border: 1px solid var(--border-accent);
     font-family: var(--font-display);
     font-size: 0.72rem;
     font-weight: 900;
     font-style: italic;
     letter-spacing: 1px;
-    padding: 8px 16px;
-    border-radius: 20px;
-    z-index: var(--z-menu);
+    padding: 12px 16px;
+    border-radius: 14px;
     cursor: pointer;
-    display: flex;
+    display: none; /* Managed by JS */
     align-items: center;
-    gap: 6px;
-    box-shadow: 0 4px 20px rgba(0,255,163,0.3);
-    animation: badgeIn 0.3s ease both;
+    justify-content: center;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+.play-requests-badge:hover {
+    background: var(--accent-dim);
+    transform: translateY(-1px);
 }
 
 .play-requests-modal {

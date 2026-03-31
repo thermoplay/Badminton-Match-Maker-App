@@ -144,33 +144,42 @@ function addPlayer() {
     const el = document.getElementById('playerName');
     const name = el.value.trim();
     if (!name) return;
-    if (StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase())) {
-        alert('Player already exists!');
+    
+    // Check for existing player (case-insensitive)
+    const existing = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+        if (typeof showSessionToast === 'function') showSessionToast('⚠️ Player already exists!');
+        else alert('Player already exists!');
         el.value = '';
         return;
     }
-    StateStore.squad.push({
-        name,
-        uuid:             _generateUUID(),
-        active:           true,
-        wins:             0,
-        games:            0,
-        streak:           0,
-        sessionPlayCount: 0,
-        rating:           1200,
-        consecutiveGames:  0,
-        forcedRest:        false,
-        teammateHistory:   {},
-        opponentHistory:   {},
-        partnerStats:      {},
-        achievements:      [],
-        spiritAnimal:      null,
+
+    // Use migratePlayer to ensure all required logic fields (ELO, stats) are initialized
+    const newPlayer = migratePlayer({
+        name: name,
+        uuid: _generateUUID(),
+        active: true
     });
+    
+    // Update state arrays
+    StateStore.squad.push(newPlayer);
+    const newQueue = [...StateStore.playerQueue];
+    if (!newQueue.includes(name)) newQueue.push(name);
+
+    // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
+    StateStore.set('squad', StateStore.squad);
+    StateStore.set('playerQueue', newQueue);
+
+    // Connectivity: Force an immediate push to Supabase so spectators see the new player instantly
+    if (window.isOnlineSession && window.isOperator && typeof pushStateToSupabase === 'function') {
+        pushStateToSupabase(true);
+    }
+
     el.value = '';
-    if (!StateStore.playerQueue.includes(name)) StateStore.playerQueue.push(name);
     renderSquad();
     renderQueueStrip();
     checkNextButtonState();
+    if (window.Haptic) Haptic.success();
 }
 
 function editPlayerName() {
@@ -1968,8 +1977,12 @@ async function pollPlayRequests() {
         const badge = document.getElementById('playRequestsBadge');
         const count = document.getElementById('playRequestsCount');
         if (badge && count) {
-            badge.style.display = playRequests.length > 0 ? 'flex' : 'none';
+            const hasReqs = playRequests.length > 0;
+            badge.style.display = hasReqs ? 'flex' : 'none';
             count.textContent   = playRequests.length;
+            
+            const dashboard = document.getElementById('hostDashboard');
+            if (dashboard) dashboard.style.display = hasReqs ? 'flex' : 'none';
         }
     } catch { /* silent */ } finally {
         _isPolling = false;
@@ -2226,6 +2239,19 @@ function ensureHostUI() {
     // Only the host needs these elements
     if (!window.isOperator) return;
 
+    // Create a host dashboard area if it doesn't exist
+    let dashboard = document.getElementById('hostDashboard');
+    if (!dashboard) {
+        dashboard = document.createElement('div');
+        dashboard.id = 'hostDashboard';
+        dashboard.className = 'host-dashboard';
+        const container = document.querySelector('.app-container');
+        if (container) {
+            const header = container.querySelector('header');
+            if (header) header.insertAdjacentElement('afterend', dashboard);
+        }
+    }
+
     // 1. Join Notification Toast (Popup)
     if (!document.getElementById('joinNotification')) {
         const notif = document.createElement('div');
@@ -2252,10 +2278,11 @@ function ensureHostUI() {
         badge.onclick = window.showPlayRequests;
         badge.style.display = 'none'; 
         badge.innerHTML = `
-            <span>REQUESTS</span>
-            <span id="playRequestsCount" style="background:#0a0a0f; color:var(--accent); padding:2px 6px; border-radius:6px; margin-left:6px; font-size:0.65rem;">0</span>
+            <span>PENDING REQUESTS</span>
+            <span id="playRequestsCount" style="background:rgba(0,0,0,0.3); color:var(--accent); padding:2px 8px; border-radius:6px; margin-left:10px; font-size:0.7rem; border:1px solid var(--border-accent);">0</span>
         `;
-        document.body.appendChild(badge);
+        if (dashboard) dashboard.appendChild(badge);
+        else document.body.appendChild(badge);
     }
 
     // 3. Play Requests Modal (The List)
