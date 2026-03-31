@@ -74,10 +74,11 @@ export default async function handler(req, res) {
 
     // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
     // This maintains a master registry of all players across all sessions.
-    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&limit=1`);
-    if (!playerLookup.ok || !playerLookup.data || playerLookup.data.length === 0) {
+    // If lookup fails, we attempt a POST which will safely ON CONFLICT DO NOTHING in the DB.
+    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid&limit=1`);
+    if (!playerLookup.ok || (Array.isArray(playerLookup.data) && playerLookup.data.length === 0)) {
         await sbFetch('/players', {
-            method: 'POST',
+            method: 'POST', // PostgREST handles UUID casting automatically for table inserts
             body: {
                 uuid: uuid,
                 name: trimmedName,
