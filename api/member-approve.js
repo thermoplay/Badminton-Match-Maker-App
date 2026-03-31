@@ -18,18 +18,22 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-const hdrs = {
-    'apikey':        SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
-    'Content-Type':  'application/json',
-    'Prefer':        'return=minimal',
-};
-
 async function sbFetch(path, options = {}) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
-        headers: { ...hdrs, ...(options.headers || {}) },
-        method:  options.method || 'GET',
-        body:    options.body ? JSON.stringify(options.body) : undefined,
+    const method = options.method || 'GET';
+    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+    const headers = {
+        'apikey':        SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type':  'application/json',
+        'Prefer':        options.prefer || 'return=minimal',
+    };
+
+    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+        headers: { ...headers, ...(options.headers || {}) },
+        method,
+        body: options.body ? JSON.stringify(options.body) : undefined,
     });
     const text = await res.text();
     return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };

@@ -20,12 +20,26 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-const hdrs = {
-    'apikey':        SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
-    'Content-Type':  'application/json',
-    'Prefer':        'return=minimal',
-};
+async function sbFetch(path, options = {}) {
+    const method = options.method || 'GET';
+    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+    const headers = {
+        'apikey':        SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type':  'application/json',
+        'Prefer':        options.prefer || 'return=minimal',
+    };
+
+    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+        headers: { ...headers, ...(options.headers || {}) },
+        method,
+        body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    const text = await res.text();
+    return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
+}
 
 export default async function handler(req, res) {
     if (req.method !== 'PATCH') {
@@ -63,27 +77,21 @@ export default async function handler(req, res) {
     if (new_name) profileUpdates.name = trimmed;
     if (spirit_animal !== undefined) profileUpdates.spirit_animal = spirit_animal;
 
-    const res2 = await fetch(
-        `${SUPABASE_URL}/rest/v1/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
-        {
-            method:  'PATCH',
-            headers: hdrs,
-            body:    JSON.stringify(sessionUpdates),
-        }
+    const res2 = await sbFetch(
+        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+        { method: 'PATCH', body: sessionUpdates }
     );
 
     // Sync profile changes to global players table to maintain identity integrity
     if (Object.keys(profileUpdates).length > 0) {
-        await fetch(`${SUPABASE_URL}/rest/v1/players?uuid=eq.${encodeURIComponent(uuid)}`, {
-            method:  'PATCH',
-            headers: hdrs,
-            body:    JSON.stringify(profileUpdates),
+        await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}`, {
+            method: 'PATCH',
+            body:   profileUpdates
         });
     }
 
     if (!res2.ok) {
-        const err = await res2.text();
-        console.error('member-rename patch failed:', res2.status, err);
+        console.error('member-rename patch failed:', res2.status, res2.data);
         return res.status(500).json({ error: 'Rename failed' });
     }
 
@@ -93,13 +101,9 @@ export default async function handler(req, res) {
 
     // Also update any pending play_requests for this player so the Host sees the new name
     if (Object.keys(reqUpdates).length > 0) {
-        await fetch(
-            `${SUPABASE_URL}/rest/v1/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
-            {
-                method:  'PATCH',
-                headers: hdrs,
-                body:    JSON.stringify(reqUpdates),
-            }
+        await sbFetch(
+            `/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+            { method: 'PATCH', body: reqUpdates }
         );
     }
 
