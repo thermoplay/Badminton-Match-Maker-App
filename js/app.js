@@ -369,9 +369,10 @@ function _removePlayerFromLocalState(playerIndex) {
     const removedName = removedPlayer.name;
     const removedUUID = removedPlayer.uuid || null;
 
-    StateStore.squad.splice(playerIndex, 1);
-    StateStore.set('currentMatches', StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedName))); // This will trigger sync
-    StateStore.set('playerQueue', StateStore.playerQueue.filter(n => n !== removedName));
+    const newSquad = [...StateStore.squad];
+    newSquad.splice(playerIndex, 1);
+    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedName));
+    const newQueue = StateStore.playerQueue.filter(n => n !== removedName);
 
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];
@@ -385,7 +386,7 @@ function _removePlayerFromLocalState(playerIndex) {
         }
     }
 
-    return { removedName, removedUUID };
+    return { removedName, removedUUID, newSquad, newMatches, newQueue };
 }
 
 /** Updates all relevant UI components after a player has been removed. */
@@ -429,7 +430,14 @@ async function removePlayerFromSession(playerUUID, playerName) {
 
     if (pIndex === -1) return; // Player not in squad
 
-    const { removedName, removedUUID } = _removePlayerFromLocalState(pIndex);
+    const { removedName, removedUUID, newSquad, newMatches, newQueue } = _removePlayerFromLocalState(pIndex);
+
+    // Atomically update the global state to ensure consistency across the session
+    StateStore.setState({
+        squad: newSquad,
+        currentMatches: newMatches,
+        playerQueue: newQueue
+    });
 
     _updateUIAfterPlayerRemoval();
 
