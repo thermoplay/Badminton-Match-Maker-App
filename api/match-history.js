@@ -13,15 +13,21 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sb(path, options = {}) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
-        headers: {
-            'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json',
-            // GET requests might want representation, POSTs want minimal
-            'Prefer': options.prefer || (options.method === 'POST' ? 'return=minimal' : 'return=representation'),
-        },
-        method: options.method || 'GET',
-        body:   options.body ? JSON.stringify(options.body) : undefined,
+    const method = options.method || 'GET';
+    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+    const headers = {
+        'apikey':        SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type':  'application/json',
+        'Prefer':        options.prefer || (method === 'POST' ? 'return=minimal' : 'return=representation'),
+    };
+
+    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+        headers,
+        method,
+        body: options.body ? JSON.stringify(options.body) : undefined,
     });
     // For GETs, we want the data. For POSTs, just the status.
     const data = (res.headers.get('Content-Type')?.includes('application/json')) ? await res.json() : null;

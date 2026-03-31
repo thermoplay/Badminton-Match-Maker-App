@@ -27,27 +27,23 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-const hdrs = (method = 'GET') => {
-    const h = {
-    'apikey':        SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
-    'Content-Type':  'application/json',
-    };
-    // Preference header is only valid for write operations
-    if (method !== 'GET') {
-        h['Prefer'] = 'return=representation';
-    }
-    return h;
-};
-
 async function sbFetch(path, options = {}) {
     const method = options.method || 'GET';
-    // Robust URL construction: ensure no double slashes and handle trailing slashes
     const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     
+    const headers = {
+        'apikey':        SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type':  'application/json',
+    };
+
+    if (method !== 'GET') {
+        headers['Prefer'] = options.prefer || 'return=representation';
+    }
+
     const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
-        headers: { ...hdrs(method), ...(options.headers || {}) },
+        headers: { ...headers, ...(options.headers || {}) },
         method:  method,
         body:    options.body ? JSON.stringify(options.body) : undefined,
     });
