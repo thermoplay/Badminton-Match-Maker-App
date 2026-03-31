@@ -691,6 +691,9 @@ async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
  * to decide whether to bypass the pending screen.
  */
 async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
+    const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
+    const emoji = (p && p.playerUUID === playerUUID) ? p.spiritAnimal : null;
+
     // Prefer the explicitly-passed room code (always available in player mode boot)
     // before falling back to the module-level variable or window global.
     // The module-level currentRoomCode may not be set yet if joinOnlineSession()
@@ -710,6 +713,7 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
                 room_code:   roomCode,
                 player_uuid: playerUUID,
                 player_name: playerName,
+                spirit_animal: emoji
             }),
         });
         if (!r.ok) { console.error('[CourtSide] member-upsert failed:', r.status); return null; }
@@ -1423,6 +1427,16 @@ async function tryAutoRejoin() {
                 localStorage.removeItem('cs_room_code');
                 localStorage.removeItem('cs_operator_key');
                 localStorage.removeItem('cs_op_key_hash');
+                
+                // PROACTIVE CLEANUP: Clear session-specific stale data from local vault
+                const saved = localStorage.getItem('cs_pro_vault');
+                if (saved) {
+                    const data = JSON.parse(saved);
+                    data.currentMatches = [];
+                    data.roundHistory = [];
+                    data.guestList = []; // Clear guests to prevent stale data in next session
+                    localStorage.setItem('cs_pro_vault', JSON.stringify(data));
+                }
             }
             return;
         }

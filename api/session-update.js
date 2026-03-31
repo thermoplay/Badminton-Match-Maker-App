@@ -98,6 +98,7 @@ export default async function handler(req, res) {
                 career_wins:  p.wins,
                 career_games: p.games,
                 achievements: p.achievements || [],
+                spirit_animal: p.spiritAnimal || null,
                 last_active:  new Date().toISOString()
             }
         });

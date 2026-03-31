@@ -1862,7 +1862,7 @@ function showIWTPExisting() {
     }
     list.innerHTML = currentSquad.map(p => `
         <button class="iwtp-player-chip" onclick="confirmSpectateAs('${escapeHTML(p.name)}')">
-            ${Avatar.html(p.name)}
+            ${Avatar.html(p.name, p.spiritAnimal)}
             <span>${escapeHTML(p.name)}</span>
         </button>
     `).join('');
