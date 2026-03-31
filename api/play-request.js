@@ -99,8 +99,8 @@ export default async function handler(req, res) {
                 p_room_code: code, 
                 p_player_name: trimmedName, 
                 p_player_uuid: uuid,
-                p_spirit_animal: (spirit_animal === undefined || spirit_animal === '') ? null : spirit_animal,
-                p_force: !!force 
+                p_spirit_animal: spirit_animal || null,
+                p_force: Boolean(force)
             },
         });
 
