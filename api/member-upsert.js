@@ -42,7 +42,7 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { room_code, player_uuid, player_name } = req.body;
+    const { room_code, player_uuid, player_name, spirit_animal } = req.body;
 
     if (!room_code || !player_uuid || !player_name) {
         return res.status(400).json({ error: 'Missing required fields: room_code, player_uuid, player_name' });
@@ -81,6 +81,7 @@ export default async function handler(req, res) {
             body: {
                 uuid: uuid,
                 name: trimmedName,
+                spirit_animal: spirit_animal || null,
                 last_active: new Date().toISOString()
             }
         });
@@ -96,13 +97,13 @@ export default async function handler(req, res) {
         const member = existing.data[0];
 
         // Player exists — update their name in case it changed, but NEVER touch status
-        if (member.player_name !== trimmedName) {
+        if (member.player_name !== trimmedName || (spirit_animal !== undefined && member.spirit_animal !== spirit_animal)) {
             await sbFetch(
                 `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
                 {
                     method:  'PATCH',
                     headers: { 'Prefer': 'return=representation' },
-                    body:    { player_name: trimmedName, last_seen: new Date().toISOString() },
+                    body:    { player_name: trimmedName, spirit_animal: spirit_animal || member.spirit_animal, last_seen: new Date().toISOString() },
                 }
             );
         }
@@ -122,6 +123,7 @@ export default async function handler(req, res) {
             room_code:   code,
             player_uuid: uuid,
             player_name: trimmedName,
+            spirit_animal: spirit_animal || null,
             status:      'pending',
             joined_at:   new Date().toISOString(),
             last_seen:   new Date().toISOString(),
