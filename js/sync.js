@@ -840,9 +840,7 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
             const req = window.playRequests.find(r => r.player_uuid === playerUUID || r.name === oldName);
             if (req) {
                 req.name = trimmed;
-                if (typeof showPlayRequests === 'function' && document.getElementById('playRequestsModal')?.style.display === 'flex') {
-                    showPlayRequests();
-                }
+                if (typeof window.updatePendingRequestUI === 'function') window.updatePendingRequestUI(playerUUID, trimmed, null);
             }
         }
         return;
@@ -916,9 +914,7 @@ function _applySpiritAnimalUpdate(playerUUID, emoji) {
             const req = window.playRequests.find(r => r.player_uuid === playerUUID);
             if (req) {
                 req.spirit_animal = emoji;
-                if (typeof showPlayRequests === 'function' && document.getElementById('playRequestsModal')?.style.display === 'flex') {
-                    showPlayRequests();
-                }
+                if (typeof window.updatePendingRequestUI === 'function') window.updatePendingRequestUI(playerUUID, null, emoji);
             }
         }
         return;

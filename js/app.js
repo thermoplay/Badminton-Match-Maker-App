@@ -1892,6 +1892,7 @@ async function submitIWantToPlay() {
     const input = document.getElementById('iwtpNameInput');
     const name  = (input?.value || '').trim();
     const btn   = document.getElementById('iwtpSendBtn');
+    const p     = (typeof Passport !== 'undefined') ? Passport.get() : null;
 
     if (!name) { showSessionToast('Please enter your name first.'); input?.focus(); return; }
     if (!currentRoomCode) { showSessionToast('Not connected to a session.'); return; }
@@ -1902,7 +1903,12 @@ async function submitIWantToPlay() {
         const res = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ room_code: currentRoomCode, name }),
+            body:    JSON.stringify({ 
+                room_code: currentRoomCode, 
+                name,
+                player_uuid: p?.playerUUID || null,
+                spirit_animal: p?.spiritAnimal || null
+            }),
         });
 
         if (res.ok) {
@@ -2607,13 +2613,15 @@ async function passportRenameAndJoin() {
 async function submitPassportJoinRequest(name, uuid) {
     if (!currentRoomCode) return;
     const btn = document.querySelector('.iwtp-btn');
+    const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
+
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     try {
         const res = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ room_code: currentRoomCode, name, player_uuid: uuid }),
+            body:    JSON.stringify({ room_code: currentRoomCode, name, player_uuid: uuid, spirit_animal: p?.spiritAnimal || null }),
         });
 
         if (res.ok) {
@@ -2627,6 +2635,29 @@ async function submitPassportJoinRequest(name, uuid) {
         showSessionToast('Could not send request. Try again.');
     }
 }
+
+/**
+ * Updates the UI for a pending request (modal and toast) if data changes via broadcast.
+ */
+window.updatePendingRequestUI = function(uuid, name, emoji) {
+    if (!window.isOperator) return;
+
+    // 1. Update toast if showing
+    const notif = document.getElementById('joinNotification');
+    if (notif && notif.classList.contains('show') && notif.dataset.uuid === uuid) {
+        const nameEl = document.getElementById('joinNotifName');
+        const finalName = name || notif.dataset.name;
+        if (nameEl) {
+            nameEl.innerHTML = emoji ? `<span style="margin-right:8px">${emoji}</span>${escapeHTML(finalName)}` : escapeHTML(finalName);
+        }
+        if (name) notif.dataset.name = name;
+    }
+
+    // 2. Update modal if open
+    if (document.getElementById('playRequestsModal')?.style.display === 'flex') {
+        showPlayRequests();
+    }
+};
 
 function spectateOnly() {
     collapseIWTPSheet();
