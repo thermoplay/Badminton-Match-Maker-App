@@ -81,7 +81,7 @@ export default async function handler(req, res) {
             body: {
                 uuid: uuid,
                 name: trimmedName,
-                spirit_animal: spirit_animal || null,
+                spirit_animal: (spirit_animal === undefined || spirit_animal === '') ? null : spirit_animal,
                 last_active: new Date().toISOString()
             }
         });
@@ -97,13 +97,16 @@ export default async function handler(req, res) {
         const member = existing.data[0];
 
         // Player exists — update their name in case it changed, but NEVER touch status
-        if (member.player_name !== trimmedName || (spirit_animal !== undefined && member.spirit_animal !== spirit_animal)) {
+        const nameChanged = member.player_name !== trimmedName;
+        const animalChanged = spirit_animal !== undefined && member.spirit_animal !== spirit_animal;
+
+        if (nameChanged || animalChanged) {
             await sbFetch(
                 `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
                 {
                     method:  'PATCH',
                     headers: { 'Prefer': 'return=representation' },
-                    body:    { player_name: trimmedName, spirit_animal: spirit_animal || member.spirit_animal, last_seen: new Date().toISOString() },
+                    body:    { player_name: trimmedName, spirit_animal: spirit_animal || member.spirit_animal || null, last_seen: new Date().toISOString() },
                 }
             );
         }

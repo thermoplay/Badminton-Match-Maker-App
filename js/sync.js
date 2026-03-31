@@ -168,6 +168,22 @@ class SupabaseRealtimeManager {
             });
         }
 
+        // 5. Passport Signals (Win/Loss notifications)
+        join('realtime:public:passport_signals', {
+            config: {
+                broadcast: { self: false },
+                postgres_changes: [{ event: 'INSERT', schema: 'public', table: 'passport_signals', filter: `room_code=eq."${roomCode}"` }]
+            }
+        });
+
+        // 6. Master Players Table (Global profile updates)
+        join('realtime:public:players', {
+            config: {
+                broadcast: { self: false },
+                postgres_changes: [{ event: 'UPDATE', schema: 'public', table: 'players' }]
+            }
+        });
+
         this._startHeartbeat();
     }
 
@@ -960,6 +976,24 @@ function _handlePostgresChange(payload) {
         if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
             window.onPlayRequestInsert(record);
         }
+        return;
+    }
+
+    if (table === 'passport_signals' || payload?.data?.table === 'passport_signals') {
+        if (!isOperator && record && typeof PlayerMode !== 'undefined') {
+            const passport = (typeof Passport !== 'undefined') ? Passport.get() : null;
+            if (passport && record.player_uuid === passport.playerUUID) {
+                // Trigger the same logic as the old polling loop
+                if (typeof handlePassportSignal === 'function') {
+                    handlePassportSignal(record, passport);
+                }
+            }
+        }
+        return;
+    }
+
+    if (table === 'players' || payload?.data?.table === 'players') {
+        if (typeof SidelineView !== 'undefined' && SidelineView._visible) SidelineView.refresh();
         return;
     }
 

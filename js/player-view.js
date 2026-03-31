@@ -965,7 +965,6 @@ const PlayerMode = {
 
     _isJoining: false,
     _joinCode:  null,
-    _pollTimer: null,
     _statePollTimer: null,
     _retryInterval: null,
     _joinRetryTimeout: null,
@@ -1001,7 +1000,6 @@ const PlayerMode = {
             }
 
             // 2. Clean up local state
-            clearInterval(this._pollTimer);
             clearInterval(this._statePollTimer);
             this._clearJoinRetryTimer();
             localStorage.removeItem('cs_player_room_code');
@@ -1034,7 +1032,6 @@ const PlayerMode = {
     },
 
     _onRemovedFromSession() {
-        clearInterval(this._pollTimer);
         clearInterval(this._statePollTimer);
         localStorage.removeItem('cs_player_room_code');
         try { sessionStorage.removeItem(SS_APPROVED); } catch {}
@@ -1057,7 +1054,6 @@ const PlayerMode = {
     async boot(passport, joinCode) {
         // Clean up previous state if rebooting with a new code
         this._isJoining = false;
-        clearInterval(this._pollTimer);
         clearInterval(this._statePollTimer);
         this._clearJoinRetryTimer();
 
@@ -1391,7 +1387,6 @@ const PlayerMode = {
     },
 
     _onSessionEnded(recapData) {
-        clearInterval(this._pollTimer);
         if (window.Haptic) Haptic.success();
         this.showRecap(recapData);
     },
@@ -1825,7 +1820,6 @@ const PlayerMode = {
         if (typeof joinOnlineSession === 'function') {
             joinOnlineSession(joinCode).catch(() => {});
         }
-        this._startSignalPoll(joinCode, passport);
         
         // Connectivity Resilience: State Polling Fallback
         // Fetches full game state every 10s to recover from WebSocket drops.
@@ -1851,31 +1845,6 @@ const PlayerMode = {
                 }
             }
         }, 10000);
-    },
-
-    _startSignalPoll(joinCode, passport) {
-        clearInterval(this._pollTimer);
-        const isSaver = localStorage.getItem('cs_battery_saver') === 'true';
-        const interval = isSaver ? 12000 : 3000;
-        this._pollTimer = setInterval(() => this._pollSignal(joinCode, passport), interval);
-    },
-
-    async _pollSignal(joinCode, passport) {
-        try {
-            const r = await fetch(
-                `/api/passport-signal?player_uuid=${encodeURIComponent(passport.playerUUID)}&room_code=${encodeURIComponent(joinCode)}`
-            );
-            const d = await r.json();
-            if (d.signal) {
-                SidelineView.show();
-                SidelineView.refresh();
-                await fetch('/api/passport-signal', {
-                    method:  'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ player_uuid: passport.playerUUID, room_code: joinCode }),
-                }).catch(() => {});
-            }
-        } catch { /* silent */ }
     },
 
     _isApprovedInSession(roomCode) {

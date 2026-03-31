@@ -2406,27 +2406,10 @@ function passportRename() {
     });
 }
 
-let _signalPollTimer = null;
-
-function startSignalPolling() {
-    const passport = Passport.get();
-    if (!passport || !currentRoomCode) return;
-
-    clearInterval(_signalPollTimer);
-    _signalPollTimer = setInterval(async () => {
-        if (!currentRoomCode) return;
-        try {
-            const res  = await fetch(
-                `/api/passport-signal?player_uuid=${encodeURIComponent(passport.playerUUID)}&room_code=${encodeURIComponent(currentRoomCode)}`
-            );
-            const data = await res.json();
-            if (data.signal) {
-                await handlePassportSignal(data.signal, passport);
-            }
-        } catch { /* silent */ }
-    }, 8000);
-}
-
+/**
+ * Processes a win/loss signal received via Realtime.
+ * Refreshes the sideline view and acknowledges the signal in the DB.
+ */
 async function handlePassportSignal(signal, passport) {
     SidelineView.refresh();
 
@@ -2592,7 +2575,7 @@ async function submitPassportJoinRequest(name, uuid) {
 
         if (res.ok) {
             collapseIWTPSheet();
-            setTimeout(() => { SidelineView.show(); startSignalPolling(); }, 450);
+            setTimeout(() => { SidelineView.show(); }, 450);
             showSessionToast('🏀 Request sent! Waiting for host approval…');
             Haptic.success();
         } else { throw new Error('Failed'); }
