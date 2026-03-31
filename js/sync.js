@@ -1420,9 +1420,14 @@ async function tryAutoRejoin() {
     try {
         const result = await apiCall(`session-get?code=${encodeURIComponent(savedCode)}`);
         if (!result.ok) {
-            localStorage.removeItem('cs_room_code');
-            localStorage.removeItem('cs_operator_key');
-            localStorage.removeItem('cs_op_key_hash');
+            // FIX: Only wipe if the session is confirmed GONE (404).
+            // If it's a network error (status 0) or server error (500), 
+            // we keep the credentials and will try to reconnect via the online listener.
+            if (result.status === 404) {
+                localStorage.removeItem('cs_room_code');
+                localStorage.removeItem('cs_operator_key');
+                localStorage.removeItem('cs_op_key_hash');
+            }
             return;
         }
         const session = result.data?.session || result.data;
