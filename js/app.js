@@ -2099,13 +2099,11 @@ function _resolvePlayerForSession(name, incomingUUID) {
     }
 
     // 3. Create new player
-    player = {
+    player = migratePlayer({
         name: finalName,
         uuid: validUUID || _generateUUID(),
-    };
-    migratePlayer(player);
-    StateStore.squad.push(player);
-    
+    });
+
     return player;
 }
 
@@ -2120,6 +2118,11 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     const player = _resolvePlayerForSession(name, playerUUID);
     const finalName = player.name;
     const validUUID = player.uuid;
+
+    // Identity Integrity: Ensure the player is added to the squad array if new
+    if (!StateStore.squad.find(p => p.uuid === validUUID)) {
+        StateStore.squad.push(player);
+    }
 
     if (initialEmoji) player.spiritAnimal = initialEmoji;
 
@@ -2152,12 +2155,17 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     window._approvedPlayers = window._approvedPlayers || {};
     window._approvedPlayers[validUUID || player.name] = { token, name: player.name, uuid: validUUID, approvedAt: Date.now() };
 
-    if (!StateStore.playerQueue.includes(player.name)) {
-        StateStore.playerQueue.push(player.name);
+    // Update queue state formally
+    const newQueue = [...StateStore.playerQueue];
+    if (!newQueue.includes(player.name)) {
+        newQueue.push(player.name);
     }
+
     renderSquad();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    StateStore.set('squad', StateStore.squad); // Trigger sync for squad and queue
+
+    // Grouped Sync: Update both keys formally to ensure consistency and trigger cloud broadcast
+    StateStore.setState({ squad: StateStore.squad, playerQueue: newQueue });
 
     showSessionToast(`✅ ${player.name} added`);
     Haptic.success();
