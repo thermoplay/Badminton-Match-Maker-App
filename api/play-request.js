@@ -164,9 +164,13 @@ export default async function handler(req, res) {
 
             // Verify operator key
             const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
-            if (!sessionRes.ok || !sessionRes.data?.[0]) {
+            if (!sessionRes.ok) {
+                return res.status(500).json({ error: `Database error: ${sessionRes.data?.message || 'Unknown'}` });
+            }
+            if (!sessionRes.data?.[0]) {
                 return res.status(404).json({ error: 'Session not found' });
             }
+
             const opKeyHash = String(operator_key);
             if (opKeyHash !== sessionRes.data[0].operator_key) {
                 return res.status(403).json({ error: 'Invalid operator key' });
