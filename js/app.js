@@ -98,12 +98,12 @@ function loadFromDisk() {
             const loadedSquad = data.squad || [];
             loadedSquad.forEach(migratePlayer);
 
-            const squadPlayerNames = new Set(loadedSquad.map(p => p.name));
+            const squadUUIDs = new Set(loadedSquad.map(p => p.uuid));
             const loadedMatches = (data.currentMatches || []).filter(m =>
-                m.teams.flat().every(name => squadPlayerNames.has(name))
+                m.teams.flat().every(uuid => squadUUIDs.has(uuid))
             );
 
-            const loadedQueue = (data.playerQueue || []).filter(name => loadedSquad.find(p => p.name === name));
+            const loadedQueue = (data.playerQueue || []).filter(uuid => loadedSquad.find(p => p.uuid === uuid));
             const loadedCourts = (Number.isInteger(data.activeCourts) && data.activeCourts >= 1)
                 ? data.activeCourts : 1;
 
@@ -164,7 +164,7 @@ function addPlayer() {
     // Update state arrays
     StateStore.squad.push(newPlayer);
     const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(name)) newQueue.push(name);
+    if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
 
     // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
     StateStore.set('squad', StateStore.squad);
@@ -205,17 +205,7 @@ function editPlayerName() {
 
             p.name = trimmedNewName;
 
-            // Update name in current matches
-            StateStore.currentMatches.forEach(m => {
-                m.teams = m.teams.map(team =>
-                    team.map(n => (n === oldName ? p.name : n))
-                );
-            });
-
-            // Update name in player queue
-            StateStore.set('playerQueue', StateStore.playerQueue.map(n => (n === oldName ? p.name : n)));
-
-            // Update metadata maps for consistency
+            // Metadata consistency maps (still using names as secondary lookup keys)
             const uuidMap = window._sessionUUIDMap || {};
             if (p.uuid && uuidMap[oldName] === p.uuid) delete uuidMap[oldName];
             if (p.uuid) uuidMap[p.name] = p.uuid;
@@ -371,8 +361,8 @@ function _removePlayerFromLocalState(playerIndex) {
 
     const newSquad = [...StateStore.squad];
     newSquad.splice(playerIndex, 1);
-    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedName));
-    const newQueue = StateStore.playerQueue.filter(n => n !== removedName);
+    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedUUID));
+    const newQueue = StateStore.playerQueue.filter(u => u !== removedUUID);
 
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];
@@ -603,7 +593,7 @@ function openMenu(uuid) {
     if (!menu) return;
 
     const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
-    const isPlaying = onCourt.has(p.name);
+    const isPlaying = onCourt.has(p.uuid);
 
     let swapActionHTML = '';
 
@@ -672,8 +662,8 @@ function movePlayerToFront() {
     if (!p) return;
     
     // Remove from current spot in queue and add to front
-    const newQueue = StateStore.playerQueue.filter(n => n !== p.name);
-    newQueue.unshift(p.name);
+    const newQueue = StateStore.playerQueue.filter(u => u !== p.uuid);
+    newQueue.unshift(p.uuid);
     StateStore.set('playerQueue', newQueue);
     
     closeMenu();
@@ -2103,6 +2093,16 @@ function _resolvePlayerForSession(name, incomingUUID) {
     }
 
     // 2. If not found by UUID, treat as NEW.
+    // 2. Secondary: Name-based lookup (Smart Recognition)
+    // If UUID didn't match but the name does, assume it's the same person
+    // (e.g., host added them manually first or UUIDs were cleared).
+    player = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (player) {
+        if (validUUID && !player.uuid) player.uuid = validUUID; // Adopt canonical ID
+        return player;
+    }
+
+    // 3. Truly NEW player — handle collisions
     //    Check for name collisions and auto-rename.
     let collision = StateStore.squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
     let counter = 1;
@@ -2128,6 +2128,10 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     const requestRow = playRequests.find(r => String(r.id) === String(id));
     const reconciledAchievements = requestRow?.achievements;
     const initialEmoji = requestRow?.spirit_animal;
+
+    // Capture existing state to prevent queue duplication if name changes
+    const existing = StateStore.squad.find(p => (playerUUID && p.uuid === playerUUID) || (p.name.toLowerCase() === name.toLowerCase()));
+    const oldName = existing ? existing.name : null;
 
     const player = _resolvePlayerForSession(name, playerUUID);
     const finalName = player.name;
@@ -2169,10 +2173,10 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     window._approvedPlayers = window._approvedPlayers || {};
     window._approvedPlayers[validUUID || player.name] = { token, name: player.name, uuid: validUUID, approvedAt: Date.now() };
 
-    // Update queue state formally
-    const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(player.name)) {
-        newQueue.push(player.name);
+    // Update queue state formally using UUID
+    let newQueue = [...StateStore.playerQueue];
+    if (!newQueue.includes(player.uuid)) {
+        newQueue.push(player.uuid);
     }
 
     renderSquad();
@@ -2415,19 +2419,6 @@ function passportRename() {
                 const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
                 if (me) {
                     me.name = trimmed;
-                    StateStore.set('playerQueue', StateStore.playerQueue.map(n => n === oldName ? trimmed : n));
-
-                    // Update name in current matches if playing
-                    let matchUpdated = false;
-                    StateStore.currentMatches.forEach(m => {
-                        m.teams = m.teams.map(team =>
-                            team.map(n => {
-                                if (n === oldName) { matchUpdated = true; return trimmed; }
-                                return n;
-                            })
-                        );
-                    });
-
                     // Update metadata maps for consistency
                     const uuidMap = window._sessionUUIDMap || {};
                     if (me.uuid && uuidMap[oldName] === me.uuid) delete uuidMap[oldName];

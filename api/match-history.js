@@ -55,11 +55,11 @@ export default async function handler(req, res) {
                 const winIdx  = m.winnerTeamIndex;
                 const loseIdx = winIdx === 0 ? 1 : 0;
 
-                const resolveData = (name, won) => {
-                    const p = (squad || []).find(x => x.name === name) || {};
+                const resolveData = (uuid, won) => {
+                    const p = (squad || []).find(x => x.uuid === uuid) || {};
                     return {
-                        player_uuid: p.uuid || null,
-                        player_name: name,
+                        player_uuid: uuid,
+                        player_name: p.name || 'Unknown',
                         won: won,
                         rating: Math.round(p.rating || 1200)
                     };

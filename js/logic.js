@@ -9,9 +9,9 @@
 // LOOKUP HELPER
 // ---------------------------------------------------------------------------
 
-/** Finds a player object by name. Returns undefined if not found. */
-function findP(name) {
-    return StateStore.squad.find(p => p.name === name);
+/** Finds a player object by UUID. Returns undefined if not found. */
+function findP(uuid) {
+    return StateStore.squad.find(p => p.uuid === uuid);
 }
 
 // ---------------------------------------------------------------------------
@@ -89,8 +89,8 @@ function _processFinishedMatch(match, mIdx, timestamp) {
  * Moved here from buildMatchFromPlayers to ensure accuracy.
  */
 function _recordMatchStats(match, timestamp = Date.now()) {
-    const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
-    const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
+    const tA = match.teams[0].map(u => findP(u)).filter(Boolean);
+    const tB = match.teams[1].map(u => findP(u)).filter(Boolean);
     const allPlayers = [...tA, ...tB];
 
     allPlayers.forEach(p => {
@@ -150,8 +150,8 @@ function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     const newMatch = buildMatchFromPlayers(next4);
     StateStore.currentMatches[mIdx] = newMatch;
 
-    const tA = newMatch.teams[0].map(n => findP(n)).filter(Boolean);
-    const tB = newMatch.teams[1].map(n => findP(n)).filter(Boolean);
+    const tA = newMatch.teams[0].map(u => findP(u)).filter(Boolean);
+    const tB = newMatch.teams[1].map(u => findP(u)).filter(Boolean);
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
         const newCardEl = buildMatchCard(mIdx, tA, tB, newMatch.odds, newMatch.startedAt);
@@ -251,8 +251,8 @@ function applyELOForMatch(m) {
     const winIdx  = m.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
 
-    const winners = m.teams[winIdx].map(n => findP(n)).filter(Boolean);
-    const losers  = m.teams[loseIdx].map(n => findP(n)).filter(Boolean);
+    const winners = m.teams[winIdx].map(u => findP(u)).filter(Boolean);
+    const losers  = m.teams[loseIdx].map(u => findP(u)).filter(Boolean);
     if (!winners.length || !losers.length) return;
 
     const safeRating = p => Number(p.rating) || 1200;
@@ -322,17 +322,17 @@ function applyELOForMatch(m) {
 // ---------------------------------------------------------------------------
 
 function initQueue() {
-    const activeNames = StateStore.squad.filter(p => p.active).map(p => p.name);
+    const activeUUIDs = StateStore.squad.filter(p => p.active).map(p => p.uuid);
 
     // Keep existing queue order for names already in it — only append newcomers
     const inQueue  = new Set(StateStore.playerQueue);
-    const newNames = activeNames.filter(n => !inQueue.has(n));
+    const newUUIDs = activeUUIDs.filter(u => !inQueue.has(u));
 
     // Remove names no longer in the active squad
-    const newQueue = StateStore.playerQueue.filter(n => StateStore.squad.find(p => p.name === n && p.active));
+    const newQueue = StateStore.playerQueue.filter(u => StateStore.squad.find(p => p.uuid === u && p.active));
 
     // Append newcomers at the back and update the store
-    newQueue.push(...newNames);
+    newQueue.push(...newUUIDs);
     StateStore.set('playerQueue', newQueue);
 }
 
@@ -344,13 +344,13 @@ function initQueue() {
 
 // Rotate a single court's players back into the queue
 function rotateCourtPlayers(m) {
-    const allNames = m.teams.flat();
+    const allUUIDs = m.teams.flat();
     let newQueue = StateStore.playerQueue;
     // Remove from wherever they currently sit
-    newQueue = newQueue.filter(n => !allNames.includes(n));
+    newQueue = newQueue.filter(u => !allUUIDs.includes(u));
 
     if (m.winnerTeamIndex === null) {
-        newQueue.push(...allNames);
+        newQueue.push(...allUUIDs);
     } else {
         const winIdx  = m.winnerTeamIndex;
         const loseIdx = winIdx === 0 ? 1 : 0;
@@ -465,14 +465,14 @@ function getCandidatePool(onCourt) {
     const poolSet  = new Set();
     const poolSize = 4 * POOL_FACTOR;
 
-    for (const name of StateStore.playerQueue) {
+    for (const uuid of StateStore.playerQueue) {
         if (pool.length >= poolSize) break;
-        if (onCourt.has(name)) continue;
-        if (poolSet.has(name))  continue;
-        const p = StateStore.squad.find(s => s.name === name && s.active);
+        if (onCourt.has(uuid)) continue;
+        if (poolSet.has(uuid))  continue;
+        const p = StateStore.squad.find(s => s.uuid === uuid && s.active);
         if (!p) continue;
         pool.push(p);
-        poolSet.add(name);
+        poolSet.add(uuid);
     }
     return pool;
 }
@@ -525,7 +525,7 @@ function buildMatchFromPlayers(p4) {
     const storyBadges = determineStoryBadges(tA, tB);
 
     return {
-        teams:           [tA.map(p => p.name), tB.map(p => p.name)],
+        teams:           [tA.map(p => p.uuid), tB.map(p => p.uuid)],
         winnerTeamIndex: null,
         storyBadges,
         odds,
@@ -538,8 +538,8 @@ function rebuildMatchCardIndices() {
     const container = document.getElementById('matchContainer');
     container.innerHTML = '';
     StateStore.currentMatches.forEach((m, i) => {
-        const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
-        const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
+        const tA = m.teams[0].map(u => findP(u)).filter(Boolean);
+        const tB = m.teams[1].map(u => findP(u)).filter(Boolean);
         if (tA.length > 0 && tB.length > 0) {
             const cardEl = buildMatchCard(i, tA, tB, m.odds, m.startedAt, m.storyBadges);
             cardEl.classList.remove('card-entering'); // No animation on rebuild
@@ -611,7 +611,7 @@ function _createMatchesForCourts(courtCount) {
         const players = pullNextFromQueue(assignedThisRound);
         if (players.length < 4) break;
 
-        players.forEach(p => assignedThisRound.add(p.name));
+        players.forEach(p => assignedThisRound.add(p.uuid));
         const match = buildMatchFromPlayers(players);
         StateStore.currentMatches.push(match);
 
@@ -664,8 +664,8 @@ function renderQueueStrip() {
 
     // Queue: active players not on court, in queue order
     const waiting = StateStore.playerQueue
-        .map(name => StateStore.squad.find(p => p.name === name))
-        .filter(p => p && p.active && !onCourt.has(p.name));
+        .map(uuid => StateStore.squad.find(p => p.uuid === uuid))
+        .filter(p => p && p.active && !onCourt.has(p.uuid));
 
     if (waiting.length === 0) {
         strip.style.display = 'none';
@@ -687,7 +687,7 @@ function renderQueueStrip() {
         </div>
         <div class="queue-strip-list">
             ${waiting.map((p, idx) => `
-                <div class="queue-item" draggable="true" data-name="${escapeHTML(p.name)}">
+                <div class="queue-item" draggable="true" data-uuid="${p.uuid}">
                     <span class="queue-pos">${idx + 1}</span>
                     ${Avatar.html(p.name, p.spiritAnimal)}
                     <span class="queue-name">${escapeHTML(p.name)}</span>
@@ -764,7 +764,7 @@ function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now(), storyBadges =
     card.querySelector('.edit-teams-btn').onclick = () => openTeamBuilder(idx);
 
     // Dynamic render for 1 or 2 players per team
-    const renderTeam = (team) => team.map(p => escapeHTML(p.name)).join(' <span class="amp">&amp;</span> ');
+    const renderTeam = (team) => team.map(p => escapeHTML(p.name || 'Unknown')).join(' <span class="amp">&amp;</span> ');
     const teamBoxes = card.querySelectorAll('.team-box');
     teamBoxes[0].querySelector('b').innerHTML = renderTeam(tA);
     teamBoxes[0].onclick = () => setWinner(idx, 0);
@@ -821,7 +821,7 @@ let builderSelected  = null;  // { team: 0|1, name: string } — player being sw
  */
 function openTeamBuilder(mIdx) {
     builderMatchIdx = mIdx;
-    builderTeams    = StateStore.currentMatches[mIdx].teams.map(t => [...t]); // deep copy
+    builderTeams    = StateStore.currentMatches[mIdx].teams.map(t => [...t]); // deep copy UUIDs
     builderSelected = null;
     renderTeamBuilder();
     document.getElementById('teamBuilderModal').style.display = 'flex';
@@ -847,28 +847,30 @@ function renderTeamBuilder() {
     // Sideline = active players NOT in any game at all
     const allInGames = new Set(StateStore.currentMatches.flatMap(match => match.teams.flat()));
     const sideline = StateStore.squad.filter(p =>
-        (p.active && !allInGames.has(p.name)) ||
+        (p.active && !allInGames.has(p.uuid)) ||
         // also allow swapping players already in THIS game (they're shown in teams, not sideline)
-        (p.active && inGame.has(p.name) && !builderTeams[0].includes(p.name) && !builderTeams[1].includes(p.name))
-    ).filter(p => !inGame.has(p.name)); // sideline = truly not in this game
+        (p.active && inGame.has(p.uuid) && !builderTeams[0].includes(p.uuid) && !builderTeams[1].includes(p.uuid))
+    ).filter(p => !inGame.has(p.uuid)); // sideline = truly not in this game
 
     document.getElementById('builderGameLabel').innerText = `Game ${builderMatchIdx + 1}`;
 
     // Render Team A
-    document.getElementById('builderTeamA').innerHTML = builderTeams[0].map(name => {
-        const isSelected = builderSelected && builderSelected.name === name;
+    document.getElementById('builderTeamA').innerHTML = builderTeams[0].map(uuid => {
+        const isSelected = builderSelected && builderSelected.uuid === uuid;
+        const p = findP(uuid);
         return `<div class="builder-chip ${isSelected ? 'builder-selected' : ''}"
-                     onclick="builderSelectPlayer(0, '${escapeHTML(name)}')">
-                    ${escapeHTML(name)}
+                     onclick="builderSelectPlayer(0, '${uuid}')">
+                    ${escapeHTML(p?.name || 'Unknown')}
                 </div>`;
     }).join('');
 
     // Render Team B
-    document.getElementById('builderTeamB').innerHTML = builderTeams[1].map(name => {
-        const isSelected = builderSelected && builderSelected.name === name;
+    document.getElementById('builderTeamB').innerHTML = builderTeams[1].map(uuid => {
+        const isSelected = builderSelected && builderSelected.uuid === uuid;
+        const p = findP(uuid);
         return `<div class="builder-chip ${isSelected ? 'builder-selected' : ''}"
-                     onclick="builderSelectPlayer(1, '${escapeHTML(name)}')">
-                    ${escapeHTML(name)}
+                     onclick="builderSelectPlayer(1, '${uuid}')">
+                    ${escapeHTML(p?.name || 'Unknown')}
                 </div>`;
     }).join('');
 
@@ -880,8 +882,8 @@ function renderTeamBuilder() {
             <div class="builder-bench">
                 ${sideline.map(p => `
                     <div class="builder-chip bench ${builderSelected ? 'bench-ready' : ''}"
-                         onclick="builderSwapFromSideline('${escapeHTML(p.name)}')">
-                        ${escapeHTML(p.name)}
+                         onclick="builderSwapFromSideline('${p.uuid}')">
+                        ${escapeHTML(p.name || 'Unknown')}
                     </div>
                 `).join('')}
             </div>
@@ -898,22 +900,22 @@ function renderTeamBuilder() {
  * If same team → deselect (toggle).
  * If sideline player was selected first, this clears that and selects in-game player.
  */
-function builderSelectPlayer(teamIdx, name) {
-    if (builderSelected && builderSelected.name === name) {
+function builderSelectPlayer(teamIdx, uuid) {
+    if (builderSelected && builderSelected.uuid === uuid) {
         // Toggle off — deselect
         builderSelected = null;
     } else if (builderSelected && builderSelected.team !== teamIdx) {
         // Selected player from opposite team → swap positions
-        const otherName = builderSelected.name;
+        const otherUUID = builderSelected.uuid;
         const otherTeam = builderSelected.team;
 
-        // Swap: remove name from teamIdx, add otherName. Remove otherName from otherTeam, add name.
-        builderTeams[teamIdx]  = builderTeams[teamIdx].map(n => n === name ? otherName : n);
-        builderTeams[otherTeam] = builderTeams[otherTeam].map(n => n === otherName ? name : n);
+        // Swap: remove UUID from teamIdx, add otherUUID. Remove otherUUID from otherTeam, add UUID.
+        builderTeams[teamIdx]  = builderTeams[teamIdx].map(u => u === uuid ? otherUUID : u);
+        builderTeams[otherTeam] = builderTeams[otherTeam].map(u => u === otherUUID ? uuid : u);
         builderSelected = null;
     } else {
         // Select this player
-        builderSelected = { team: teamIdx, name };
+        builderSelected = { team: teamIdx, uuid };
     }
     renderTeamBuilder();
 }
@@ -922,7 +924,7 @@ function builderSelectPlayer(teamIdx, name) {
  * Swaps a sideline player into the game, replacing the currently selected in-game player.
  * If no in-game player is selected yet, shows a subtle prompt.
  */
-function builderSwapFromSideline(sidelineName) {
+function builderSwapFromSideline(sidelineUUID) {
     if (!builderSelected) {
         // No in-game player chosen yet — flash all in-game chips to signal "pick one first"
         document.querySelectorAll('.builder-chip:not(.bench)').forEach(el => {
@@ -932,19 +934,19 @@ function builderSwapFromSideline(sidelineName) {
         return;
     }
 
-    const { team, name: outName } = builderSelected;
+    const { team, uuid: outUUID } = builderSelected;
 
     // The outgoing player goes to sideline — they need their sessionPlayCount decremented
     // since they won't actually be playing this game
-    const outPlayer = findP(outName);
+    const outPlayer = findP(outUUID);
     if (outPlayer) outPlayer.sessionPlayCount = Math.max(0, outPlayer.sessionPlayCount - 1);
 
     // The incoming player gets a sessionPlayCount increment
-    const inPlayer = findP(sidelineName);
+    const inPlayer = findP(sidelineUUID);
     if (inPlayer) inPlayer.sessionPlayCount++;
 
     // Swap in the team array
-    builderTeams[team] = builderTeams[team].map(n => n === outName ? sidelineName : n);
+    builderTeams[team] = builderTeams[team].map(u => u === outUUID ? sidelineUUID : u);
     builderSelected = null;
     renderTeamBuilder();
 }
@@ -955,7 +957,7 @@ function builderSwapFromSideline(sidelineName) {
  */
 function builderShuffle() {
     const allPlayers = [...builderTeams[0], ...builderTeams[1]]
-        .map(n => findP(n))
+        .map(u => findP(u))
         .filter(Boolean);
 
     // Shuffle randomly first
@@ -965,8 +967,8 @@ function builderShuffle() {
         // Doubles: sort by rating for balanced snake draft
         allPlayers.sort((a, b) => b.rating - a.rating);
         builderTeams = [
-            [allPlayers[0].name, allPlayers[3].name],
-            [allPlayers[1].name, allPlayers[2].name]
+            [allPlayers[0].uuid, allPlayers[3].uuid],
+            [allPlayers[1].uuid, allPlayers[2].uuid]
         ];
     }
     builderSelected = null;
@@ -979,8 +981,8 @@ function builderShuffle() {
  */
 function confirmTeamBuilder() {
     const mIdx = builderMatchIdx;
-    const tAObjs = builderTeams[0].map(n => findP(n)).filter(Boolean);
-    const tBObjs = builderTeams[1].map(n => findP(n)).filter(Boolean);
+    const tAObjs = builderTeams[0].map(u => findP(u)).filter(Boolean);
+    const tBObjs = builderTeams[1].map(u => findP(u)).filter(Boolean);
 
     // Validate balanced teams (Doubles 2v2 only)
     const total = tAObjs.length + tBObjs.length;

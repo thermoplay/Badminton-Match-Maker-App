@@ -108,14 +108,14 @@ const SidelineView = {
 
         container.style.display = 'flex';
         const squad = window.squad || [];
-        const findP = (name) => squad.find(p => p.name === name);
+        const findP = (uuid) => squad.find(p => p.uuid === uuid);
 
         container.innerHTML = matches.map((m, i) => {
-            const tA = (m.teams[0] || []).map(n => findP(n)).filter(Boolean);
-            const tB = (m.teams[1] || []).map(n => findP(n)).filter(Boolean);
+            const tA = (m.teams[0] || []).map(u => findP(u)).filter(Boolean);
+            const tB = (m.teams[1] || []).map(u => findP(u)).filter(Boolean);
             
             const renderIcons = (team) => team.map(p => Avatar.html(p.name, p.spiritAnimal)).join('');
-            const isPlaying = (m.teams.flat().map(n => n.toLowerCase()).includes(Passport.get()?.playerName?.toLowerCase()));
+            const isPlaying = (m.teams.flat().includes(Passport.get()?.playerUUID));
 
             return `
                 <div class="sl-mini-court ${isPlaying ? 'active' : ''}" onclick="SidelineView.openMatchPreview(${i})">
@@ -143,14 +143,14 @@ const SidelineView = {
             return;
         }
         const passport = Passport.get();
-        const myName   = passport?.playerName?.toLowerCase() || '';
+        const myUUID   = passport?.playerUUID;
 
         const courtNames = window.courtNames || {};
         container.innerHTML = matches.map((m, i) => {
             const teams   = m.teams || [];
             const tA      = teams[0] || [];
             const tB      = teams[1] || [];
-            const playing = myName && [...tA, ...tB].map(n => n.toLowerCase()).includes(myName);
+            const playing = myUUID && [...tA, ...tB].includes(myUUID);
             const odds    = (m.odds && m.odds.length === 2) ? m.odds : [50, 50];
             const storyBadges = m.storyBadges || [];
             const winIdx  = m.winnerTeamIndex;
@@ -171,7 +171,7 @@ const SidelineView = {
             const bClass = hasWinner ? (winIdx === 1 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
 
             const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
-            const safeNames = (arr) => arr.map(n => esc(n)).join(' &amp; ');
+            const safeNames = (uuids) => uuids.map(u => esc(squad.find(p => p.uuid === u)?.name || 'Unknown')).join(' &amp; ');
 
             return `
                 <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}" onclick="SidelineView.openMatchPreview(${i})">

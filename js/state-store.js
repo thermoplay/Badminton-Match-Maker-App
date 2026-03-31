@@ -8,7 +8,7 @@ const StateStore = (() => {
     let _state = {
         squad: [],
         currentMatches: [],
-        playerQueue: [],
+        playerQueue: [], // Strictly stores player UUIDs
         activeCourts: 1,
         roundHistory: [],
         selectedPlayerIndex: null,
