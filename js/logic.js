@@ -632,7 +632,8 @@ function _createMatchesForCourts(courtCount) {
         const players = pullNextFromQueue(assignedThisRound);
         if (players.length < 4) break;
 
-        players.forEach(p => .add(p.uuid);
+        players.forEach(p => {
+            assignedThisRound.add(p.uuid);
             p.waitRounds = 0; // Reset for starting players
         });
         const match = buildMatchFromPlayers(players);

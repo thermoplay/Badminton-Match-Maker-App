@@ -156,6 +156,7 @@ const SidelineView = {
             const winIdx  = m.winnerTeamIndex;
             const courtName = courtNames[i] || `COURT ${i + 1}`;
             const hasWinner = winIdx !== null && winIdx !== undefined;
+            const squad = window.squad || [];
 
             const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
             const safeNames = (uuids) => uuids.map(u => esc(squad.find(p => p.uuid === u || p.name === u)?.name || 'Unknown')).join(' &amp; ');
