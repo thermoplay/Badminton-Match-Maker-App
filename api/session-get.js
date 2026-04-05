@@ -36,12 +36,14 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid room code' });
     }
 
-    const result = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(code.toUpperCase())}&limit=1`
-    );
+    const codeClean = code.toUpperCase();
+    const result = await sbFetch(`/sessions?room_code=eq."${codeClean}"&limit=1`);
 
-    if (!result.ok || !result.data || result.data.length === 0) {
-        return res.status(404).json({ error: 'Session not found' });
+    if (!result.ok) {
+        return res.status(500).json({ error: 'Database connection failed' });
+    }
+    if (!result.data || result.data.length === 0) {
+        return res.status(404).json({ error: 'Room not found' });
     }
 
     const session = result.data[0];
