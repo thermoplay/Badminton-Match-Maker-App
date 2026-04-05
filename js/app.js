@@ -242,6 +242,20 @@ function toggleBatterySaver() {
 }
 window.toggleBatterySaver = toggleBatterySaver;
 
+function toggleOpenParty() {
+    const current = StateStore.get('isOpenParty') || false;
+    const next = !current;
+    StateStore.set('isOpenParty', next);
+    showSessionToast(`🔓 Open Party: ${next ? 'ON' : 'OFF'}`);
+    if (next && window.playRequests && window.playRequests.length > 0) {
+        [...window.playRequests].forEach(r => {
+            approvePlayRequest(r.name, r.id, r.player_uuid || null);
+        });
+    }
+    showOverlay('sync');
+}
+window.toggleOpenParty = toggleOpenParty;
+
 /**
  * Forces a reconciliation of the player queue with the active squad.
  * Useful for fixing edge-case ordering issues or missing players.
@@ -445,6 +459,20 @@ function renderSquad() {
     const container = document.getElementById('squadList');
     if (!container) return;
 
+    // Ensure search bar exists
+    if (!document.getElementById('squadSearchInput')) {
+        const searchWrap = document.createElement('div');
+        searchWrap.className = 'input-row';
+        searchWrap.style.marginBottom = '12px';
+        searchWrap.innerHTML = `
+            <input type="text" id="squadSearchInput" placeholder="Search players..." 
+                   style="flex:1;" oninput="window.squadSearchQuery = this.value; renderSquad();">
+        `;
+        container.parentNode.insertBefore(searchWrap, container);
+    }
+
+    const query = (window.squadSearchQuery || '').toLowerCase().trim();
+
     const existingChips = new Map();
     container.querySelectorAll('.player-chip').forEach(chip => {
         const uuid = chip.dataset.uuid;
@@ -453,11 +481,16 @@ function renderSquad() {
 
     const fragment = document.createDocumentFragment();
 
-    StateStore.squad.forEach(p => {
+    StateStore.squad.forEach((p, idx) => {
+        // Apply search filter
+        if (query && !p.name.toLowerCase().includes(query)) return;
+
         const isNew = p.games === 0 && p.wins === 0;
+        const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
             <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            ${waitBadge}
         `;
         const isSwapping = p.uuid === swapSourceUUID;
         const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''}`;
@@ -469,10 +502,8 @@ function renderSquad() {
             if (chip.className !== chipClasses) {
                 chip.className = chipClasses;
             }
-            // A simple check on the name span's content is enough to trigger a refresh of the chip's innerHTML.
-            const currentNameHTML = chip.querySelector('.chip-name')?.innerHTML || '';
-            const newNameHTML = `${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}`;
-            if (currentNameHTML !== newNameHTML) {
+            // Update innerHTML if content changed (includes wait badge)
+            if (chip.innerHTML !== chipContent) {
                 chip.innerHTML = chipContent;
             }
             existingChips.delete(p.uuid);
@@ -512,7 +543,7 @@ function checkNextButtonState() {
     btn.style.pointerEvents = canProceed ? 'auto'    : 'none';
     btn.style.cursor        = canProceed ? 'pointer' : 'default';
     btn.style.background    = canProceed ? 'var(--accent)' : '#2a2a3a';
-    btn.textContent         = StateStore.currentMatches.length === 0 ? 'Start Session' : 'Running…';
+    btn.textContent         = StateStore.currentMatches.length === 0 ? 'Start Session' : 'Matches in Progress';
 }
 
 function setCourts(n) {
@@ -555,6 +586,8 @@ function setCourts(n) {
 // LONG-PRESS MENU
 // ---------------------------------------------------------------------------
 
+let _lastTapInfo = { uuid: null, time: 0 };
+
 function startPress(uuid) {
     isLongPress = false;
     pressTimer = setTimeout(() => {
@@ -572,16 +605,35 @@ function startPress(uuid) {
 function endPress(uuid) {
     clearTimeout(pressTimer);
     if (!isLongPress) {
-        const player = StateStore.squad.find(p => p.uuid === uuid);
-        if (player && !player.active) {
-            Haptic.tap();
-            player.active = true;
-            renderSquad();
-            // Trigger reactive sync and immediate broadcast
-            StateStore.set('squad', StateStore.squad);
-            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+        const now = Date.now();
+        if (_lastTapInfo.uuid === uuid && (now - _lastTapInfo.time) < 300) {
+            // Double tap detected: Toggle Ready/Resting
+            togglePlayerActive(uuid);
+            _lastTapInfo = { uuid: null, time: 0 };
+        } else {
+            _lastTapInfo = { uuid, time: now };
+            
+            // Single tap fallback: If resting, toggle to ready. 
+            const player = StateStore.squad.find(p => p.uuid === uuid);
+            if (player && !player.active) {
+                togglePlayerActive(uuid);
+            }
         }
     }
+}
+
+function togglePlayerActive(uuid) {
+    const player = StateStore.squad.find(p => p.uuid === uuid);
+    if (!player) return;
+    
+    Haptic.tap();
+    player.active = !player.active;
+    renderSquad();
+    checkNextButtonState();
+
+    // Trigger reactive sync and immediate broadcast
+    StateStore.set('squad', StateStore.squad);
+    if (typeof broadcastGameState === 'function') broadcastGameState(true);
 }
 
 function openMenu(uuid) {
@@ -759,6 +811,10 @@ function showOverlay(type) {
                         <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
                             onclick="toggleBatterySaver()">
                             🔋 Battery Saver: ${StateStore.get('batterySaver') ? 'ON' : 'OFF'}
+                        </button>
+                        <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
+                            onclick="toggleOpenParty()">
+                            🔓 Open Party: ${StateStore.get('isOpenParty') ? 'ON' : 'OFF'}
                         </button>
                         <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
                             onclick="resyncQueue()">🔄 Re-sync Queue</button>
@@ -1049,9 +1105,27 @@ function copySyncToken() {
     }
 }
 
-function copyInviteLink() {
+async function copyInviteLink() {
     if (!currentRoomCode) return;
     const url = window.location.origin + window.location.pathname + '?join=' + currentRoomCode + '&role=player';
+    
+    const shareData = {
+        title: 'CourtSide Pro Session',
+        text: `Check-in to our badminton session early! Room Code: ${currentRoomCode}`,
+        url: url
+    };
+
+    // Use native share sheet if available (easier for FB/Messenger)
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+        try {
+            await navigator.share(shareData);
+            return;
+        } catch (e) {
+            if (e.name !== 'AbortError') console.error('Share failed', e);
+        }
+    }
+
+    // Fallback to clipboard
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url)
             .then(() => showSessionToast('🔗 Invite link copied!'))
@@ -1537,8 +1611,18 @@ function renderStatsTab(tab) {
                 const winIdx  = m.winnerTeamIndex;
                 if (winIdx === null || winIdx === undefined) return '';
                 const loseIdx = winIdx === 0 ? 1 : 0;
-                const winners = m.teams[winIdx]?.join(' & ') || '?';
-                const losers  = m.teams[loseIdx]?.join(' & ') || '?';
+
+                const squadLookup = round.squadSnapshot || [];
+                const getName = (id) => {
+                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
+                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
+                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
+                    return p ? p.name : id;
+                };
+
+                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
+                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
+
                 return `
                     <div class="history-game">
                         <div class="history-game-label">Game ${gi + 1}</div>
@@ -1941,6 +2025,8 @@ async function pollPlayRequests() {
         playRequests = incoming;
         window.playRequests = playRequests;
 
+        const isOpen = StateStore.get('isOpenParty');
+
         for (const r of incoming) {
             if (!_lastSeenRequestIds.has(r.id)) {
                 // Always mark as seen immediately to prevent race-induced duplicate processing
@@ -1972,6 +2058,12 @@ async function pollPlayRequests() {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ id: r.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
                     }).catch(() => {});
+                    continue;
+                }
+
+                if (isOpen) {
+                    console.log(`[CourtSide] Auto-approving ${r.name} (Open Party)`);
+                    approvePlayRequest(r.name, r.id, r.player_uuid || null);
                     continue;
                 }
                 showJoinNotification(r.name, r.id, r.player_uuid || null, r.spirit_animal || null);
@@ -2253,6 +2345,11 @@ window.onPlayRequestInsert = function(record) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: record.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
             }).catch(() => {});
+            return;
+        }
+
+        if (StateStore.get('isOpenParty')) {
+            approvePlayRequest(record.name, record.id, record.player_uuid);
             return;
         }
 
@@ -2558,12 +2655,13 @@ function showPassportWelcome(passport) {
     const choiceView = document.getElementById('iwtpChoiceView');
     if (!choiceView) return;
 
+    const isOpen = StateStore.get('isOpenParty');
     choiceView.innerHTML = `
         <div class="iwtp-title">Welcome back,</div>
         <div class="iwtp-passport-name">${escapeHTML(passport.playerName)}</div>
         <div class="iwtp-subtitle">Your passport was found on this device.</div>
         <button class="iwtp-btn" onclick="passportJoinSession()">
-            🏀 Join Session ${escapeHTML(currentRoomCode || '')}
+            🏀 ${isOpen ? 'Join Instantly' : 'Check-in to Room'} ${escapeHTML(currentRoomCode || '')}
         </button>
         <button class="iwtp-choice-btn iwtp-choice-existing" style="margin-top:10px;" onclick="passportRenameAndJoin()">
             ✏️ Join with a different name

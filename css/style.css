@@ -482,8 +482,9 @@ input:focus {
     user-select: none;
     -webkit-user-select: none;
     letter-spacing: 0.2px;
+    position: relative;
     animation: chipIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
-    contain: content; /* Performance: isolates layout/paint */
+    contain: layout style; /* Performance: allows painting badges outside bounds */
 }
 
 @keyframes chipIn {
@@ -531,6 +532,28 @@ input:focus {
     vertical-align: middle;
     display: inline-block;
 }
+
+.wait-round-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: var(--bg2);
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-size: 0.6rem;
+    font-weight: 900;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    z-index: 2;
+    pointer-events: none;
+}
+.player-chip.active .wait-round-badge { color: var(--accent); border-color: var(--border-accent); }
 
 /* ── Court Selector (nav bar) ───────────────────────────────────────────── */
 
@@ -823,6 +846,20 @@ input:focus {
 body:not(.player-mode) .match-label {
     cursor: pointer;
     transition: color 0.2s;
+    display: flex; /* To align text and icon */
+    align-items: center;
+    gap: 6px; /* Space between text and icon */
+}
+
+.edit-court-icon {
+    font-size: 0.6rem; /* Smaller icon */
+    opacity: 0.5; /* Subtle */
+    transition: opacity 0.2s;
+    /* Only show for host, and only when not in player mode */
+    display: none;
+}
+body:not(.player-mode) .edit-court-icon {
+    display: inline-block;
 }
 body:not(.player-mode) .match-label:hover { color: var(--accent); }
 
@@ -5866,4 +5903,15 @@ body.session-ended .play-requests-badge,
 body.session-ended .join-notif,
 body.session-ended #nextUpTicker {
     display: none !important;
+/* Search bar styling */
+#squadSearchInput {
+    background: var(--surface2);
+    border-color: var(--border);
+    font-size: 0.85rem;
+    padding: 10px 14px;
+}
+#squadSearchInput:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-dim);
+}
 }

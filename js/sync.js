@@ -862,39 +862,16 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     uuidMap[trimmed] = playerUUID;
     window._sessionUUIDMap = uuidMap;
 
-    // KEY FIX: Update name in player queue to prevent player from being removed during sync
-    if (StateStore.playerQueue) {
-        const newQueue = StateStore.playerQueue.map(n => (n === prevName ? trimmed : n));
-        StateStore.set('playerQueue', newQueue);
-    }
-
     // KEY FIX: Update name in approved players list (used for DB push)
     if (window._approvedPlayers) {
         const entry = window._approvedPlayers[playerUUID] || window._approvedPlayers[prevName];
         if (entry) {
             entry.name = trimmed;
-            if (window._approvedPlayers[prevName]) {
-                delete window._approvedPlayers[prevName];
-                window._approvedPlayers[playerUUID] = entry;
-            }
         }
     }
 
-    // Update active matches if the player is currently in a game
-    let matchUpdated = false;
-    if (StateStore.currentMatches) {
-        StateStore.currentMatches.forEach(m => {
-            m.teams.forEach((team, tIdx) => {
-                if (team.includes(prevName)) {
-                    m.teams[tIdx] = team.map(n => n === prevName ? trimmed : n);
-                    matchUpdated = true;
-                }
-            });
-        });
-    }
-
     renderSquad();
-    if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+    rebuildMatchCardIndices();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
     
     // Reactive sync via StateStore ensures DB and spectators stay updated
@@ -1334,7 +1311,7 @@ function updateSessionUI() {
     badge.className     = 'session-badge';
     badge.innerHTML = `
         <span class="session-dot ${isOperator ? 'dot-operator' : 'dot-spectator'}"></span>
-        <span class="session-code">${currentRoomCode}</span>
+        <span class="session-code" style="cursor:pointer;" onclick="copyInviteLink()" title="Tap to share invite">${currentRoomCode} 🔗</span>
         <span class="session-role">${isOperator ? 'HOST' : 'LIVE'}</span>
     `;
     if (!isOperator) document.body.classList.add('spectator-mode');
