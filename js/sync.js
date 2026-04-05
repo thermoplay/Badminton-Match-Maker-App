@@ -1167,6 +1167,14 @@ function _handleMemberChange(record, oldRecord, eventType) {
                 _applyNameUpdate(uuid, prev.player_name, name);
                 showSessionToast(`✏️ ${prev.player_name} → ${name}`);
             }
+
+            // Auto-sync for Open Party: If a member is active but not in squad, add them
+            if (record.status === 'active') {
+                const inSquad = StateStore.squad.some(p => p.uuid === uuid);
+                if (!inSquad && typeof window.autoAddOpenPlayer === 'function') {
+                    window.autoAddOpenPlayer(record);
+                }
+            }
         } else if (eventType === 'DELETE') {
             delete window._sessionMembers[uuid];
         }

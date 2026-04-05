@@ -2358,6 +2358,31 @@ window.onPlayRequestInsert = function(record) {
     pollPlayRequests(); // Fetch full list to ensure badge count is accurate
 };
 
+/**
+ * Automatically adds a player to the host squad when they join via Open Party.
+ * Triggered by session_member realtime updates.
+ */
+function autoAddOpenPlayer(record) {
+    if (!window.isOperator || !record) return;
+    if (StateStore.squad.some(p => p.uuid === record.player_uuid)) return;
+
+    const newPlayer = migratePlayer({
+        name: record.player_name,
+        uuid: record.player_uuid,
+        spiritAnimal: record.spirit_animal,
+        active: true
+    });
+
+    const newSquad = [...StateStore.squad, newPlayer];
+    const newQueue = [...StateStore.playerQueue];
+    if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
+
+    StateStore.setState({ squad: newSquad, playerQueue: newQueue });
+    renderSquad();
+    showSessionToast(`🔓 ${newPlayer.name} joined instantly`);
+}
+window.autoAddOpenPlayer = autoAddOpenPlayer;
+
 function ensureHostUI() {
     // Only the host needs these elements
     if (!window.isOperator) return;

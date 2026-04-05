@@ -95,7 +95,7 @@ export default async function handler(req, res) {
         // persistent type mismatch errors. Standard calls handle strings better.
         
         // 1. Verify Room Exists
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code&limit=1`);
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party&limit=1`);
         if (!sessionCheck.ok || !sessionCheck.data?.length) {
             return res.status(404).json({ error: 'Room not found' });
         }
@@ -104,6 +104,24 @@ export default async function handler(req, res) {
         const memberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
         if (memberCheck.ok && memberCheck.data?.[0]?.status === 'active' && !force) {
             return res.status(200).json({ alreadyActive: true, ok: true });
+        }
+
+        const isOpen = !!sessionCheck.data[0].is_open_party;
+
+        // 2.5 If Open Party, auto-approve membership in DB immediately
+        if (isOpen) {
+            await sbFetch('/session_members', {
+                method: 'POST',
+                body: {
+                    room_code: code,
+                    player_uuid: uuid,
+                    player_name: trimmedName,
+                    status: 'active',
+                    spirit_animal: spirit_animal || null
+                },
+                prefer: 'resolution=merge-duplicates'
+            });
+            // Fall through to insert play_request so the host's local state still updates
         }
 
         // 3. Create the notification request for the Host
@@ -119,7 +137,7 @@ export default async function handler(req, res) {
 
         if (!insertReq.ok) return res.status(500).json({ error: 'Failed to send join request' });
 
-        return res.status(200).json({ ok: true, status: 'pending' });
+        return res.status(200).json({ ok: true, status: isOpen ? 'active' : 'pending' });
     }
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {

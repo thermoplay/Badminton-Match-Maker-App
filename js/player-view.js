@@ -1792,7 +1792,7 @@ const PlayerMode = {
 
             const data = await res.json();
 
-            if (data.alreadyActive) {
+            if (data.alreadyActive || data.status === 'active') {
                 this._isJoining = false;
                 this._markApprovedInSession(joinCode);
                 this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "Reconnected to court ✅");
