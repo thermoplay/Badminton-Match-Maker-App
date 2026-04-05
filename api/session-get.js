@@ -32,7 +32,7 @@ export default async function handler(req, res) {
     }
 
     const { code } = req.query;
-    if (!code || !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code.toUpperCase())) {
+    if (!code || !/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code.toUpperCase())) {
         return res.status(400).json({ error: 'Invalid room code' });
     }
 
@@ -61,8 +61,8 @@ export default async function handler(req, res) {
             guest_list:         session.guest_list       || [],
             uuid_map:           session.uuid_map         || {},
             approved_players:   session.approved_players || {},
-            // Return the stored key. The client can verify identity by comparing it.
-            operator_key:       session.operator_key,
+            // Do NOT return operator_key to client. Client verifies identity by comparing its hash.
+            // operator_key:       session.operator_key,
             // round_history is intentionally not returned to keep payloads small.
         }
     });

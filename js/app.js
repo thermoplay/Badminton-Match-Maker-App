@@ -85,7 +85,7 @@ function migratePlayer(p) {
     if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
     if (p.matchHistory     == null) p.matchHistory     = [];
-    if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
+    if (!p.uuid) p.uuid = Passport._uuid(); // Ensure everyone has an ID for achievements
     if (p.spiritAnimal     == null) p.spiritAnimal     = null;
     return p;
 }
@@ -357,8 +357,8 @@ function _autoAddHostToSquad() {
         
         StateStore.squad.unshift(hostAsPlayer); // Add to the front of the squad list
         
-        if (!StateStore.playerQueue.includes(hostName)) {
-            StateStore.playerQueue.unshift(hostName); // Also add to front of queue
+        if (!StateStore.playerQueue.includes(hostUUID)) {
+            StateStore.playerQueue.unshift(hostUUID); // Also add to front of queue
         }
         
         StateStore.set('squad', StateStore.squad); // Trigger sync
@@ -759,8 +759,12 @@ function joinManualCode() {
     const input = document.getElementById('manualRoomCodeInput');
     const raw = input?.value?.trim();
     if (raw) {
-        // Normalize room code: strip non-alphanumeric and add hyphen if 8 chars
-        let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        let code = raw.toUpperCase().trim();
+        // Auto-hyphenate only if hyphen is missing and it looks like a standard 8-char code
+        if (!code.includes('-')) {
+            const stripped = code.replace(/[^A-Z0-9]/g, '');
+            if (stripped.length === 8) code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+        }
         if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
 
         if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
@@ -2207,7 +2211,7 @@ function _resolvePlayerForSession(name, incomingUUID) {
     // 3. Create new player
     player = migratePlayer({
         name: finalName,
-        uuid: validUUID || _generateUUID(),
+        uuid: validUUID || Passport._uuid(),
     });
 
     return player;
@@ -2295,16 +2299,6 @@ function _makeApprovalToken() {
     return Array.from({ length: 12 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 }
 
-function _generateUUID() {
-    if (window.Passport && typeof window.Passport._uuid === 'function') {
-        return window.Passport._uuid();
-    }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-}
-
 async function denyPlayRequest(id) {
     try {
         await fetch('/api/play-request', {
@@ -2328,8 +2322,7 @@ window.onPlayRequestInsert = function(record) {
         const existing = StateStore.squad.find(p => 
             (record.player_uuid && p.uuid === record.player_uuid) || 
             (p.name.toLowerCase() === record.name.toLowerCase()) ||
-            (record.player_uuid && uuidMap[record.name] === record.player_uuid) ||
-            (record.name && StateStore.playerQueue.includes(record.name)) // Proactive queue check
+                    (record.player_uuid && uuidMap[record.name] === record.player_uuid) // Proactive uuid_map check
         );
 
         if (existing) {
@@ -2615,7 +2608,11 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
     const loserUUIDs  = loserNames .map(resolveUUID).filter(Boolean);
 
     // 1. Broadcast match result (winner banner + haptic for players in this game)
-    const winnerDisplayNames = winnerNames.join(' & ');
+    const getName = (uuid) => {
+        const p = StateStore.squad.find(s => s.uuid === uuid);
+        return p ? p.name : 'Unknown Player';
+    };
+    const winnerDisplayNames = winnerUUIDs.map(getName).join(' & ');
     if (typeof _broadcast === 'function' && isOnlineSession) {
         _broadcast('match_resolved', {
             winnerNames:  winnerDisplayNames,

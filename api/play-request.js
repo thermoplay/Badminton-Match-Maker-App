@@ -24,6 +24,7 @@
 // play_request to get the host's attention.
 // =============================================================================
 
+const crypto = require('crypto'); // Node.js crypto module for hashing
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
@@ -79,15 +80,21 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Missing fields for join' });
         }
 
-        // Normalize room code
-        let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
+        // Clean and normalize room code
+        let code = String(room_code).toUpperCase().trim();
+        // Auto-hyphenate only if hyphen is missing and it looks like a standard 8-char code
+        if (!code.includes('-')) {
+            const stripped = code.replace(/[^A-Z0-9]/g, '');
+            if (stripped.length === 8) {
+                code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+            }
+        }
 
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = String(player_uuid).trim();
 
         // Input Validation
-        if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
+        if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
         if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) return res.status(400).json({ error: 'Invalid player UUID format' });
 
         // ── REVERTED: Standard Table Operations ──────────────────────────────
@@ -143,9 +150,12 @@ export default async function handler(req, res) {
         const { room_code, status } = req.query;
         if (!room_code) return res.status(400).json({ error: 'Missing room_code' });
 
-        let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        if (code.length === 8) {
-            code = code.slice(0, 4) + '-' + code.slice(4);
+        let code = String(room_code).toUpperCase().trim();
+        if (!code.includes('-')) {
+            const stripped = code.replace(/[^A-Z0-9]/g, '');
+            if (stripped.length === 8) {
+                code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+            }
         }
 
         // Reconciliation support: Fetch currently active members from session_members
@@ -176,14 +186,17 @@ export default async function handler(req, res) {
         // This is an authenticated action that deletes a row from `session_members`.
         // It is triggered by the host UI (e.g., player leaves, host kicks player).
         if (player_uuid && room_code && operator_key) {
-            let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            if (code.length === 8) {
-                code = code.slice(0, 4) + '-' + code.slice(4);
+            let code = String(room_code).toUpperCase().trim();
+            if (!code.includes('-')) {
+                const stripped = code.replace(/[^A-Z0-9]/g, '');
+                if (stripped.length === 8) {
+                    code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+                }
             }
             const uuid = String(player_uuid).trim();
 
             // --- Input Validation ---
-            if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+            if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) {
                 return res.status(400).json({ error: 'Invalid room code format' });
             }
             if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
@@ -191,17 +204,18 @@ export default async function handler(req, res) {
             }
             // ------------------------
 
-            // Verify operator key
-            const sessionRes = await sbFetch(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`);
+            // Verify operator key (using quoted filter)
+            const sessionRes = await sbFetch(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`); 
             if (!sessionRes.ok) {
                 return res.status(500).json({ error: `Database error: ${sessionRes.data?.message || 'Unknown'}` });
             }
             if (!sessionRes.data?.[0]) {
                 return res.status(404).json({ error: 'Session not found' });
             }
+            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
 
             const opKeyHash = String(operator_key);
-            if (opKeyHash !== sessionRes.data[0].operator_key) {
+            if (incomingOperatorKeyHash !== sessionRes.data[0].operator_key) {
                 return res.status(403).json({ error: 'Invalid operator key' });
             }
 
@@ -209,7 +223,7 @@ export default async function handler(req, res) {
             const delRes = await sbFetch(`/session_members?player_uuid=eq."${uuid}"&room_code=eq."${code}"`, { method: 'DELETE' });
             
             // ALSO delete from play_requests to prevent join-blocking ghosts
-            await sbFetch(`/play_requests?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+            await sbFetch(`/play_requests?player_uuid=eq."${uuid}"&room_code=eq."${code}"`, { method: 'DELETE' });
 
             return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
         }
@@ -218,19 +232,23 @@ export default async function handler(req, res) {
         // This deletes a row from `play_requests` using its unique ID.
         // It's called when the host approves or denies a join notification.
         if (id && room_code && operator_key) {
-            let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            if (code.length === 8) {
-                code = code.slice(0, 4) + '-' + code.slice(4);
+            let code = String(room_code).toUpperCase().trim();
+            if (!code.includes('-')) {
+                const stripped = code.replace(/[^A-Z0-9]/g, '');
+                if (stripped.length === 8) {
+                    code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+                }
             }
 
             // Verify operator key
-            const sessionRes = await sbFetch(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`);
+            const sessionRes = await sbFetch(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`); // Quoted filter
             if (!sessionRes.ok || !sessionRes.data?.[0]) {
                 // Don't fail hard, maybe session ended. Just say ok.
                 return res.status(200).json({ ok: true, message: 'Session not found, request likely stale.' });
             }
+            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             const opKeyHash = String(operator_key);
-            if (opKeyHash !== sessionRes.data[0].operator_key) {
+            if (incomingOperatorKeyHash !== sessionRes.data[0].operator_key) {
                 return res.status(403).json({ error: 'Invalid operator key' });
             }
 

@@ -5,6 +5,7 @@
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const crypto = require('crypto'); // Node.js crypto module for hashing
 
 async function sbFetch(path, options = {}) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
@@ -39,7 +40,8 @@ export default async function handler(req, res) {
     if (!checkData || checkData.length === 0) {
         return res.status(404).json({ error: 'Session not found or already deleted' });
     }
-    if (checkData[0].operator_key !== operator_key) {
+    const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
+    if (checkData[0].operator_key !== incomingOperatorKeyHash) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 

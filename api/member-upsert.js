@@ -52,15 +52,19 @@ export default async function handler(req, res) {
     const trimmedName = String(player_name).trim().slice(0, 50);
 
     // Normalize room code: remove non-alphanumeric and insert hyphen if length is 8
-    let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-    if (code.length === 8) {
-        code = code.slice(0, 4) + '-' + code.slice(4);
+    let code = String(room_code).toUpperCase().trim();
+    // Auto-hyphenate only if hyphen is missing and it looks like a standard 8-char code
+    if (!code.includes('-')) {
+        const stripped = code.replace(/[^A-Z0-9]/g, '');
+        if (stripped.length === 8) {
+            code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+        }
     }
 
     const uuid        = String(player_uuid).trim();
 
     // --- Input Validation ---
-    if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+    if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) {
         return res.status(400).json({ error: 'Invalid room code format' });
     }
     if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
@@ -75,7 +79,7 @@ export default async function handler(req, res) {
     // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
     // This maintains a master registry of all players across all sessions.
     // If lookup fails, we attempt a POST which will safely ON CONFLICT DO NOTHING in the DB.
-    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid&limit=1`);
+    const playerLookup = await sbFetch(`/players?uuid=eq."${uuid}"&select=uuid&limit=1`); // Quoted filter
     if (!playerLookup.ok || (Array.isArray(playerLookup.data) && playerLookup.data.length === 0)) {
         await sbFetch('/players', {
             method: 'POST', // PostgREST handles UUID casting automatically for table inserts
@@ -91,7 +95,7 @@ export default async function handler(req, res) {
     // ── Step 1: Check if this player already has a row in this session ──────
     // If they do and status is 'active', just return it — DO NOT reset to pending.
     const existing = await sbFetch(
-        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&limit=1`
+        `/session_members?room_code=eq."${code}"&player_uuid=eq."${uuid}"&limit=1` // Quoted filters
     );
 
     if (existing.ok && existing.data?.length > 0) {
@@ -102,8 +106,8 @@ export default async function handler(req, res) {
         const animalChanged = spirit_animal !== undefined && member.spirit_animal !== spirit_animal;
 
         if (nameChanged || animalChanged) {
-            await sbFetch(
-                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+            await sbFetch( // Quoted filters
+                `/session_members?room_code=eq."${code}"&player_uuid=eq."${uuid}"`,
                 {
                     method:  'PATCH',
                     headers: { 'Prefer': 'return=representation' },

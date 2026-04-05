@@ -53,7 +53,7 @@ window._sessionMembers = {};
  */
 function _generateStateHash(squad, queue) {
     // Create a deterministic string representing the core state
-    const s = (squad || []).map(p => (p.uuid || p.name) + (p.active ? '1' : '0')).sort().join('');
+    const s = (squad || []).map(p => p.uuid + (p.active ? '1' : '0')).sort().join(''); // Use UUID consistently
     const q = (queue || []).join(',');
     const str = `${s}|${q}`;
     let hash = 0;
@@ -698,12 +698,14 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     // before falling back to the module-level variable or window global.
     // The module-level currentRoomCode may not be set yet if joinOnlineSession()
     // is still in-flight when this is called from PlayerMode.boot().
-    let roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || null;
-    if (roomCode) {
-        roomCode = roomCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        if (roomCode.length === 8) roomCode = roomCode.slice(0, 4) + '-' + roomCode.slice(4);
+    let roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || '';
+    // Normalize room code for consistency with API
+    let code = roomCode.toUpperCase().trim();
+    if (!code.includes('-')) {
+        const stripped = code.replace(/[^A-Z0-9]/g, '');
+        if (stripped.length === 8) code = stripped.slice(0, 4) + '-' + stripped.slice(4);
     }
-    currentRoomCode        = roomCode; // keep local var in sync
+    currentRoomCode = code; // keep local var in sync
     _syncState();
     try {
         const r = await fetch('/api/member-upsert', {
@@ -1069,7 +1071,7 @@ function applyRemoteState(session) {
             ]
         };
     });
-    const loadedQueue = (session.player_queue || []).filter(name => loadedSquad.find(p => p.name === name));
+    const loadedQueue = (session.player_queue || []).filter(uuid => loadedSquad.find(p => p.uuid === uuid)); // FIX: Filter by UUID
     const loadedCourtNames = session.court_names || {};
     let loadedCourts = 1;
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
@@ -1377,97 +1379,110 @@ async function tryAutoRejoin() {
     const role      = urlParams.get('role');
 
     if (joinCode) {
-        // In player mode, PlayerMode.boot() (triggered by window.onload) owns the
-        // full join flow. We must NOT call joinOnlineSession here because it would
-        // race with boot(), call applyRemoteState() with _joinCode=null, and
-        // overwrite the sideline view before boot() has set PlayerMode._joinCode.
-        // Instead, just pre-seed the room code so memberUpsert() has it available.
         if (role === 'player') {
             currentRoomCode        = joinCode;
             window.currentRoomCode = joinCode;
-            // Save joinCode to window so window.onload can read it even after URL is cleaned
             window._pendingJoinCode = joinCode;
             _syncState();
-            // Strip ?join= but preserve ?role= so window.onload can still see it
             const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
             window.history.replaceState({}, document.title, cleanUrl);
             return;
         }
-        // Host/spectator mode: do the full join
-        const cleanUrl = window.location.origin + window.location.pathname +
-            (role ? `?role=${role}` : '');
+        const cleanUrl = window.location.origin + window.location.pathname + (role ? `?role=${role}` : '');
         window.history.replaceState({}, document.title, cleanUrl);
         await joinOnlineSession(joinCode);
         return;
     }
+
     const savedCode = localStorage.getItem('cs_room_code');
     if (!savedCode) return;
+
     try {
+        let sessionData = null;
         const result = await apiCall(`session-get?code=${encodeURIComponent(savedCode)}`);
+        
         if (!result.ok) {
-            // FIX: Only wipe if the session is confirmed GONE (404).
-            // If it's a network error (status 0) or server error (500), 
-            // we keep the credentials and will try to reconnect via the online listener.
             if (result.status === 404) {
                 localStorage.removeItem('cs_room_code');
                 localStorage.removeItem('cs_operator_key');
                 localStorage.removeItem('cs_op_key_hash');
-                
-                // PROACTIVE CLEANUP: Clear session-specific stale data from local vault
                 const saved = localStorage.getItem('cs_pro_vault');
                 if (saved) {
                     const data = JSON.parse(saved);
                     data.currentMatches = [];
                     data.roundHistory = [];
-                    data.guestList = []; // Clear guests to prevent stale data in next session
+                    data.guestList = [];
                     localStorage.setItem('cs_pro_vault', JSON.stringify(data));
                 }
+                return; 
+            } else {
+                console.warn(`[CourtSide] session-get error ${result.status}. Attempting Realtime recovery.`);
+                showSyncStatus(`Connection error. Attempting to reconnect...`, 'error');
             }
-            return;
+        } else {
+            sessionData = result.data?.session || result.data;
+            if (!sessionData) throw new Error('Invalid session data received from server.');
         }
-        const session = result.data?.session || result.data;
+
         currentRoomCode = savedCode;
         isOnlineSession = true;
-        const savedHash = localStorage.getItem('cs_op_key_hash');
-        if (savedHash && savedHash === session.operator_key) {
-            isOperator      = true;
-            operatorKey     = localStorage.getItem('cs_operator_key');
+
+        const savedOpKey = localStorage.getItem('cs_operator_key');
+        const savedHash  = localStorage.getItem('cs_op_key_hash');
+
+        if (sessionData) {
+            if (savedHash && savedHash === sessionData.operator_key) {
+                isOperator      = true;
+                operatorKey     = savedOpKey;
+                operatorKeyHash = savedHash;
+            } else {
+                isOperator      = false;
+                operatorKey     = null;
+                operatorKeyHash = null;
+            }
+            showSessionToast(`👁 Rejoined session`);
+        } else {
+            // Network error path: fallback to local credentials to keep UI functional
+            isOperator      = !!savedOpKey;
+            operatorKey     = savedOpKey;
             operatorKeyHash = savedHash;
-        } else {
-            isOperator = false;
         }
-        _syncState();
-
-        // CONFLICT RESOLUTION:
-        // Enhanced strategy: Check if local state has unsaved changes.
-        const hasPending = localStorage.getItem('cs_pending_sync') === 'true';
         
+        _syncState();
         _isBootingSession = true;
-        if (isOperator && hasPending) {
-            // Conflict! Prompt host.
-            UIManager.confirm({
-                title: 'Sync Conflict',
-                message: 'You have unsaved local changes from a previous connection. Keep local state or load from server?',
-                confirmText: 'Keep Local',
-                onConfirm: () => {
-                    console.log('[CourtSide] Host choosing local state.');
-                    pushStateToSupabase();
-                    _finalizeRejoin(savedCode);
-                },
-                onCancel: () => {
-                    console.log('[CourtSide] Host choosing server state.');
-                    applyRemoteState(session);
-                    localStorage.removeItem('cs_pending_sync');
-                    _finalizeRejoin(savedCode);
-                }
-            });
-        } else {
-            applyRemoteState(session);
-            _finalizeRejoin(savedCode);
-        }
-    } catch { /* silently stay offline */ }
-}
 
+        const hasPending = localStorage.getItem('cs_pending_sync') === 'true';
+        if (sessionData) {
+            if (isOperator && hasPending) {
+                UIManager.confirm({
+                    title: 'Sync Conflict',
+                    message: 'You have unsaved local changes from a previous connection. Keep local state or load from server?',
+                    confirmText: 'Keep Local',
+                    onConfirm: () => { console.log('[CourtSide] Host choosing local state.'); pushStateToSupabase(); _finalizeRejoin(savedCode); },
+                    onCancel: () => { console.log('[CourtSide] Host choosing server state.'); applyRemoteState(sessionData); localStorage.removeItem('cs_pending_sync'); _finalizeRejoin(savedCode); }
+                });
+                return; // Callback handles finalization
+            } else {
+                applyRemoteState(sessionData);
+            }
+        }
+
+        _finalizeRejoin(savedCode);
+
+    } catch (e) {
+        console.error('CourtSide: tryAutoRejoin failed', e);
+        if (savedCode) {
+            currentRoomCode = savedCode;
+            isOnlineSession = true;
+            isOperator = !!localStorage.getItem('cs_operator_key');
+            operatorKey = localStorage.getItem('cs_operator_key');
+            operatorKeyHash = localStorage.getItem('cs_op_key_hash');
+            _syncState();
+            _finalizeRejoin(savedCode);
+            showSyncStatus('Connection failed. Attempting to reconnect...', 'error');
+        }
+    }
+}   
 function _finalizeRejoin(savedCode) {
     _isBootingSession = false;
     if (!sbManager) sbManager = new SupabaseRealtimeManager(_RT_URL, _RT_KEY);

@@ -969,7 +969,20 @@ const VictoryCard = { show() {}, hide() {}, share() {} };
 
 const LS_TOKENS   = 'cs_session_tokens';
 const SS_APPROVED = 'cs_approved';
+const m = (window.currentMatches || [])[matchIdx];
+    if (!m) return;
+    const teams = m.teams || [];
+    const squad = window.squad || [];
+    const getName = (uuid) => squad.find(p => p.uuid === uuid)?.name || 'Unknown';
 
+    await generateShareableImage({
+        teamA: teams[0] || [],
+        teamB: teams[1] || [],
+        // Pass names for display on the share card
+        teamA: (teams[0] || []).map(getName),
+        teamB: (teams[1] || []).map(getName),
+        title: 'LIVE NOW'
+    });
 const PlayerMode = {
 
     _isJoining: false,
@@ -1073,11 +1086,15 @@ const PlayerMode = {
         if (!joinCode) {
             try { joinCode = localStorage.getItem('cs_player_room_code') || null; } catch {}
         }
-
+        
         // Normalize room code early to ensure consistency across all API calls
         if (joinCode) {
-            joinCode = joinCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            if (joinCode.length === 8) joinCode = joinCode.slice(0, 4) + '-' + joinCode.slice(4);
+            let code = joinCode.toUpperCase().trim();
+            const stripped = code.replace(/[^A-Z0-9]/g, '');
+            if (stripped.length === 8 && !code.includes('-')) {
+                code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+            }
+            joinCode = code;
         }
         this._joinCode = joinCode;
 
@@ -1624,16 +1641,18 @@ const PlayerMode = {
         const myName = me ? me.name : passport.playerName;
 
         const onCourtNow = new Set(matches.flatMap(m => (m.teams || []).flat()));
-        const playing = me ? onCourtNow.has(me.name) : false;
+        const playing = me ? onCourtNow.has(me.uuid) : false; // FIX: Use UUID
         const inSquad = !!me;
 
-        // The bench is anyone active and not on court.
-        const bench = squad.filter(p => p.active && !onCourtNow.has(p.name));
+        // FIX: Use UUIDs for bench filtering
+        const bench = squad.filter(p => p.active && !onCourtNow.has(p.uuid));
         const qPos  = me ? bench.findIndex(p => p.uuid === me.uuid) : -1;
 
+        // FIX: Use UUID for nextUp check
         const nextUpRaw = window._lastNextUp || '';
-        const isNextUp  = myName && nextUpRaw.toLowerCase().includes(myName.toLowerCase());
+        const isNextUp  = me && nextUpRaw.includes(me.uuid); // Assuming _lastNextUp contains UUIDs or names that can be matched
 
+        // The bench is anyone active and not on court.
         // If playing, find specific court and partner details
         let courtInfo = null;
         if (playing) {
@@ -1641,11 +1660,12 @@ const PlayerMode = {
                 const teams = m.teams || [];
                 const teamA = teams[0] || [];
                 const teamB = teams[1] || [];
-                const all = [...teamA, ...teamB];
-                if (all.some(n => n.toLowerCase() === myName.toLowerCase())) {
-                    const myTeam = teamA.some(n => n.toLowerCase() === myName.toLowerCase()) ? teamA : teamB;
-                    const partner = myTeam.find(n => n.toLowerCase() !== myName.toLowerCase());
-                    courtInfo = { num: idx + 1, partner };
+                const allUUIDs = [...teamA, ...teamB];
+                if (allUUIDs.includes(me.uuid)) { // FIX: Use UUID
+                    const myTeam = teamA.includes(me.uuid) ? teamA : teamB; // FIX: Use UUID
+                    const partnerUUID = myTeam.find(u => u !== me.uuid); // FIX: Use UUID
+                    const partnerP = squad.find(p => p.uuid === partnerUUID);
+                    courtInfo = { num: idx + 1, partner: partnerP?.name }; // Get partner name for display
                 }
             });
         }
@@ -1764,7 +1784,7 @@ const PlayerMode = {
                 const safeCode = typeof escapeHTML === 'function' ? escapeHTML(joinCode) : joinCode;
 
                 if (res.status === 404) {
-                    this.setStatus('pending', 'Connection Error', data.error || `Room "${safeCode}" not found or technical issue.`);
+                    this.setStatus('pending', 'Room Not Found', data.error || `The room code "${safeCode}" could not be found.`);
                     if (container) {
                         container.innerHTML = `
                             <div class="sl-code-entry" style="text-align:center; padding: 2rem 1.5rem;">
@@ -2022,8 +2042,11 @@ const PlayerMode = {
         const input = document.getElementById('slManualCodeInput');
         const raw = input?.value?.trim();
         if (raw) {
-            let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
+            let code = raw.toUpperCase().trim();
+            const stripped = code.replace(/[^A-Z0-9]/g, '');
+            if (stripped.length === 8 && !code.includes('-')) {
+                code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+            }
             PlayerMode.boot(Passport.get(), code);
         }
     },
@@ -2053,9 +2076,10 @@ const PlayerMode = {
         
         // Auto-format room code: ABCD-1234
         document.getElementById('slManualCodeInput')?.addEventListener('input', (e) => {
-            let val = e.target.value.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            if (val.length > 4) {
-                val = val.slice(0, 4) + '-' + val.slice(4, 8);
+            let val = e.target.value.toUpperCase();
+            const stripped = val.replace(/[^A-Z0-9]/g, '');
+            if (stripped.length === 8 && !val.includes('-')) {
+                val = stripped.slice(0, 4) + '-' + stripped.slice(4);
             }
             e.target.value = val;
             

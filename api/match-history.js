@@ -11,6 +11,7 @@
 // =============================================================================
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const crypto = require('crypto'); // Node.js crypto module for hashing
 
 async function sb(path, options = {}) {
     const method = options.method || 'GET';
@@ -82,9 +83,23 @@ export default async function handler(req, res) {
             
             // 1. Verify operator key
             const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
-            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== operator_key) {
+            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
+            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });
             }
+                    const map = {};
+        rows.forEach(r => {
+            // Use player_uuid as the primary key for aggregation to handle name changes
+      
+            const key = r.player_uuid;
+            if (!map[key]) map[key] = { player_name: r.player_name, total_wins: 0, total_games: 0, elo: '—' };
+            // Always use the most recent name for display
+            map[key].player_name = r.player_name; // Keep the name from the match history for this entry
+            map[key].total_games++;
+            if (r.won) map[key].total_wins++;
+        });
+        const players = Object.values(map).sort((a, b) => b.total_wins - a.total_wins).slice(0, 10);
+        return res.status(200).json({ players });
 
             // 2. Update individual player ratings
             for (const res of results) {
@@ -114,7 +129,8 @@ export default async function handler(req, res) {
             
             // 1. Verify operator key
             const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
-            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== operator_key) {
+            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
+            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });
             }
 

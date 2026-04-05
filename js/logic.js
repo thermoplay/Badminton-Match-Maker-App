@@ -111,8 +111,8 @@ function _recordMatchStats(match, timestamp = Date.now()) {
         }
 
         p.matchHistory = p.matchHistory || [];
-        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), partnerUUID: partnerUUID, time: timestamp });
-        if (p.matchHistory.length > 5) p.matchHistory.pop();
+        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), partnerUUID: partnerUUID, time: timestamp }); // Store UUIDs
+        if (p.matchHistory.length > 10) p.matchHistory.pop(); // Keep last 10 matches for history/sparkline
     });
 
     const addHistory = (p, teammate, opponents) => {

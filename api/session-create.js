@@ -7,6 +7,7 @@
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const crypto = require('crypto'); // Node.js crypto module for hashing
 
 async function sbFetch(path, options = {}) {
     const controller = new AbortController();
@@ -66,11 +67,8 @@ export default async function handler(req, res) {
 
     const { room_code, operator_key, operator_key_hash, squad, current_matches, player_queue } = req.body;
 
-    // Hash the raw key if provided, otherwise use the pre-hashed one (for future compatibility)
-    let finalHash = operator_key_hash;
-    if (!finalHash && operator_key) {
-        finalHash = operator_key;
-    }
+    // Always hash the incoming operator_key for storage
+    const finalHash = operator_key ? crypto.createHash('sha256').update(operator_key).digest('hex') : null;
 
     if (!room_code || !finalHash) {
         return res.status(400).json({ error: 'Missing required fields' });
