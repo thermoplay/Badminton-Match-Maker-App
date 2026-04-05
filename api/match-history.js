@@ -50,6 +50,18 @@ export default async function handler(req, res) {
                 return res.status(400).json({ error: 'Missing fields for match_result' });
             }
 
+            // Normalize room code
+            let code = String(room_code).toUpperCase().trim();
+            if (!code.includes('-')) {
+                const stripped = code.replace(/[^A-Z0-9]/g, '');
+                if (stripped.length === 8) code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+            }
+
+            // Validation
+            if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) {
+                return res.status(400).json({ error: 'Invalid room code format' });
+            }
+
             const results = [];
             matches.forEach(m => {
                 if (m.winnerTeamIndex === null) return;
@@ -82,28 +94,15 @@ export default async function handler(req, res) {
             // Bypassing the RPC to avoid persistent "text = uuid" type mismatches.
             
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
+            const sessionRes = await sb(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`);
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });
             }
-                    const map = {};
-        rows.forEach(r => {
-            // Use player_uuid as the primary key for aggregation to handle name changes
-      
-            const key = r.player_uuid;
-            if (!map[key]) map[key] = { player_name: r.player_name, total_wins: 0, total_games: 0, elo: '—' };
-            // Always use the most recent name for display
-            map[key].player_name = r.player_name; // Keep the name from the match history for this entry
-            map[key].total_games++;
-            if (r.won) map[key].total_wins++;
-        });
-        const players = Object.values(map).sort((a, b) => b.total_wins - a.total_wins).slice(0, 10);
-        return res.status(200).json({ players });
 
             // 2. Update individual player ratings
             for (const res of results) {
-                await sb(`/players?uuid=eq.${encodeURIComponent(res.player_uuid)}`, {
+                await sb(`/players?uuid=eq."${res.player_uuid}"`, {
                     method: 'PATCH',
                     body: {
                         rating: res.rating,
@@ -127,8 +126,23 @@ export default async function handler(req, res) {
         if (type === 'achievement_unlock') {
             const { player_uuid, achievement_id, room_code, operator_key } = req.body;
             
+            // Normalize room code
+            let code = String(room_code).toUpperCase().trim();
+            if (!code.includes('-')) {
+                const stripped = code.replace(/[^A-Z0-9]/g, '');
+                if (stripped.length === 8) code = stripped.slice(0, 4) + '-' + stripped.slice(4);
+            }
+
+            // Validation
+            if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) {
+                return res.status(400).json({ error: 'Invalid room code format' });
+            }
+            if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(player_uuid)) {
+                return res.status(400).json({ error: 'Invalid player UUID format' });
+            }
+
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
+            const sessionRes = await sb(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`);
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });

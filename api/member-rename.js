@@ -52,16 +52,18 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-    if (code.length === 8) {
-        code = code.slice(0, 4) + '-' + code.slice(4);
+    // Normalize room code
+    let code = String(room_code).toUpperCase().trim();
+    if (!code.includes('-')) {
+        const stripped = code.replace(/[^A-Z0-9]/g, '');
+        if (stripped.length === 8) code = stripped.slice(0, 4) + '-' + stripped.slice(4);
     }
 
     const uuid    = String(player_uuid).trim();
     const trimmed = String(new_name).trim().slice(0, 50);
 
     // --- Input Validation ---
-    if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+    if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) {
         return res.status(400).json({ error: 'Invalid room code format' });
     }
     if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
@@ -78,13 +80,13 @@ export default async function handler(req, res) {
     if (spirit_animal !== undefined) profileUpdates.spirit_animal = spirit_animal;
 
     const res2 = await sbFetch(
-        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+        `/session_members?room_code=eq."${code}"&player_uuid=eq."${uuid}"`,
         { method: 'PATCH', body: sessionUpdates }
     );
 
     // Sync profile changes to global players table to maintain identity integrity
     if (Object.keys(profileUpdates).length > 0) {
-        await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}`, {
+        await sbFetch(`/players?uuid=eq."${uuid}"`, {
             method: 'PATCH',
             body:   profileUpdates
         });
@@ -102,7 +104,7 @@ export default async function handler(req, res) {
     // Also update any pending play_requests for this player so the Host sees the new name
     if (Object.keys(reqUpdates).length > 0) {
         await sbFetch(
-            `/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+            `/play_requests?room_code=eq."${code}"&player_uuid=eq."${uuid}"`,
             { method: 'PATCH', body: reqUpdates }
         );
     }
