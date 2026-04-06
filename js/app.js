@@ -2041,8 +2041,7 @@ async function pollPlayRequests() {
                 const existing = StateStore.squad.find(p => 
                     (r.player_uuid && p.uuid === r.player_uuid) || 
                     (p.name.toLowerCase() === r.name.toLowerCase()) ||
-                    (r.player_uuid && uuidMap[r.name] === r.player_uuid) ||
-                    (r.name && StateStore.playerQueue.includes(r.name)) // Proactive queue check
+                    (record.player_uuid && uuidMap[record.name] === record.player_uuid)
                 );
 
                 if (existing) {
@@ -2322,7 +2321,7 @@ window.onPlayRequestInsert = function(record) {
         const existing = StateStore.squad.find(p => 
             (record.player_uuid && p.uuid === record.player_uuid) || 
             (p.name.toLowerCase() === record.name.toLowerCase()) ||
-                    (record.player_uuid && uuidMap[record.name] === record.player_uuid) // Proactive uuid_map check
+                    (record.player_uuid && uuidMap[record.name] === record.player_uuid)
         );
 
         if (existing) {
