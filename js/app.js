@@ -2854,7 +2854,7 @@ async function initApp() {
     // A host rejoining their own session via an invite link should be treated as a host.
     const savedCode = localStorage.getItem('cs_room_code');
     const savedOpKey = localStorage.getItem('cs_operator_key');
-    const isHostOfThisSession = (joinCode && savedCode === joinCode && savedOpKey);
+    const isHostOfThisSession = (savedCode && savedOpKey) && (!joinCode || savedCode === joinCode);
 
     // If the URL says "player" but we are NOT the host of this specific session, boot into player mode.
     if (role === 'player' && !isHostOfThisSession) {

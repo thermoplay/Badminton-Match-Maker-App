@@ -402,7 +402,7 @@ async function joinOnlineSession(roomCode) {
         const savedHash  = localStorage.getItem('cs_op_key_hash');
         currentRoomCode = code;
         isOnlineSession = true;
-        if (savedCode === code && savedHash && savedHash === session.operator_key) {
+        if (savedCode === code && savedOpKey) {
             isOperator      = true;
             operatorKey     = savedOpKey;
             operatorKeyHash = savedHash;
@@ -1432,7 +1432,9 @@ async function tryAutoRejoin() {
         const savedHash  = localStorage.getItem('cs_op_key_hash');
 
         if (sessionData) {
-            if (savedHash && savedHash === sessionData.operator_key) {
+            // Since the server no longer returns the operator_key hash for security,
+            // we trust our local credentials if they exist for this specific room code.
+            if (savedOpKey && savedCode === currentRoomCode) {
                 isOperator      = true;
                 operatorKey     = savedOpKey;
                 operatorKeyHash = savedHash;
