@@ -11,6 +11,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 const hdrs = () => ({
+    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
     'apikey':        SUPABASE_KEY,
     'Authorization': `Bearer ${SUPABASE_KEY}`,
     'Content-Type':  'application/json',

@@ -34,6 +34,7 @@ async function sbFetch(path, options = {}) {
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     
     const headers = {
+        console.log(`[sbFetch] Making request to: ${baseUrl}/rest/v1${cleanPath}`);
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type':  'application/json',

@@ -286,6 +286,7 @@ async function apiCall(route, options = {}, retries = 2) {
         headers: { 'Content-Type': 'application/json' },
         body:    options.body ? JSON.stringify(options.body) : undefined,
     };
+    console.log(`[Client API Call] Requesting: ${url}`);
 
     for (let i = 0; i <= retries; i++) {
         try {

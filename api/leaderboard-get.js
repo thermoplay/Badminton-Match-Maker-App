@@ -4,6 +4,19 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
+async function sbFetch(path, options = {}) {
+    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+        headers: {
+            'apikey':        SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type':  'application/json',
+        },
+        method: options.method || 'GET',
+    });
+    return { ok: res.ok, status: res.status, data: await res.json().catch(() => null) };
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -11,7 +24,7 @@ export default async function handler(req, res) {
 
     if (period === 'weekly') {
         const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-        const response = await fetch(
+        const response = await sbFetch(
             `${SUPABASE_URL}/rest/v1/match_history?played_at=gte.${since}&select=player_name,won,player_uuid`,
             { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
         );
@@ -33,7 +46,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ players });
     }
 
-    const response = await fetch(
+    const response = await sbFetch(
         `${SUPABASE_URL}/rest/v1/career_stats?order=elo.desc&limit=10`,
         { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
     );

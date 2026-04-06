@@ -17,6 +17,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
+    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
     const method = options.method || 'GET';
     const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
     const cleanPath = path.startsWith('/') ? path : `/${path}`;

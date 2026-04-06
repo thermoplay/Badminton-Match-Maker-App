@@ -10,6 +10,7 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const crypto = require('crypto'); // Node.js crypto module for hashing
 
 async function sbFetch(path, options = {}) {
+    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
     const controller = new AbortController();
     // Fix: Reduce timeout to 9s to ensure we catch it before Vercel's 10s hard limit
     const timeout    = setTimeout(() => controller.abort(), 9000);

@@ -8,6 +8,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
+    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
     const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
         headers: {
             'apikey':        SUPABASE_KEY,
