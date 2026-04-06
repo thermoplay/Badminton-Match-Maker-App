@@ -2187,9 +2187,7 @@ function _resolvePlayerForSession(name, incomingUUID) {
         }
     }
 
-    // 2. If not found by UUID, treat as NEW.
     // 2. Secondary: Name-based lookup (Smart Recognition)
-    // If UUID didn't match but the name does, assume it's the same person
     // (e.g., host added them manually first or UUIDs were cleared).
     player = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
     if (player) {
@@ -2318,28 +2316,7 @@ window.onPlayRequestInsert = function(record) {
 
         // BUG FIX: Same duplicate guard for realtime events
         const uuidMap = window._sessionUUIDMap || {};
-        const existing = StateStore.squad.find(p => 
-            (record.player_uuid && p.uuid === record.player_uuid) || 
-            (p.name.toLowerCase() === record.name.toLowerCase()) ||
-                    (record.player_uuid && uuidMap[record.name] === record.player_uuid)
-        );
-
-        if (existing) {
-            // Adopt real UUID for manual additions triggered by realtime events
-            if (record.player_uuid && existing.uuid !== record.player_uuid) {
-                existing.uuid = record.player_uuid;
-                renderSquad();
-            }
-
-            if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
-            fetch('/api/play-request', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: record.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
-            }).catch(() => {});
-            return;
-        }
-
+        
         if (StateStore.get('isOpenParty')) {
             approvePlayRequest(record.name, record.id, record.player_uuid);
             return;

@@ -5903,15 +5903,12 @@ body.session-ended .play-requests-badge,
 body.session-ended .join-notif,
 body.session-ended #nextUpTicker {
     display: none !important;
+}
+
 /* Search bar styling */
 #squadSearchInput {
     background: var(--surface2);
     border-color: var(--border);
     font-size: 0.85rem;
     padding: 10px 14px;
-}
-#squadSearchInput:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-dim);
-}
 }
