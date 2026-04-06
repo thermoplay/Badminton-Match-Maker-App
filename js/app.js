@@ -569,7 +569,7 @@ function setCourts(n) {
             document.getElementById('matchContainer').innerHTML = '';
             const onCourt = StateStore.squad.filter(p => p.active);
             onCourt.forEach(p => {
-                if (!StateStore.playerQueue.includes(p.name)) StateStore.playerQueue.unshift(p.name);
+                if (!StateStore.playerQueue.includes(p.uuid)) StateStore.playerQueue.unshift(p.uuid);
             });
             generateMatches();
         },

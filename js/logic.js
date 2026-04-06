@@ -346,15 +346,17 @@ function initQueue() {
     const activeUUIDs = StateStore.squad.filter(p => p.active).map(p => p.uuid);
 
     // Keep existing queue order for names already in it — only append newcomers
-    const inQueue  = new Set(StateStore.playerQueue);
+    const currentQueue = Array.isArray(StateStore.playerQueue) ? StateStore.playerQueue : [];
+    const inQueue  = new Set(currentQueue);
     const newUUIDs = activeUUIDs.filter(u => !inQueue.has(u));
 
-    // Remove names no longer in the active squad
-    const newQueue = StateStore.playerQueue.filter(u => StateStore.squad.find(p => p.uuid === u && p.active));
+    // Robust Filter: Only keep UUIDs that are currently in the active squad
+    const activeSet = new Set(activeUUIDs);
+    const cleanedQueue = currentQueue.filter(u => activeSet.has(u));
 
     // Append newcomers at the back and update the store
-    newQueue.push(...newUUIDs);
-    StateStore.set('playerQueue', newQueue);
+    const finalQueue = [...cleanedQueue, ...newUUIDs];
+    StateStore.set('playerQueue', finalQueue);
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +483,8 @@ function combinations4(arr) {
 // Get the candidate pool for one court — front of the queue, excluding
 // players already assigned to another court this round.
 function getCandidatePool(onCourt) {
-    initQueue();
+    // BUG FIX: Removed initQueue() from here. It is now called once at the 
+    // start of generateMatches() to prevent redundant state updates during loops.
     const pool     = [];
     const poolSet  = new Set();
     const poolSize = 4 * POOL_FACTOR;
