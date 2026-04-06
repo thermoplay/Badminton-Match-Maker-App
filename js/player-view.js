@@ -108,7 +108,7 @@ const SidelineView = {
 
         container.style.display = 'flex';
         const squad = window.squad || [];
-        const findP = (uuid) => squad.find(p => p.uuid === uuid);
+        const findP = (uuid) => squad.find(p => p && p.uuid === uuid);
 
         container.innerHTML = matches.map((m, i) => {
             const tA = (m.teams[0] || []).map(u => findP(u)).filter(Boolean);
@@ -159,7 +159,7 @@ const SidelineView = {
             const squad = window.squad || [];
 
             const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
-            const safeNames = (uuids) => uuids.map(u => esc(squad.find(p => p.uuid === u || p.name === u)?.name || 'Unknown')).join(' &amp; ');
+            const safeNames = (uuids) => uuids.map(u => esc(squad.find(p => p && (p.uuid === u || p.name === u))?.name || 'Unknown')).join(' &amp; ');
 
             // Timer is handled by the global TimerManager in timer.js
             // It reads the `data-started` attribute from the DOM.
@@ -208,7 +208,7 @@ const SidelineView = {
 
         // Helpers to get stats
         const getStats = (teamUUIDs) => {
-            const players = teamUUIDs.map(id => squad.find(p => p.uuid === id)).filter(Boolean);
+            const players = teamUUIDs.map(id => squad.find(p => p && p.uuid === id)).filter(Boolean);
             if (players.length === 0) return { wr: 0, streak: 0, games: 0 };
             
             const totalWins = players.reduce((sum, p) => sum + p.wins, 0);
@@ -367,7 +367,7 @@ const SidelineView = {
     _renderProfile() {
         const passport = Passport.get();
         if (!passport) return;
-        const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+        const me = (window.squad || []).find(p => p && p.uuid === passport.playerUUID);
         const profileView = document.getElementById('slViewProfile');
         if (!profileView) return;
 
@@ -580,7 +580,7 @@ const SidelineView = {
             if (me.opponentHistory) {
                 const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
                 if (rivals.length > 0) {
-                    const rivalP = (window.squad || []).find(p => p.uuid === rivals[0][0]);
+                    const rivalP = (window.squad || []).find(p => p && p.uuid === rivals[0][0]);
                     rivalName = rivalP ? rivalP.name : 'Unknown';
                     rivalCount = rivals[0][1];
                 }
@@ -599,13 +599,13 @@ const SidelineView = {
                     <div class="sl-lab-history" style="margin-top:12px;">
                         ${me.matchHistory.map(h => {
                             const oppNames = (h.oppUUIDs || []).map(id => {
-                                const p = (window.squad || []).find(s => s.uuid === id || s.name === id);
+                                const p = (window.squad || []).find(s => s && (s.uuid === id || s.name === id));
                                 return p ? esc(p.name) : 'Former Player';
                             }).join(' &amp; ');
                             
                             let partnerDisplay = '';
                             if (h.partnerUUID) {
-                                const partnerP = (window.squad || []).find(s => s.uuid === h.partnerUUID);
+                                const partnerP = (window.squad || []).find(s => s && s.uuid === h.partnerUUID);
                                 if (partnerP) {
                                     partnerDisplay = ` with ${esc(partnerP.name)}`;
                                 }
@@ -659,7 +659,7 @@ const SidelineView = {
                 const best = partners[0];
                 if (best) {
                     const [uuid, stats] = best;
-                    const partnerP = (window.squad || []).find(p => p.uuid === uuid);
+                    const partnerP = (window.squad || []).find(p => p && p.uuid === uuid);
                     const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
                     chemContainer.innerHTML = `
                         <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
@@ -796,7 +796,7 @@ const SidelineView = {
         if (!targetUUID) { container.innerHTML = ''; return; }
 
         const passport = Passport.get();
-        const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+        const me = (window.squad || []).find(p => p && p.uuid === passport.playerUUID);
         if (!me) return;
 
         const vsGames = (me.opponentHistory || {})[targetUUID] || 0;
@@ -1096,7 +1096,7 @@ const PlayerMode = {
                     const session = data.session || {};
                     this._isOpenParty = !!session.is_open_party;
                     
-                    const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
+                    const inSquad = (session.squad || []).some(p => p && p.uuid === passport.playerUUID);
                     if (inSquad) {
                         console.log('[PlayerMode] Proactive boot bypass: already in squad.');
                         this._markApprovedInSession(joinCode);
@@ -1212,7 +1212,7 @@ const PlayerMode = {
             if (sessionRes.ok) {
                 const data = await sessionRes.json();
                 const session = data.session || {};
-                const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
+                const inSquad = (session.squad || []).some(p => p && p.uuid === passport.playerUUID);
 
                 this._isOpenParty = !!session.is_open_party;
 
@@ -1499,7 +1499,7 @@ const PlayerMode = {
         // Self-repair: Fetch achievements locally to ensure they appear even if host sync missed them
         if (window.fetchPlayerAchievements) {
             window.fetchPlayerAchievements(passport.playerUUID).then(achs => {
-                const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+                const me = (window.squad || []).find(p => p && p.uuid === passport.playerUUID);
                 if (me && achs && achs.length > 0) {
                     const ids = achs.map(a => a.achievement_id);
                     me.achievements = [...new Set([...(me.achievements || []), ...ids])];
@@ -1524,7 +1524,7 @@ const PlayerMode = {
         const passport = Passport.get();
         if (!passport || !squad) return;
 
-        const me = squad.find(p => p.uuid === passport.playerUUID);
+        const me = (squad || []).find(p => p && p.uuid === passport.playerUUID);
         if (!me || !me.matchHistory || me.matchHistory.length === 0) return;
 
         const lastTS = passport.lastProcessedTS || 0;
@@ -1548,7 +1548,7 @@ const PlayerMode = {
 
     _triggerResultFeedback(isWin, oppUUIDs, squad) {
         const oppNames = (oppUUIDs || []).map(uuid => {
-            const p = squad.find(s => s.uuid === uuid);
+            const p = (squad || []).find(s => s && s.uuid === uuid);
             return p ? p.name : 'Unknown';
         }).join(' & ');
 
@@ -1570,7 +1570,7 @@ const PlayerMode = {
         // Robustness: If we are in the squad, we are approved. 
         // Clear join UI and set flags even if we missed the 'session_joined' broadcast.
         const squad = payload.squad || [];
-        const inSquad = squad.some(p => p.uuid === passport.playerUUID);
+        const inSquad = squad.some(p => p && p.uuid === passport.playerUUID);
         const hasJoinUI = !!document.querySelector('.sl-queued-state, .sl-name-entry, .sl-code-entry');
 
         if (inSquad && (hasJoinUI || !this._isApprovedInSession(this._joinCode))) {
@@ -1606,7 +1606,7 @@ const PlayerMode = {
         
         const approved = session.approved_players || {};
         const myEntry  = approved[passport.playerUUID] || approved[passport.playerName];
-        const inSquad  = (session.squad || []).some(p => p.uuid === passport.playerUUID);
+        const inSquad  = (session.squad || []).some(p => p && p.uuid === passport.playerUUID);
 
         const hasJoinUI = !!document.querySelector('.sl-queued-state, .sl-name-entry, .sl-code-entry');
 
@@ -1675,7 +1675,7 @@ const PlayerMode = {
         const matches = window.currentMatches || [];
 
         // Prioritize UUID for all lookups to ensure robustness against name changes.
-        const me = squad.find(p => p.uuid === passport.playerUUID);
+        const me = squad.find(p => p && p.uuid === passport.playerUUID);
         const myName = me ? me.name : passport.playerName;
 
         const onCourtNow = new Set(matches.flatMap(m => (m.teams || []).flat()));
@@ -1683,7 +1683,7 @@ const PlayerMode = {
         const inSquad = !!me;
 
         // FIX: Use UUIDs for bench filtering
-        const bench = squad.filter(p => p.active && !onCourtNow.has(p.uuid));
+        const bench = squad.filter(p => p && p.active && !onCourtNow.has(p.uuid));
         const qPos  = me ? bench.findIndex(p => p.uuid === me.uuid) : -1;
 
         // FIX: Use UUID for nextUp check
@@ -1702,7 +1702,7 @@ const PlayerMode = {
                 if (allUUIDs.includes(me.uuid)) { // FIX: Use UUID
                     const myTeam = teamA.includes(me.uuid) ? teamA : teamB; // FIX: Use UUID
                     const partnerUUID = myTeam.find(u => u !== me.uuid); // FIX: Use UUID
-                    const partnerP = squad.find(p => p.uuid === partnerUUID);
+                    const partnerP = squad.find(p => p && p.uuid === partnerUUID);
                     courtInfo = { num: idx + 1, partner: partnerP?.name }; // Get partner name for display
                 }
             });
@@ -1773,7 +1773,7 @@ const PlayerMode = {
         // Self-repair: Fetch achievements locally
         if (window.fetchPlayerAchievements) {
             window.fetchPlayerAchievements(passport.playerUUID).then(achs => {
-                const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+                const me = (window.squad || []).find(p => p && p.uuid === passport.playerUUID);
                 if (me && achs && achs.length > 0) {
                     const ids = achs.map(a => a.achievement_id);
                     me.achievements = [...new Set([...(me.achievements || []), ...ids])];
@@ -1946,7 +1946,7 @@ const PlayerMode = {
                     const squad = window.squad || [];
                     // Only self-heal if we HAVE squad data and we aren't in it.
                     // If squad is empty, the session state is still loading.
-                    if (squad.length > 0 && !squad.some(m => m.uuid === p.playerUUID)) {
+                    if (squad.length > 0 && !squad.some(m => m && m.uuid === p.playerUUID)) {
                         console.warn('[PlayerMode] Self-healing: Approved but not in squad. Re-notifying host...');
                         this._resendRequest();
                     }
@@ -2274,7 +2274,7 @@ const PlayerMode = {
     openTrophyRoom() {
         const passport = Passport.get();
         if (!passport) return;
-        const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+        const me = (window.squad || []).find(p => p && p.uuid === passport.playerUUID);
         const myAch = me ? (me.achievements || []) : [];
         
         if (!window.Achievements) return;

@@ -53,7 +53,7 @@ window._sessionMembers = {};
  */
 function _generateStateHash(squad, queue) {
     // Create a deterministic string representing the core state
-    const s = (squad || []).map(p => p.uuid + (p.active ? '1' : '0')).sort().join(''); // Use UUID consistently
+    const s = (squad || []).filter(Boolean).map(p => (p.uuid || '') + (p.active ? '1' : '0')).sort().join(''); // Use UUID consistently
     const q = (queue || []).join(',');
     const str = `${s}|${q}`;
     let hash = 0;

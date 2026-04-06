@@ -219,11 +219,11 @@ export default async function handler(req, res) {
                 return res.status(500).json({ error: `Database error: ${sessionRes.data?.message || 'Unknown'}` });
             }
             if (!sessionRes.data?.[0]) {
-                return res.status(404).json({ error: 'Session not found' });
+                // Don't fail hard, maybe session ended. Just say ok to avoid 404 console spam during sync/cleanup.
+                return res.status(200).json({ ok: true, message: 'Session not found, member removal skipped.' });
             }
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
 
-            const opKeyHash = String(operator_key);
             if (incomingOperatorKeyHash !== sessionRes.data[0].operator_key) {
                 return res.status(403).json({ error: 'Invalid operator key' });
             }
@@ -256,7 +256,6 @@ export default async function handler(req, res) {
                 return res.status(200).json({ ok: true, message: 'Session not found, request likely stale.' });
             }
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
-            const opKeyHash = String(operator_key);
             if (incomingOperatorKeyHash !== sessionRes.data[0].operator_key) {
                 return res.status(403).json({ error: 'Invalid operator key' });
             }

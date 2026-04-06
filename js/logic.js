@@ -11,7 +11,7 @@
 
 /** Finds a player object by UUID. Returns undefined if not found. */
 function findP(uuid) {
-    return StateStore.squad.find(p => p.uuid === uuid);
+    return StateStore.squad.find(p => p && p.uuid === uuid);
 }
 
 // ---------------------------------------------------------------------------
