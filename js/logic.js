@@ -324,7 +324,7 @@ function applyELOForMatch(m) {
 // QUEUE ENGINE
 // ---------------------------------------------------------------------------
 //
-// playerQueue — ordered array of player NAMES representing the rotation.
+// playerQueue — ordered array of player UUIDs representing the rotation.
 // The first N*4 names (enough for courtCount courts) play each round.
 // After results are entered, losers go to the back first, then winners,
 // ensuring winners wait slightly longer (a small earned rest).

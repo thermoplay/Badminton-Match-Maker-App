@@ -310,7 +310,7 @@ function completeSwap(targetUUID) {
     const p2 = StateStore.squad.find(x => x.uuid === targetUUID);
     
     if (p1 && p2 && typeof window.swapActivePlayers === 'function') {
-        if (window.swapActivePlayers(p1.name, p2.name)) {
+        if (window.swapActivePlayers(p1.uuid, p2.uuid)) {
             showSessionToast(`Swapped ${p1.name} & ${p2.name}`);
             Haptic.success(); // StateStore.set in swapActivePlayers will trigger sync
         } else {
@@ -2051,8 +2051,25 @@ async function pollPlayRequests() {
                     // so memberApprove() and future syncs use the correct canonical ID.
                     if (r.player_uuid && existing.uuid !== r.player_uuid) {
                         console.log(`[CourtSide] Correcting UUID for ${existing.name}: ${existing.uuid} -> ${r.player_uuid}`);
-                        existing.uuid = r.player_uuid;
-                        renderSquad(); // Update DOM datasets
+                        const oldUUID = existing.uuid;
+                        const newUUID = r.player_uuid;
+                        existing.uuid = newUUID;
+
+                        // Atomically update matches and queue to use the new canonical UUID
+                        const newMatches = StateStore.currentMatches.map(m => ({
+                            ...m,
+                            teams: m.teams.map(t => t.map(u => u === oldUUID ? newUUID : u))
+                        }));
+                        const newQueue = StateStore.playerQueue.map(u => u === oldUUID ? newUUID : u);
+
+                        StateStore.setState({
+                            squad: StateStore.squad,
+                            currentMatches: newMatches,
+                            playerQueue: newQueue
+                        });
+
+                        renderSquad();
+                        rebuildMatchCardIndices();
                         saveToDisk();
                     }
 
@@ -2334,7 +2351,26 @@ window.onPlayRequestInsert = function(record) {
  */
 function autoAddOpenPlayer(record) {
     if (!window.isOperator || !record) return;
-    if (StateStore.squad.some(p => p.uuid === record.player_uuid)) return;
+
+    const existing = StateStore.squad.find(p => p.uuid === record.player_uuid);
+    if (existing) {
+        // Name/Emoji Correction: If the player is already in the squad but joined 
+        // via Open Party with a different name or spirit animal, update them now.
+        let changed = false;
+        if (record.player_name && existing.name !== record.player_name) {
+            if (typeof window._applyNameUpdate === 'function') {
+                window._applyNameUpdate(record.player_uuid, existing.name, record.player_name);
+            }
+            changed = true;
+        }
+        if (record.spirit_animal !== undefined && existing.spiritAnimal !== record.spirit_animal) {
+            if (typeof window._applySpiritAnimalUpdate === 'function') {
+                window._applySpiritAnimalUpdate(record.player_uuid, record.spirit_animal);
+            }
+            changed = true;
+        }
+        return;
+    }
 
     const newPlayer = migratePlayer({
         name: record.player_name,

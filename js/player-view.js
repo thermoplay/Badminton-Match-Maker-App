@@ -1094,31 +1094,21 @@ const PlayerMode = {
                 if (res.ok) {
                     const data = await res.json();
                     const session = data.session || {};
+                    
+                    // Cache Open Party status early for logic branches
                     this._isOpenParty = !!session.is_open_party;
+                    window.squad = session.squad || [];
                     
                     const inSquad = (session.squad || []).some(p => p && p.uuid === passport.playerUUID);
                     if (inSquad) {
                         console.log('[PlayerMode] Proactive boot bypass: already in squad.');
                         this._markApprovedInSession(joinCode);
-                        this._subscribeAndPoll(joinCode, passport);
+                        this._subscribeAndPoll(joinCode, passport); // This handles the view show/refresh
                         if (panel) panel.classList.remove('sl-booting');
-                        SidelineView.show();
                         return;
                     }
                 }
             } catch (e) { console.warn('[PlayerMode] Proactive check failed', e); }
-        }
-
-        // Fetch session metadata first to check for Open Party
-        if (joinCode) {
-            try {
-                const res = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    this._isOpenParty = !!data.session?.is_open_party;
-                    console.log('[PlayerMode] _isOpenParty set to:', this._isOpenParty, 'from session-get in boot');
-                }
-            } catch (e) {}
         }
 
         // 2. Initial UI setup
@@ -1204,13 +1194,14 @@ const PlayerMode = {
         // we can skip the join request entirely. This prevents redundant notifications 
         // for players the host has already manually added or approved previously.
         try {
-            const [sessionRes, requestRes] = await Promise.all([
-                fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`),
-                fetch(`/api/play-request?room_code=${encodeURIComponent(joinCode)}`)
-            ]);
-
+            // Optimisation: Reuse squad data from boot's proactive check if available
+            const sessionData = window.squad?.length > 0 ? { ok: true, json: () => ({ session: { squad: window.squad, is_open_party: this._isOpenParty } }) } : null;
+            const sessionRes = sessionData || await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
+            
             if (sessionRes.ok) {
                 const data = await sessionRes.json();
+                const requestRes = await fetch(`/api/play-request?room_code=${encodeURIComponent(joinCode)}`);
+
                 const session = data.session || {};
                 const inSquad = (session.squad || []).some(p => p && p.uuid === passport.playerUUID);
 
@@ -1852,16 +1843,23 @@ const PlayerMode = {
             console.log('[PlayerMode] play-request POST response data:', data);
 
             if (data.alreadyActive || data.status === 'active') {
+                // --- SNAPPY INIT ---
+                // Ingest session state returned by API to skip waiting for host broadcast
+                if (data.session) {
+                    window.squad = data.session.squad || [];
+                    window.currentMatches = data.session.current_matches || [];
+                    window.courtNames = data.session.court_names || {};
+                }
+                
                 this._isJoining = false;
                 this._markApprovedInSession(joinCode);
-                this.setStatus('approved', `Welcome back, ${passport.playerName}!`, "Reconnected to court ✅");
+                this.setStatus('approved', `You're in, ${passport.playerName}!`, this._isOpenParty ? "Instant entry success ✅" : "Reconnected to court ✅");
                 SidelineView.show();
                 SidelineView.refresh();
-                // Ensure host has spirit animal on reconnection
                 if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
                     broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
                 }
-                setTimeout(() => this._updateStatus(passport), 800);
+                this._updateStatus(passport); // No timeout for snappiness
                 return;
             }
 

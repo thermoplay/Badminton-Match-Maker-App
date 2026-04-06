@@ -854,6 +854,7 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     }
 
     const prevName = player.name;
+    const prevUUID = player.uuid;
     player.name    = trimmed;
     player.uuid    = playerUUID;   // ensure uuid is set for future lookups
 
@@ -873,12 +874,29 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
         }
     }
 
+    // --- UUID CORRECTION SYNC ---
+    // If the player's UUID changed (e.g. host-added dummy ID replaced by real Passport ID),
+    // we must update the UUID in the playerQueue and any current matches to prevent state break.
+    if (prevUUID && prevUUID !== playerUUID) {
+        const newQueue = StateStore.playerQueue.map(u => u === prevUUID ? playerUUID : u);
+        const newMatches = StateStore.currentMatches.map(m => ({
+            ...m,
+            teams: m.teams.map(t => t.map(u => u === prevUUID ? playerUUID : u))
+        }));
+        
+        StateStore.setState({
+            squad: StateStore.squad,
+            playerQueue: newQueue,
+            currentMatches: newMatches
+        });
+    } else {
+        // Reactive sync via StateStore ensures DB and spectators stay updated
+        StateStore.set('squad', StateStore.squad);
+    }
+
     renderSquad();
     rebuildMatchCardIndices();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    
-    // Reactive sync via StateStore ensures DB and spectators stay updated
-    StateStore.set('squad', StateStore.squad);
 
     // Force an immediate broadcast to bypass the 200ms throttle for real-time responsiveness
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
@@ -886,6 +904,7 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
 window._applyNameUpdate = _applyNameUpdate;
+window._applySpiritAnimalUpdate = _applySpiritAnimalUpdate;
 window._generateStateHash = _generateStateHash;
 
 // Host applies a spirit animal update broadcast from a player
@@ -925,7 +944,11 @@ function _applyStatusUpdate(playerUUID, isActive) {
     if (oldStatus !== player.active) {
         renderSquad();
         checkNextButtonState();
-        StateStore.set('squad', StateStore.squad);
+        if (typeof renderQueueStrip === 'function') renderQueueStrip();
+        // Group the squad update atomically with StateStore.setState
+        // The player object within squad is already mutated in place, so passing
+        // the existing squad reference here is sufficient to signal the change.
+        StateStore.setState({ squad: StateStore.squad });
 
         // Force immediate broadcast so the Ready/Resting status updates instantly for everyone
         if (typeof broadcastGameState === 'function') broadcastGameState(true);
@@ -1173,8 +1196,7 @@ function _handleMemberChange(record, oldRecord, eventType) {
 
             // Auto-sync for Open Party: If a member is active but not in squad, add them
             if (record.status === 'active') {
-                const inSquad = StateStore.squad.some(p => p.uuid === uuid);
-                if (!inSquad && typeof window.autoAddOpenPlayer === 'function') {
+                if (typeof window.autoAddOpenPlayer === 'function') {
                     window.autoAddOpenPlayer(record);
                 }
             }

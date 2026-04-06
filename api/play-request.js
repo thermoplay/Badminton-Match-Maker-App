@@ -102,30 +102,31 @@ export default async function handler(req, res) {
         // Reverting to standard PostgREST calls because the RPC is hitting 
         // persistent type mismatch errors. Standard calls handle strings better.
         
-        // 1. Verify Room Exists
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party,squad&limit=1`);
-        if (!sessionCheck.ok) return res.status(500).json({ error: `Connection failed: ${sessionCheck.data?.message || 'Database unavailable'}` });
-        if (!sessionCheck.data?.length) return res.status(404).json({ error: `Room ${code} does not exist.` });
+        // 1. Parallel Check: Room existence and current member status
+        const [sessionCheck, memberCheck] = await Promise.all([
+            sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party,squad,current_matches,court_names&limit=1`),
+            sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`)
+        ]);
 
-        // 2. Check if player is already in the squad (Host's primary list)
+        if (!sessionCheck.ok) return res.status(500).json({ error: 'Database connection failed' });
+        if (!sessionCheck.data?.length) return res.status(404).json({ error: `Room ${code} not found` });
+
         const session = sessionCheck.data[0];
-        const inSquad = (session.squad || []).some(p => p.uuid === uuid);
-        if (inSquad) {
-            return res.status(200).json({ alreadyActive: true, ok: true });
+        const inSquad = (session.squad || []).some(p => p && p.uuid === uuid);
+        const isAlreadyActive = memberCheck.ok && memberCheck.data?.[0]?.status === 'active';
+
+        if ((inSquad || isAlreadyActive) && !force) {
+            return res.status(200).json({ alreadyActive: true, ok: true, session });
         }
 
-        // 3. Check if player is already active in session_members (Identity list)
-        const memberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
-        if (memberCheck.ok && memberCheck.data?.[0]?.status === 'active' && !force) {
-            return res.status(200).json({ alreadyActive: true, ok: true });
-        }
+        const isOpen = !!session.is_open_party;
+        const status = isOpen ? 'active' : 'pending';
 
-        console.log(`[PlayRequest API] Room ${code} is_open_party: ${sessionCheck.data[0].is_open_party}`);
-        const isOpen = !!sessionCheck.data[0].is_open_party;
+        const tasks = [];
 
         // 2.5 If Open Party, auto-approve membership in DB immediately
         if (isOpen) {
-            await sbFetch('/session_members', {
+            tasks.push(sbFetch('/session_members', {
                 method: 'POST',
                 body: {
                     room_code: code,
@@ -135,12 +136,11 @@ export default async function handler(req, res) {
                     spirit_animal: spirit_animal || null
                 },
                 prefer: 'resolution=merge-duplicates'
-            });
-            // Fall through to insert play_request so the host's local state still updates
+            }));
         }
 
         // 3. Create the notification request for the Host
-        const insertReq = await sbFetch('/play_requests', {
+        tasks.push(sbFetch('/play_requests', {
             method: 'POST',
             body: {
                 room_code: code,
@@ -148,11 +148,13 @@ export default async function handler(req, res) {
                 name: trimmedName,
                 spirit_animal: spirit_animal || null
             }
-        });
+        }));
 
-        if (!insertReq.ok) return res.status(500).json({ error: 'Failed to send join request' });
+        const results = await Promise.all(tasks);
+        const failed = results.find(r => !r.ok);
+        if (failed) return res.status(500).json({ error: 'Failed to process join request' });
 
-        return res.status(200).json({ ok: true, status: isOpen ? 'active' : 'pending' });
+        return res.status(200).json({ ok: true, status, session: isOpen ? session : null });
     }
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {
