@@ -969,20 +969,7 @@ const VictoryCard = { show() {}, hide() {}, share() {} };
 
 const LS_TOKENS   = 'cs_session_tokens';
 const SS_APPROVED = 'cs_approved';
-const m = (window.currentMatches || [])[matchIdx];
-    if (!m) return;
-    const teams = m.teams || [];
-    const squad = window.squad || [];
-    const getName = (uuid) => squad.find(p => p.uuid === uuid)?.name || 'Unknown';
 
-    await generateShareableImage({
-        teamA: teams[0] || [],
-        teamB: teams[1] || [],
-        // Pass names for display on the share card
-        teamA: (teams[0] || []).map(getName),
-        teamB: (teams[1] || []).map(getName),
-        title: 'LIVE NOW'
-    });
 const PlayerMode = {
 
     _isJoining: false,
@@ -1105,6 +1092,7 @@ const PlayerMode = {
                 if (res.ok) {
                     const data = await res.json();
                     this._isOpenParty = !!data.session?.is_open_party;
+                    console.log('[PlayerMode] _isOpenParty set to:', this._isOpenParty, 'from session-get in boot');
                 }
             } catch (e) {}
         }
@@ -1811,6 +1799,7 @@ const PlayerMode = {
             }
 
             const data = await res.json();
+            console.log('[PlayerMode] play-request POST response data:', data);
 
             if (data.alreadyActive || data.status === 'active') {
                 this._isJoining = false;

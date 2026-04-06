@@ -112,6 +112,7 @@ export default async function handler(req, res) {
             return res.status(200).json({ alreadyActive: true, ok: true });
         }
 
+        console.log(`[PlayRequest API] Room ${code} is_open_party: ${sessionCheck.data[0].is_open_party}`);
         const isOpen = !!sessionCheck.data[0].is_open_party;
 
         // 2.5 If Open Party, auto-approve membership in DB immediately
