@@ -1085,6 +1085,30 @@ const PlayerMode = {
         }
         this._joinCode = joinCode;
 
+        // --- PROACTIVE SQUAD CHECK ---
+        // If the player is already in the squad (e.g. host manually added them),
+        // bypass the entire join/name-entry flow immediately.
+        if (joinCode && passport.playerUUID) {
+            try {
+                const res = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    const session = data.session || {};
+                    this._isOpenParty = !!session.is_open_party;
+                    
+                    const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
+                    if (inSquad) {
+                        console.log('[PlayerMode] Proactive boot bypass: already in squad.');
+                        this._markApprovedInSession(joinCode);
+                        this._subscribeAndPoll(joinCode, passport);
+                        if (panel) panel.classList.remove('sl-booting');
+                        SidelineView.show();
+                        return;
+                    }
+                }
+            } catch (e) { console.warn('[PlayerMode] Proactive check failed', e); }
+        }
+
         // Fetch session metadata first to check for Open Party
         if (joinCode) {
             try {
@@ -1560,12 +1584,16 @@ const PlayerMode = {
     _onSessionUpdate(session) {
         const passport = Passport.get();
         if (!passport) return;
+        
         const approved = session.approved_players || {};
         const myEntry  = approved[passport.playerUUID] || approved[passport.playerName];
-        if (myEntry && !this._isApprovedInSession(this._joinCode)) {
+        const inSquad  = (session.squad || []).some(p => p.uuid === passport.playerUUID);
+
+        if ((myEntry || inSquad) && !this._isApprovedInSession(this._joinCode)) {
+            console.log('[PlayerMode] Sync Recovery: Approval detected via session update.');
             this._markApprovedInSession(this._joinCode);
             this._clearJoinRetryTimer();
-            if (myEntry.token) this._saveToken(this._joinCode, myEntry.token, passport.playerName, passport.playerUUID);
+            if (myEntry?.token) this._saveToken(this._joinCode, myEntry.token, passport.playerName, passport.playerUUID);
             this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
             setTimeout(() => this._updateLiveFeed(session, passport), 1500);
             return;

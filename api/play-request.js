@@ -103,11 +103,18 @@ export default async function handler(req, res) {
         // persistent type mismatch errors. Standard calls handle strings better.
         
         // 1. Verify Room Exists
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party&limit=1`);
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party,squad&limit=1`);
         if (!sessionCheck.ok) return res.status(500).json({ error: `Connection failed: ${sessionCheck.data?.message || 'Database unavailable'}` });
         if (!sessionCheck.data?.length) return res.status(404).json({ error: `Room ${code} does not exist.` });
 
-        // 2. Check if player is already active in this session
+        // 2. Check if player is already in the squad (Host's primary list)
+        const session = sessionCheck.data[0];
+        const inSquad = (session.squad || []).some(p => p.uuid === uuid);
+        if (inSquad) {
+            return res.status(200).json({ alreadyActive: true, ok: true });
+        }
+
+        // 3. Check if player is already active in session_members (Identity list)
         const memberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
         if (memberCheck.ok && memberCheck.data?.[0]?.status === 'active' && !force) {
             return res.status(200).json({ alreadyActive: true, ok: true });
