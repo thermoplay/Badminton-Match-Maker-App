@@ -1302,7 +1302,9 @@ const PlayerMode = {
     _clearQueuedState() {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
-        if (container.querySelector('.sl-queued-state')) {
+        // Clear any join-flow specific UI if it's still present
+        const joiningUI = container.querySelector('.sl-queued-state, .sl-name-entry, .sl-code-entry');
+        if (joiningUI) {
             container.innerHTML = '<div class="sl-empty">No active round yet</div>';
         }
     },
@@ -1564,6 +1566,20 @@ const PlayerMode = {
         const passport = Passport.get();
         if (!passport) return;
 
+        // --- SYNC RECOVERY ---
+        // If we are in the squad but not "approved" locally, auto-approve.
+        // This catches cases where approval broadcasts were missed.
+        const inSquad = (payload.squad || []).some(p => p.uuid === passport.playerUUID);
+        if (inSquad && !this._isApprovedInSession(this._joinCode)) {
+            console.log('[PlayerMode] Sync Recovery: Approval detected via game state broadcast.');
+            this._markApprovedInSession(this._joinCode);
+            this._clearJoinRetryTimer();
+            this._clearQueuedState();
+            this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
+            // Ensure visibility
+            SidelineView.show();
+        }
+
         // Connectivity Improvement: State Drift Detection
         // Compare host's broadcast hash with our new local state to verify consistency.
         if (payload.hash && typeof window._generateStateHash === 'function') {
@@ -1593,6 +1609,7 @@ const PlayerMode = {
             console.log('[PlayerMode] Sync Recovery: Approval detected via session update.');
             this._markApprovedInSession(this._joinCode);
             this._clearJoinRetryTimer();
+            this._clearQueuedState();
             if (myEntry?.token) this._saveToken(this._joinCode, myEntry.token, passport.playerName, passport.playerUUID);
             this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
             setTimeout(() => this._updateLiveFeed(session, passport), 1500);
