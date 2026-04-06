@@ -1650,7 +1650,7 @@ const PlayerMode = {
 
         // FIX: Use UUID for nextUp check
         const nextUpRaw = window._lastNextUp || '';
-       const isNextUp  = me && nextUpRaw.includes(me.name); // _lastNextUp contains names, so compare names // Assuming _lastNextUp contains UUIDs or names that can be matched
+        const isNextUp = me && nextUpRaw.includes(me.name);
 
         // The bench is anyone active and not on court.
         // If playing, find specific court and partner details

@@ -157,7 +157,7 @@ function addPlayer() {
     // Use migratePlayer to ensure all required logic fields (ELO, stats) are initialized
     const newPlayer = migratePlayer({
         name: name,
-        uuid: _generateUUID(),
+        uuid: Passport._uuid(),
         active: true
     });
     
@@ -2041,7 +2041,7 @@ async function pollPlayRequests() {
                 const existing = StateStore.squad.find(p => 
                     (r.player_uuid && p.uuid === r.player_uuid) || 
                     (p.name.toLowerCase() === r.name.toLowerCase()) ||
-                    (record.player_uuid && uuidMap[record.name] === record.player_uuid)
+                    (r.player_uuid && uuidMap[r.name] === r.player_uuid)
                 );
 
                 if (existing) {
