@@ -33,8 +33,8 @@ async function sbFetch(path, options = {}) {
     const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     
+    console.log(`[sbFetch] Making request to: ${baseUrl}/rest/v1${cleanPath}`);
     const headers = {
-        console.log(`[sbFetch] Making request to: ${baseUrl}/rest/v1${cleanPath}`);
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type':  'application/json',
@@ -103,12 +103,12 @@ export default async function handler(req, res) {
         // persistent type mismatch errors. Standard calls handle strings better.
         
         // 1. Verify Room Exists
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq."${code}"&select=room_code,is_open_party&limit=1`);
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party&limit=1`);
         if (!sessionCheck.ok) return res.status(500).json({ error: `Connection failed: ${sessionCheck.data?.message || 'Database unavailable'}` });
         if (!sessionCheck.data?.length) return res.status(404).json({ error: `Room ${code} does not exist.` });
 
         // 2. Check if player is already active in this session
-        const memberCheck = await sbFetch(`/session_members?room_code=eq."${code}"&player_uuid=eq."${uuid}"&select=status&limit=1`);
+        const memberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
         if (memberCheck.ok && memberCheck.data?.[0]?.status === 'active' && !force) {
             return res.status(200).json({ alreadyActive: true, ok: true });
         }
@@ -163,7 +163,7 @@ export default async function handler(req, res) {
         // Reconciliation support: Fetch currently active members from session_members
         // This allows the host to recover players who are active in the DB but missing locally.
         if (status === 'active') {
-            const r = await sbFetch(`/session_members?room_code=eq."${code}"&status=eq.active`);
+            const r = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active`);
             const mapped = (Array.isArray(r.data) ? r.data : []).map(m => ({
                 id: m.id,
                 name: m.player_name,
@@ -175,7 +175,7 @@ export default async function handler(req, res) {
         // Filter: only show requests from the last 3 hours to prevent zombie prompts.
         const since = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
         const r = await sbFetch(
-            `/play_requests?room_code=eq."${code}"&requested_at=gte.${encodeURIComponent(since)}&order=requested_at.asc`
+            `/play_requests?room_code=eq.${encodeURIComponent(code)}&requested_at=gte.${encodeURIComponent(since)}&order=requested_at.asc`
         );
         return res.status(200).json({ requests: r.data || [] });
     }
@@ -207,7 +207,7 @@ export default async function handler(req, res) {
             // ------------------------
 
             // Verify operator key (using quoted filter)
-            const sessionRes = await sbFetch(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`); 
+            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`); 
             if (!sessionRes.ok) {
                 return res.status(500).json({ error: `Database error: ${sessionRes.data?.message || 'Unknown'}` });
             }
@@ -222,10 +222,10 @@ export default async function handler(req, res) {
             }
 
             // Delete from session_members
-            const delRes = await sbFetch(`/session_members?player_uuid=eq."${uuid}"&room_code=eq."${code}"`, { method: 'DELETE' });
+            const delRes = await sbFetch(`/session_members?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
             
             // ALSO delete from play_requests to prevent join-blocking ghosts
-            await sbFetch(`/play_requests?player_uuid=eq."${uuid}"&room_code=eq."${code}"`, { method: 'DELETE' });
+            await sbFetch(`/play_requests?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
 
             return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
         }
@@ -243,7 +243,7 @@ export default async function handler(req, res) {
             }
 
             // Verify operator key
-            const sessionRes = await sbFetch(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`); // Quoted filter
+            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
             if (!sessionRes.ok || !sessionRes.data?.[0]) {
                 // Don't fail hard, maybe session ended. Just say ok.
                 return res.status(200).json({ ok: true, message: 'Session not found, request likely stale.' });
@@ -255,7 +255,7 @@ export default async function handler(req, res) {
             }
 
             // Also filter by room_code for extra security
-            const r = await sbFetch(`/play_requests?id=eq.${id}&room_code=eq."${code}"`, { method: 'DELETE' });
+            const r = await sbFetch(`/play_requests?id=eq.${id}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
             return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
         }
 

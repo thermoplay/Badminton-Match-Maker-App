@@ -81,13 +81,13 @@ export default async function handler(req, res) {
     if (spirit_animal !== undefined) profileUpdates.spirit_animal = spirit_animal;
 
     const res2 = await sbFetch(
-        `/session_members?room_code=eq."${code}"&player_uuid=eq."${uuid}"`,
+        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
         { method: 'PATCH', body: sessionUpdates }
     );
 
     // Sync profile changes to global players table to maintain identity integrity
     if (Object.keys(profileUpdates).length > 0) {
-        await sbFetch(`/players?uuid=eq."${uuid}"`, {
+        await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}`, {
             method: 'PATCH',
             body:   profileUpdates
         });
@@ -105,7 +105,7 @@ export default async function handler(req, res) {
     // Also update any pending play_requests for this player so the Host sees the new name
     if (Object.keys(reqUpdates).length > 0) {
         await sbFetch(
-            `/play_requests?room_code=eq."${code}"&player_uuid=eq."${uuid}"`,
+            `/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
             { method: 'PATCH', body: reqUpdates }
         );
     }

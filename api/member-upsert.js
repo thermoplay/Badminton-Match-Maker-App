@@ -80,7 +80,7 @@ export default async function handler(req, res) {
     // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
     // This maintains a master registry of all players across all sessions.
     // If lookup fails, we attempt a POST which will safely ON CONFLICT DO NOTHING in the DB.
-    const playerLookup = await sbFetch(`/players?uuid=eq."${uuid}"&select=uuid&limit=1`); // Quoted filter
+    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid&limit=1`);
     if (!playerLookup.ok || (Array.isArray(playerLookup.data) && playerLookup.data.length === 0)) {
         await sbFetch('/players', {
             method: 'POST', // PostgREST handles UUID casting automatically for table inserts
@@ -96,7 +96,7 @@ export default async function handler(req, res) {
     // ── Step 1: Check if this player already has a row in this session ──────
     // If they do and status is 'active', just return it — DO NOT reset to pending.
     const existing = await sbFetch(
-        `/session_members?room_code=eq."${code}"&player_uuid=eq."${uuid}"&limit=1` // Quoted filters
+        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&limit=1`
     );
 
     if (existing.ok && existing.data?.length > 0) {
@@ -107,8 +107,8 @@ export default async function handler(req, res) {
         const animalChanged = spirit_animal !== undefined && member.spirit_animal !== spirit_animal;
 
         if (nameChanged || animalChanged) {
-            await sbFetch( // Quoted filters
-                `/session_members?room_code=eq."${code}"&player_uuid=eq."${uuid}"`,
+            await sbFetch(
+                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
                 {
                     method:  'PATCH',
                     headers: { 'Prefer': 'return=representation' },

@@ -30,8 +30,8 @@ export default async function handler(req, res) {
     if (!room_code) return res.status(400).json({ error: 'Missing room_code' });
 
     // Get current count
-    const current = await sbFetch( // Quoted filter
-        `/sessions?room_code=eq."${room_code}"&select=spectator_count&limit=1`
+    const current = await sbFetch(
+        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=spectator_count&limit=1`
     );
 
     if (!current.ok || !current.data || current.data.length === 0) {
@@ -45,8 +45,8 @@ export default async function handler(req, res) {
     if (action === 'leave') newCount = Math.max(0, currentCount - 1);
     // 'ping' keeps count the same — just signals still alive
 
-    await sbFetch( // Quoted filter
-        `/sessions?room_code=eq."${room_code}"`,
+    await sbFetch(
+        `/sessions?room_code=eq.${encodeURIComponent(room_code)}`,
         {
             method: 'PATCH',
             body: { spectator_count: newCount, last_active: new Date().toISOString() },

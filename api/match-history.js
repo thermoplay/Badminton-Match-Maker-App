@@ -95,7 +95,7 @@ export default async function handler(req, res) {
             // Bypassing the RPC to avoid persistent "text = uuid" type mismatches.
             
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`);
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });
@@ -103,7 +103,7 @@ export default async function handler(req, res) {
 
             // 2. Update individual player ratings
             for (const res of results) {
-                await sb(`/players?uuid=eq."${res.player_uuid}"`, {
+                await sb(`/players?uuid=eq.${encodeURIComponent(res.player_uuid)}`, {
                     method: 'PATCH',
                     body: {
                         rating: res.rating,
@@ -143,7 +143,7 @@ export default async function handler(req, res) {
             }
 
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq."${code}"&select=operator_key&limit=1`);
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });

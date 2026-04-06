@@ -38,7 +38,7 @@ export default async function handler(req, res) {
     }
 
     const codeClean = code.toUpperCase();
-    const result = await sbFetch(`/sessions?room_code=eq."${codeClean}"&limit=1`);
+    const result = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(codeClean)}&limit=1`);
 
     if (!result.ok) {
         return res.status(500).json({ error: 'Database connection failed' });
