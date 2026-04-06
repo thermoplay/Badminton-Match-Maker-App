@@ -2050,12 +2050,13 @@ async function pollPlayRequests() {
                     // UUID Correction: If manually added by host, adopt the player's real UUID
                     // so memberApprove() and future syncs use the correct canonical ID.
                     if (r.player_uuid && existing.uuid !== r.player_uuid) {
+                        console.log(`[CourtSide] Correcting UUID for ${existing.name}: ${existing.uuid} -> ${r.player_uuid}`);
                         existing.uuid = r.player_uuid;
                         renderSquad(); // Update DOM datasets
                         saveToDisk();
                     }
 
-                    if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+                    if (existing.uuid && typeof window.memberApprove === 'function') await window.memberApprove(existing.uuid);
                     fetch('/api/play-request', {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },

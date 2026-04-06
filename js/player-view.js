@@ -1567,11 +1567,14 @@ const PlayerMode = {
         if (!passport) return;
 
         // --- SYNC RECOVERY ---
-        // If we are in the squad but not "approved" locally, auto-approve.
-        // This catches cases where approval broadcasts were missed.
-        const inSquad = (payload.squad || []).some(p => p.uuid === passport.playerUUID);
-        if (inSquad && !this._isApprovedInSession(this._joinCode)) {
-            console.log('[PlayerMode] Sync Recovery: Approval detected via game state broadcast.');
+        // Robustness: If we are in the squad, we are approved. 
+        // Clear join UI and set flags even if we missed the 'session_joined' broadcast.
+        const squad = payload.squad || [];
+        const inSquad = squad.some(p => p.uuid === passport.playerUUID);
+        const hasJoinUI = !!document.querySelector('.sl-queued-state, .sl-name-entry, .sl-code-entry');
+
+        if (inSquad && (hasJoinUI || !this._isApprovedInSession(this._joinCode))) {
+            console.log('[PlayerMode] Sync Recovery: Squad presence detected. Clearing join flow.');
             this._markApprovedInSession(this._joinCode);
             this._clearJoinRetryTimer();
             this._clearQueuedState();
@@ -1605,7 +1608,9 @@ const PlayerMode = {
         const myEntry  = approved[passport.playerUUID] || approved[passport.playerName];
         const inSquad  = (session.squad || []).some(p => p.uuid === passport.playerUUID);
 
-        if ((myEntry || inSquad) && !this._isApprovedInSession(this._joinCode)) {
+        const hasJoinUI = !!document.querySelector('.sl-queued-state, .sl-name-entry, .sl-code-entry');
+
+        if ((myEntry || inSquad) && (hasJoinUI || !this._isApprovedInSession(this._joinCode))) {
             console.log('[PlayerMode] Sync Recovery: Approval detected via session update.');
             this._markApprovedInSession(this._joinCode);
             this._clearJoinRetryTimer();
