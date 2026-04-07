@@ -25,11 +25,18 @@ function normalizeRoomCode(raw) {
 }
 
 async function sb(path, options = {}) {
-    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
-    const method = options.method || 'GET';
-    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
 
+    const method = options.method || 'GET';
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${baseUrl}/rest/v1${cleanPath}`;
+
+    console.log(`[sbFetch] Making request to: ${url}`);
     const headers = {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
@@ -37,7 +44,7 @@ async function sb(path, options = {}) {
         'Prefer':        options.prefer || (method === 'POST' ? 'return=minimal' : 'return=representation'),
     };
 
-    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+    const res = await fetch(url, {
         headers,
         method,
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -102,7 +109,7 @@ export default async function handler(req, res) {
             // Bypassing the RPC to avoid persistent "text = uuid" type mismatches.
             
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
+            const sessionRes = await sb(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`);
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });
@@ -146,7 +153,7 @@ export default async function handler(req, res) {
             }
 
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
+            const sessionRes = await sb(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`);
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });

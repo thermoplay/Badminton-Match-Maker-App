@@ -8,15 +8,26 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
-    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
+
+    const method = options.method || 'GET';
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${baseUrl}/rest/v1${cleanPath}`;
+
+    console.log(`[sbFetch] Making request to: ${url}`);
+    const res = await fetch(url, {
         headers: {
             'apikey':        SUPABASE_KEY,
             'Authorization': `Bearer ${SUPABASE_KEY}`,
             'Content-Type':  'application/json',
             'Prefer':        options.prefer || 'return=minimal',
         },
-        method: options.method || 'GET',
+        method: method,
         body:   options.body ? JSON.stringify(options.body) : undefined,
     });
     const text = await res.text();
@@ -31,7 +42,7 @@ export default async function handler(req, res) {
 
     // Get current count
     const current = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=spectator_count&limit=1`
+        `/sessions?room_code=eq."${encodeURIComponent(room_code)}"&select=spectator_count&limit=1`
     );
 
     if (!current.ok || !current.data || current.data.length === 0) {
@@ -46,7 +57,7 @@ export default async function handler(req, res) {
     // 'ping' keeps count the same — just signals still alive
 
     await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(room_code)}`,
+        `/sessions?room_code=eq."${encodeURIComponent(room_code)}"`,
         {
             method: 'PATCH',
             body: { spectator_count: newCount, last_active: new Date().toISOString() },

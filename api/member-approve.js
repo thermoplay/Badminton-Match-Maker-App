@@ -19,11 +19,18 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
-    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
-    const method = options.method || 'GET';
-    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
 
+    const method = options.method || 'GET';
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${baseUrl}/rest/v1${cleanPath}`;
+
+    console.log(`[sbFetch] Making request to: ${url}`);
     const headers = {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
@@ -31,7 +38,7 @@ async function sbFetch(path, options = {}) {
         'Prefer':        options.prefer || 'return=minimal',
     };
 
-    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+    const res = await fetch(url, {
         headers: { ...headers, ...(options.headers || {}) },
         method,
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -67,7 +74,7 @@ export default async function handler(req, res) {
     // Never trust the client for host identity — always cross-check the DB.
     // Hash the incoming raw key and compare it to the stored hash.
     const sessionCheck = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`
+        `/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`
     );
 
     if (!sessionCheck.ok || !sessionCheck.data?.length) {
@@ -83,7 +90,7 @@ export default async function handler(req, res) {
     // filtering on this room_code + player_uuid, which the player's phone
     // catches in subscribeRealtime() → _handleMemberChange().
     const update = await sbFetch(
-        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+        `/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${encodeURIComponent(uuid)}`,
         {
             method: 'PATCH',
             body: {

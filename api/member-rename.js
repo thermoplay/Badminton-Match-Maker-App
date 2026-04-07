@@ -21,11 +21,18 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
-    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
-    const method = options.method || 'GET';
-    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
 
+    const method = options.method || 'GET';
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${baseUrl}/rest/v1${cleanPath}`;
+
+    console.log(`[sbFetch] Making request to: ${url}`);
     const headers = {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
@@ -33,7 +40,7 @@ async function sbFetch(path, options = {}) {
         'Prefer':        options.prefer || 'return=minimal',
     };
 
-    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+    const res = await fetch(url, {
         headers: { ...headers, ...(options.headers || {}) },
         method,
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -81,7 +88,7 @@ export default async function handler(req, res) {
     if (spirit_animal !== undefined) profileUpdates.spirit_animal = spirit_animal;
 
     const res2 = await sbFetch(
-        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+        `/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${encodeURIComponent(uuid)}`,
         { method: 'PATCH', body: sessionUpdates }
     );
 
@@ -105,7 +112,7 @@ export default async function handler(req, res) {
     // Also update any pending play_requests for this player so the Host sees the new name
     if (Object.keys(reqUpdates).length > 0) {
         await sbFetch(
-            `/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+            `/play_requests?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${encodeURIComponent(uuid)}`,
             { method: 'PATCH', body: reqUpdates }
         );
     }

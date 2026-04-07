@@ -47,7 +47,10 @@ export default async function handler(req, res) {
 
         if (signals.length === 0) return res.status(200).json({ sent: 0 });
 
-        const r = await fetch(`${SUPABASE_URL}/rest/v1/passport_signals`, {
+        let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+        if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+        const r = await fetch(`${baseUrl}/rest/v1/passport_signals`, {
             method:  'POST',
             headers: hdrs(),
             body:    JSON.stringify(signals),
@@ -63,10 +66,13 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Missing player_uuid or room_code' });
         }
 
+        let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+        if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
         const r = await fetch(
-            `${SUPABASE_URL}/rest/v1/passport_signals` +
+            `${baseUrl}/rest/v1/passport_signals` +
             `?player_uuid=eq.${encodeURIComponent(player_uuid)}` +
-            `&room_code=eq.${encodeURIComponent(room_code)}` +
+            `&room_code=eq."${encodeURIComponent(room_code)}"` +
             `&order=created_at.desc&limit=1`,
             { headers: hdrs() }
         );
@@ -80,10 +86,13 @@ export default async function handler(req, res) {
         const { player_uuid, room_code } = req.body;
         if (!player_uuid) return res.status(400).json({ error: 'Missing player_uuid' });
 
+        let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+        if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
         const r = await fetch(
-            `${SUPABASE_URL}/rest/v1/passport_signals` +
+            `${baseUrl}/rest/v1/passport_signals` +
             `?player_uuid=eq.${encodeURIComponent(player_uuid)}` +
-            `&room_code=eq.${encodeURIComponent(room_code)}`,
+            `&room_code=eq."${encodeURIComponent(room_code)}"`,
             { method: 'DELETE', headers: hdrs() }
         );
 

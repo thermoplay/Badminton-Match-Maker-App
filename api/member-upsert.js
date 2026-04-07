@@ -17,11 +17,18 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
-    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
-    const method = options.method || 'GET';
-    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
 
+    const method = options.method || 'GET';
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${baseUrl}/rest/v1${cleanPath}`;
+
+    console.log(`[sbFetch] Making request to: ${url}`);
     const headers = {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
@@ -29,7 +36,7 @@ async function sbFetch(path, options = {}) {
         'Prefer':        'return=representation',
     };
 
-    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+    const res = await fetch(url, {
         headers: { ...headers, ...(options.headers || {}) },
         method,
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -80,7 +87,7 @@ export default async function handler(req, res) {
     // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
     // This maintains a master registry of all players across all sessions.
     // If lookup fails, we attempt a POST which will safely ON CONFLICT DO NOTHING in the DB.
-    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid&limit=1`);
+    const playerLookup = await sbFetch(`/players?uuid=eq."${encodeURIComponent(uuid)}"&select=uuid&limit=1`);
     if (!playerLookup.ok || (Array.isArray(playerLookup.data) && playerLookup.data.length === 0)) {
         await sbFetch('/players', {
             method: 'POST', // PostgREST handles UUID casting automatically for table inserts
@@ -96,7 +103,7 @@ export default async function handler(req, res) {
     // ── Step 1: Check if this player already has a row in this session ──────
     // If they do and status is 'active', just return it — DO NOT reset to pending.
     const existing = await sbFetch(
-        `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&limit=1`
+        `/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${encodeURIComponent(uuid)}&limit=1`
     );
 
     if (existing.ok && existing.data?.length > 0) {
@@ -108,7 +115,7 @@ export default async function handler(req, res) {
 
         if (nameChanged || animalChanged) {
             await sbFetch(
-                `/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}`,
+                `/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${encodeURIComponent(uuid)}`,
                 {
                     method:  'PATCH',
                     headers: { 'Prefer': 'return=representation' },

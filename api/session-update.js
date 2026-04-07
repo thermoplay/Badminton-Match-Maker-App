@@ -19,13 +19,19 @@ function normalizeRoomCode(raw) {
 }
 
 async function sbFetch(path, options = {}) {
-    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
+
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+    const res = await fetch(`${baseUrl}/rest/v1${path}`, {
         headers: {
             'apikey':        SUPABASE_KEY,
             'Authorization': `Bearer ${SUPABASE_KEY}`,
             'Content-Type':  'application/json',
-            'Prefer':        options.prefer || 'return=minimal',
+            'Prefer':        options.prefer || (options.method === 'GET' ? undefined : 'return=minimal'),
         },
         method: options.method || 'GET',
         body:   options.body ? JSON.stringify(options.body) : undefined,
@@ -56,7 +62,7 @@ export default async function handler(req, res) {
 
     // Verify operator_key server-side — never trust the client
     const checkResult = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key,squad&limit=1`
+        `/sessions?room_code=eq."${encodeURIComponent(room_code)}"&select=operator_key,squad&limit=1`
     );
 
     if (!checkResult.ok || !checkResult.data || checkResult.data.length === 0) {
@@ -123,7 +129,7 @@ export default async function handler(req, res) {
 
     // Key matches — apply the update
     const updateResult = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(room_code)}`,
+        `/sessions?room_code=eq."${encodeURIComponent(room_code)}"`,
         {
             method: 'PATCH',
             body: {

@@ -18,11 +18,17 @@ function normalizeRoomCode(raw) {
 }
 
 async function sbFetch(path, options = {}) {
-    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
+
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${baseUrl}/rest/v1${cleanPath}`;
 
-    console.log(`[sbFetch] Making request to: ${url}`);
+    console.log(`[session-get] Requesting: ${url}`);
     const res = await fetch(url, {
         headers: {
             'apikey':        SUPABASE_KEY,
@@ -60,10 +66,10 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid room code' });
     }
 
-    const result = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(codeClean)}&limit=1`);
+    const result = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(codeClean)}"&limit=1`);
 
     if (!result.ok) {
-        return res.status(500).json({ error: 'Database connection failed' });
+        return res.status(500).json({ error: 'Database connection failed', details: result.data });
     }
     if (!result.data || result.data.length === 0) {
         return res.status(404).json({ error: 'Room not found' });

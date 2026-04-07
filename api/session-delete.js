@@ -8,15 +8,26 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const crypto = require('crypto'); // Node.js crypto module for hashing
 
 async function sbFetch(path, options = {}) {
-    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
+
+    const method = options.method || 'GET';
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${baseUrl}/rest/v1${cleanPath}`;
+
+    console.log(`[sbFetch] Making request to: ${url}`);
+    const res = await fetch(url, {
         headers: {
             'apikey':        SUPABASE_KEY,
             'Authorization': `Bearer ${SUPABASE_KEY}`,
             'Content-Type':  'application/json',
             'Prefer':        'return=minimal',
         },
-        method: options.method || 'GET',
+        method: method,
         body:   options.body ? JSON.stringify(options.body) : undefined,
     });
     return { ok: res.ok, status: res.status };
@@ -32,8 +43,11 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
     // Verify key server-side first
-    const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`, {
+    const checkRes = await fetch(`${baseUrl}/rest/v1/sessions?room_code=eq."${encodeURIComponent(room_code)}"&select=operator_key&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
     });
     const checkData = await checkRes.json();
@@ -47,7 +61,7 @@ export default async function handler(req, res) {
     }
 
     const delRes = await sbFetch(
-        `/sessions?room_code=eq.${encodeURIComponent(room_code)}`,
+        `/sessions?room_code=eq."${encodeURIComponent(room_code)}"`,
         { method: 'DELETE' }
     );
 

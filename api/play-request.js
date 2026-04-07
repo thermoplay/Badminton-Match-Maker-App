@@ -52,7 +52,7 @@ async function sbFetch(path, options = {}) {
     };
 
     if (method !== 'GET') {
-        headers['Prefer'] = options.prefer || 'return=representation';
+        headers['Prefer'] = options.prefer || 'return=minimal';
     }
 
     const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
@@ -105,14 +105,14 @@ export default async function handler(req, res) {
         // ── REVERTED: Standard Table Operations ──────────────────────────────
         // Reverting to standard PostgREST calls because the RPC is hitting 
         // persistent type mismatch errors. Standard calls handle strings better.
-        
+
         // 1. Parallel Check: Room existence and current member status
         const [sessionCheck, memberCheck] = await Promise.all([
-            sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party,squad,current_matches,court_names&limit=1`),
-            sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`)
+            sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=room_code,is_open_party,squad,current_matches,court_names&limit=1`),
+            sbFetch(`/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`)
         ]);
 
-        if (!sessionCheck.ok) return res.status(500).json({ error: 'Database connection failed', details: sessionCheck.status });
+        if (!sessionCheck.ok) return res.status(500).json({ error: 'Database connection failed', details: sessionCheck.data });
         if (!sessionCheck.data?.length) return res.status(404).json({ error: `Room ${code} not found` });
 
         const session = sessionCheck.data[0];
@@ -139,7 +139,7 @@ export default async function handler(req, res) {
                     status: 'active',
                     spirit_animal: spirit_animal || null
                 },
-                prefer: 'resolution=merge-duplicates'
+                prefer: 'return=minimal,resolution=merge-duplicates'
             }));
         }
 
@@ -170,7 +170,7 @@ export default async function handler(req, res) {
         // Reconciliation support: Fetch currently active members from session_members
         // This allows the host to recover players who are active in the DB but missing locally.
         if (status === 'active') {
-            const r = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active`);
+            const r = await sbFetch(`/session_members?room_code=eq."${encodeURIComponent(code)}"&status=eq.active`);
             const mapped = (Array.isArray(r.data) ? r.data : []).map(m => ({
                 id: m.id,
                 name: m.player_name,
@@ -182,7 +182,7 @@ export default async function handler(req, res) {
         // Filter: only show requests from the last 3 hours to prevent zombie prompts.
         const since = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
         const r = await sbFetch(
-            `/play_requests?room_code=eq.${encodeURIComponent(code)}&requested_at=gte.${encodeURIComponent(since)}&order=requested_at.asc`
+            `/play_requests?room_code=eq."${encodeURIComponent(code)}"&requested_at=gte.${encodeURIComponent(since)}&order=requested_at.asc`
         );
         return res.status(200).json({ requests: r.data || [] });
     }
@@ -208,7 +208,7 @@ export default async function handler(req, res) {
             // ------------------------
 
             // Verify operator key (using quoted filter)
-            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`); 
+            const sessionRes = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`); 
             if (!sessionRes.ok) {
                 return res.status(500).json({ error: `Database error: ${sessionRes.data?.message || 'Unknown'}` });
             }
@@ -223,10 +223,10 @@ export default async function handler(req, res) {
             }
 
             // Delete from session_members
-            const delRes = await sbFetch(`/session_members?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+            const delRes = await sbFetch(`/session_members?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq."${encodeURIComponent(code)}"`, { method: 'DELETE' });
             
             // ALSO delete from play_requests to prevent join-blocking ghosts
-            await sbFetch(`/play_requests?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+            await sbFetch(`/play_requests?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq."${encodeURIComponent(code)}"`, { method: 'DELETE' });
 
             return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
         }
@@ -238,7 +238,7 @@ export default async function handler(req, res) {
             const code = normalizeRoomCode(room_code);
 
             // Verify operator key
-            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
+            const sessionRes = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`);
             if (!sessionRes.ok || !sessionRes.data?.[0]) {
                 // Don't fail hard, maybe session ended. Just say ok.
                 return res.status(200).json({ ok: true, message: 'Session not found, request likely stale.' });
@@ -249,7 +249,7 @@ export default async function handler(req, res) {
             }
 
             // Also filter by room_code for extra security
-            const r = await sbFetch(`/play_requests?id=eq.${id}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+            const r = await sbFetch(`/play_requests?id=eq.${id}&room_code=eq."${encodeURIComponent(code)}"`, { method: 'DELETE' });
             return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
         }
 
