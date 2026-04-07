@@ -36,7 +36,8 @@ const StateStore = (() => {
     // --- Setters ---
     const set = (key, value) => {
         if (key in _state) {
-            _state[key] = value;
+            // Defensive: ensure we store a fresh reference for arrays/objects
+            _state[key] = Array.isArray(value) ? [...value] : (typeof value === 'object' && value !== null ? { ...value } : value);
             _state.lastUpdated = Date.now();
             if (['squad', 'currentMatches', 'playerQueue'].includes(key)) {
                 _triggerSync();

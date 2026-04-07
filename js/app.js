@@ -61,7 +61,7 @@ function saveToDisk() {
         };
         localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
     } catch (e) {
-        console.warn('CourtSide: Failed to save to disk. Storage might be full.', e);
+        Log.warn('Failed to save to disk. Storage might be full.', e);
         if (typeof showSessionToast === 'function') showSessionToast('⚠️ Storage warning: Data not saved locally.');
     }
 }
@@ -128,7 +128,7 @@ function loadFromDisk() {
             if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
             renderQueueStrip();
         } catch (e) {
-            console.error('CourtSide: Failed to parse saved data.', e);
+            Log.error('Failed to parse saved data.', e);
             StateStore.setState({ squad: [], currentMatches: [], roundHistory: [] });
         }
     }
@@ -416,7 +416,7 @@ async function _removePlayerFromRemoteDB(playerUUID) {
             })
         });
     } catch (e) {
-        console.error('[CourtSide] Failed to remove member from DB session', e);
+        Log.error('Failed to remove member from DB session', e);
     }
 }
 
@@ -479,7 +479,7 @@ function renderSquad() {
         if (uuid) existingChips.set(uuid, chip);
     });
 
-    const fragment = document.createDocumentFragment();
+    const newContent = document.createDocumentFragment();
 
     StateStore.squad.forEach((p, idx) => {
         // Apply search filter
@@ -518,12 +518,12 @@ function renderSquad() {
             newChip.addEventListener('touchstart', () => startPress(p.uuid));
             newChip.addEventListener('touchend', () => endPress(p.uuid));
             newChip.addEventListener('contextmenu', (e) => e.preventDefault());
-            fragment.appendChild(newChip);
+            newContent.appendChild(newChip);
         }
     });
 
-    // Append all new chips in a single DOM operation for performance.
-    container.appendChild(fragment);
+    container.innerHTML = ''; // Clear only once per search/render cycle
+    container.appendChild(newContent);
 
     // Any chips left in existingChips are for players who have been removed
     existingChips.forEach(chip => {
@@ -917,7 +917,7 @@ function showOverlay(type) {
                         correctLevel:  QRCtor.CorrectLevel?.H || 0,
                     });
                 } else if (qrDiv) {
-                    console.warn('[CourtSide] QRCode library not loaded, showing plain URL');
+                    Log.warn('QRCode library not loaded, showing plain URL');
                     qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
                 }
             }
@@ -967,7 +967,7 @@ function confirmEndSession() {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ room_code: roomCode, operator_key: window.operatorKey }),
-                }).catch(e => console.error('[CourtSide] Silent delete failed', e));
+                }).catch(e => Log.error('Silent delete failed', e));
             }
         }
     });
@@ -1008,12 +1008,10 @@ function _showHostRecap(recap) {
     document.body.classList.add('session-ended');
     closeOverlay();
 
-    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
-
     const leaderboardHTML = recap.squad.map((p, i) => `
         <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);">
             <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
-            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${esc(p.name)}</div>
+            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${escapeHTML(p.name)}</div>
             <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.wins}W</div>
         </div>
     `).join('');
@@ -1026,10 +1024,10 @@ function _showHostRecap(recap) {
             <div style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
                 <div style="font-size:3rem; margin-bottom:10px;">🏆</div>
                 <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
-                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(recap.mvp.name)}</div>
+                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${escapeHTML(recap.mvp.name)}</div>
                 <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${recap.mvp.wins} Wins · ${recap.mvp.games} Games</div>
                 <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
-                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
+                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${escapeHTML(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
             </div>
 
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
@@ -1039,17 +1037,17 @@ function _showHostRecap(recap) {
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">IRON MAN</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.ironMan.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.ironMan.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.ironMan.sessionPlayCount} Games</div>
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">HOT HAND</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.hotHand.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.hotHand.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.hotHand.streak} Win Streak</div>
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">SHARP SHOOTER</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.sharpShooter.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.sharpShooter.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.sharpShooter.wr}% Win Rate</div>
                 </div>
             </div>
@@ -1082,7 +1080,7 @@ function generateQR() {
     if (!qrDiv) return;
     qrDiv.innerHTML = '';
     const QRCtor = window.QRCodeConstructor || window.QRCode;
-    if (!QRCtor) { console.error('[CourtSide] generateQR: QRCode library not loaded'); return; }
+    if (!QRCtor) { Log.error('generateQR: QRCode library not loaded'); return; }
     new QRCtor(qrDiv, {
         text:         token,
         width:        200,
@@ -1125,7 +1123,7 @@ async function copyInviteLink() {
             await navigator.share(shareData);
             return;
         } catch (e) {
-            if (e.name !== 'AbortError') console.error('Share failed', e);
+            if (e.name !== 'AbortError') Log.error('Share failed', e);
         }
     }
 
@@ -1308,15 +1306,6 @@ function confirmEraseAllData() {
 // ---------------------------------------------------------------------------
 // UTILITIES
 // ---------------------------------------------------------------------------
-
-function escapeHTML(str) {
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
 
 // ---------------------------------------------------------------------------
 // UNDO LAST ROUND
@@ -1877,7 +1866,7 @@ async function sharePlayerCard() {
             }
         }, 'image/png');
     } catch (e) {
-        console.error('Share failed:', e);
+        Log.error('Share failed:', e);
     }
     Haptic.success();
 }
@@ -1896,11 +1885,11 @@ async function shareAuraPoster(matchIdx) {
             teamB: (m.teams[1] || []).join(' & '),
             title: 'LIVE NOW'
         }).catch(e => {
-            console.error('Aura poster failed:', e);
+            Log.error('Aura poster failed:', e);
             showSessionToast('Could not generate poster');
         });
     } else {
-        console.error('generateShareableImage function not found.');
+        Log.error('generateShareableImage function not found.');
         showSessionToast('Share function is unavailable.');
     }
 }
@@ -2045,12 +2034,12 @@ async function pollPlayRequests() {
                 );
 
                 if (existing) {
-                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad)`);
+                    Log.info(`Auto-resolving request for ${r.name} (already in squad)`);
 
                     // UUID Correction: If manually added by host, adopt the player's real UUID
                     // so memberApprove() and future syncs use the correct canonical ID.
                     if (r.player_uuid && existing.uuid !== r.player_uuid) {
-                        console.log(`[CourtSide] Correcting UUID for ${existing.name}: ${existing.uuid} -> ${r.player_uuid}`);
+                        Log.info(`Correcting UUID for ${existing.name}: ${existing.uuid} -> ${r.player_uuid}`);
                         const oldUUID = existing.uuid;
                         const newUUID = r.player_uuid;
                         existing.uuid = newUUID;
@@ -2083,7 +2072,7 @@ async function pollPlayRequests() {
                 }
 
                 if (isOpen) {
-                    console.log(`[CourtSide] Auto-approving ${r.name} (Open Party)`);
+                    Log.info(`Auto-approving ${r.name} (Open Party)`);
                     approvePlayRequest(r.name, r.id, r.player_uuid || null);
                     continue;
                 }
@@ -2198,7 +2187,7 @@ function _resolvePlayerForSession(name, incomingUUID) {
         if (player) {
             // Update name if changed
             if (player.name !== name) {
-                console.log(`[CourtSide] Updating name for ${player.uuid}: ${player.name} -> ${name}`);
+                Log.info(`Updating name for ${player.uuid}: ${player.name} -> ${name}`);
                 player.name = name;
             }
             return player;
@@ -2233,7 +2222,7 @@ function _resolvePlayerForSession(name, incomingUUID) {
 }
 
 async function approvePlayRequest(name, id, playerUUID = null) {
-    console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
+    Log.info(`Approving ${name}, UUID: ${playerUUID}`);
     
     // Priority 1: Check if achievements were already reconciled by the Join RPC
     const requestRow = playRequests.find(r => String(r.id) === String(id));
@@ -2272,7 +2261,7 @@ async function approvePlayRequest(name, id, playerUUID = null) {
             achievementIds.forEach(id => currentSet.add(id));
             player.achievements = Array.from(currentSet);
         } catch (e) {
-            console.error(`Failed to fetch achievements for ${player.name}`, e);
+            Log.error(`Failed to fetch achievements for ${player.name}`, e);
         }
     }
     player.active = true;
@@ -2474,7 +2463,7 @@ const _startPolling = () => {
                 activeInDB.forEach(dbPlayer => {
                     const inLocal = StateStore.squad.some(p => p.uuid === dbPlayer.player_uuid);
                     if (!inLocal) {
-                        console.log(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
+                        Log.info(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
                         approvePlayRequest(dbPlayer.name, dbPlayer.id, dbPlayer.player_uuid);
                     }
                 });
@@ -2654,7 +2643,7 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
                 loser_uuids:  loserUUIDs,
                 game_label:   label,
             }),
-        }).catch(e => console.error('Signal dispatch failed:', e));
+        }).catch(e => Log.error('Signal dispatch failed:', e));
     }
 }
 
@@ -2868,7 +2857,7 @@ async function initApp() {
         const _raw = localStorage.getItem('cs_player_passport');
         passport = _raw ? JSON.parse(_raw) : null;
     } catch (e) {
-        console.warn('[CourtSide] initApp: localStorage read failed', e);
+        Log.warn('initApp: localStorage read failed', e);
         passport = null;
     }
 
@@ -2912,14 +2901,14 @@ async function initApp() {
     try {
         loadFromDisk();
     } catch (e) {
-        console.error('[CourtSide] initApp: loadFromDisk failed', e);
+        Log.error('initApp: loadFromDisk failed', e);
     }
 
     // If the user has a passport from playing, auto-add them to their own squad.
     _autoAddHostToSquad();
 
     if (typeof tryAutoRejoin === 'function') {
-        await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
+        await tryAutoRejoin().catch(e => Log.error('tryAutoRejoin failed', e));
     }
 
     // Show landing if no data and not in a session
@@ -2937,7 +2926,7 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('actionMenu')?.classList.add('actionMenu');
 
     initApp().catch(err => {
-        console.error('[CourtSide] initApp() failed:', err);
+        Log.error('initApp() failed:', err);
         if (typeof _csShowError === 'function') {
             _csShowError('App init failed: ' + (err?.message || err));
         }
@@ -2946,7 +2935,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Global Error Safety Net
 window.addEventListener('error', (event) => {
-    console.error('[CourtSide Global Error]', event.error);
+    Log.error('Global Error', event.error);
     // Only show toast if UI is ready
     if (typeof showSessionToast === 'function' && document.body) {
         showSessionToast('⚠️ An error occurred. Please refresh if issues persist.');

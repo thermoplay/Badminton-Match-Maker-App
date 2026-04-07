@@ -189,7 +189,7 @@ class SupabaseRealtimeManager {
 
     _flushPendingActions() {
         if (_pendingActions.length === 0) return;
-        console.log(`[CourtSide] Connection restored. Flushing ${_pendingActions.length} pending actions...`);
+        Log.info(`Connection restored. Flushing ${_pendingActions.length} pending actions...`);
         while(_pendingActions.length > 0) {
             const { type, payload } = _pendingActions.shift();
             this.broadcast(type, payload);
@@ -203,7 +203,7 @@ class SupabaseRealtimeManager {
             // Phoenix Reply handling (Joins, Heartbeats)
             if (data.event === 'phx_reply' && data.ref) {
                 if (this.pendingHeartbeats.has(data.ref)) this._measureLatency(data.ref);
-                if (data.payload?.status === 'error') console.error('[CourtSide] Realtime error:', data.payload.response);
+                if (data.payload?.status === 'error') Log.error('Realtime error:', data.payload.response);
                 return;
             }
 
@@ -218,7 +218,7 @@ class SupabaseRealtimeManager {
             else if (data.event === 'broadcast' && data.payload?.type) _handleBroadcast(data.payload);
 
         } catch (e) {
-            console.error('[CourtSide] Realtime: Error processing message', e);
+            Log.error('Realtime: Error processing message', e);
         }
     }
 
@@ -286,7 +286,7 @@ async function apiCall(route, options = {}, retries = 2) {
         headers: { 'Content-Type': 'application/json' },
         body:    options.body ? JSON.stringify(options.body) : undefined,
     };
-    console.log(`[Client API Call] Requesting: ${url}`);
+    Log.info(`[API] Requesting: ${url}`);
 
     for (let i = 0; i <= retries; i++) {
         try {
@@ -364,7 +364,7 @@ async function createOnlineSession() {
         Haptic.success();
         _updatePlayerCount();
     } catch (e) {
-        console.error('CourtSide: create failed', e);
+        Log.error('create failed', e);
         showSyncStatus(e.message || 'Failed to create session. Check connection.', 'error');
         Haptic.error();
     }
@@ -375,10 +375,7 @@ async function createOnlineSession() {
 // ---------------------------------------------------------------------------
 
 async function joinOnlineSession(roomCode) {
-    let code = (roomCode || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
-    if (code.length === 8) {
-        code = code.slice(0, 4) + '-' + code.slice(4);
-    }
+    const code = normalizeRoomCode(roomCode);
 
     if (!code) return;
     showSyncStatus('Joining…', 'info');
@@ -425,7 +422,7 @@ async function joinOnlineSession(roomCode) {
         closeOverlay();
         Haptic.bump();
     } catch (e) {
-        console.error('CourtSide: join failed', e);
+        Log.error('join failed', e);
         showSyncStatus('Could not join. Try again.', 'error');
         Haptic.error();
     }
@@ -659,8 +656,8 @@ async function memberApprove(playerUUID) {
                 operator_key: operatorKey,
             }),
         });
-        if (!r.ok) console.error('[CourtSide] member-approve failed:', r.status);
-    } catch (e) { console.error('[CourtSide] member-approve error:', e); }
+        if (!r.ok) Log.error('member-approve failed:', r.status);
+    } catch (e) { Log.error('member-approve error:', e); }
 }
 window.memberApprove = memberApprove;
 
@@ -681,8 +678,8 @@ async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
                 spirit_animal: spiritAnimal
             }),
         });
-        if (!r.ok) console.error('[CourtSide] member-rename failed:', r.status);
-    } catch (e) { console.error('[CourtSide] member-rename error:', e); }
+        if (!r.ok) Log.error('member-rename failed:', r.status);
+    } catch (e) { Log.error('member-rename error:', e); }
 }
 
 /**
@@ -701,12 +698,7 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     // is still in-flight when this is called from PlayerMode.boot().
     let roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || '';
     // Normalize room code for consistency with API
-    let code = roomCode.toUpperCase().trim();
-    if (!code.includes('-')) {
-        const stripped = code.replace(/[^A-Z0-9]/g, '');
-        if (stripped.length === 8) code = stripped.slice(0, 4) + '-' + stripped.slice(4);
-    }
-    currentRoomCode = code; // keep local var in sync
+    currentRoomCode = normalizeRoomCode(roomCode); // keep local var in sync
     _syncState();
     try {
         const r = await fetch('/api/member-upsert', {
@@ -719,9 +711,9 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
                 spirit_animal: emoji
             }),
         });
-        if (!r.ok) { console.error('[CourtSide] member-upsert failed:', r.status); return null; }
+        if (!r.ok) { Log.error('member-upsert failed:', r.status); return null; }
         return await r.json();  // { ok, status, member }
-    } catch (e) { console.error('[CourtSide] member-upsert error:', e); return null; }
+    } catch (e) { Log.error('member-upsert error:', e); return null; }
 }
 
 // ---------------------------------------------------------------------------
@@ -835,14 +827,10 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     if (!newName?.trim() || !playerUUID) return;
     const trimmed = newName.trim();
 
-    // 1. Find player by UUID (stored on squad member at approval) — rename-safe
-    let player = StateStore.squad.find(p => p.uuid === playerUUID);
-    // 2. Fallback: find by oldName if uuid not yet on squad member
-    if (!player) player = StateStore.squad.find(p => p.name === oldName);
+    const currentSquad = StateStore.squad;
+    const playerIndex = currentSquad.findIndex(p => p.uuid === playerUUID || p.name === oldName);
 
-    if (!player) {
-        // If player is pending (not in squad yet), update the local playRequests cache
-        // so the Join Notification UI shows the new name immediately.
+    if (playerIndex === -1) {
         if (typeof window.playRequests !== 'undefined') {
             const req = window.playRequests.find(r => r.player_uuid === playerUUID || r.name === oldName);
             if (req) {
@@ -853,10 +841,14 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
         return;
     }
 
+    const player = currentSquad[playerIndex];
     const prevName = player.name;
     const prevUUID = player.uuid;
-    player.name    = trimmed;
-    player.uuid    = playerUUID;   // ensure uuid is set for future lookups
+
+    // Create updated player object (Immutable)
+    const updatedPlayer = { ...player, name: trimmed, uuid: playerUUID };
+    const newSquad = [...currentSquad];
+    newSquad[playerIndex] = updatedPlayer;
 
     // Update uuid_map: rename the key, ensure new key exists
     const uuidMap = window._sessionUUIDMap || {};
@@ -885,13 +877,12 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
         }));
         
         StateStore.setState({
-            squad: StateStore.squad,
+            squad: newSquad,
             playerQueue: newQueue,
             currentMatches: newMatches
         });
     } else {
-        // Reactive sync via StateStore ensures DB and spectators stay updated
-        StateStore.set('squad', StateStore.squad);
+        StateStore.set('squad', newSquad);
     }
 
     renderSquad();
@@ -977,7 +968,7 @@ function _handlePostgresChange(payload) {
 
     if (table === 'play_requests' || payload?.data?.table === 'play_requests') {
         if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
-            console.log('[CourtSide] Realtime: New play request received', record);
+            Log.info('Realtime: New play request received', record);
             window.onPlayRequestInsert(record);
         }
         return;
@@ -1076,7 +1067,7 @@ function applyRemoteState(session) {
 
     const ts = session.last_active ? new Date(session.last_active).getTime() : 0;
     if (ts > 0 && ts < _lastRemoteUpdate) {
-        console.log('CourtSide: ignoring stale remote update');
+        Log.info('ignoring stale remote update');
         return;
     }
     _lastRemoteUpdate = ts || Date.now();
@@ -1324,7 +1315,7 @@ async function endAndDeleteSession() {
             method: 'DELETE',
             body: { room_code: currentRoomCode, operator_key: operatorKey },
         });
-    } catch (e) { console.error('CourtSide: delete failed', e); }
+    } catch (e) { Log.error('delete failed', e); }
     leaveSession();
 }
 
@@ -1483,8 +1474,8 @@ async function tryAutoRejoin() {
                     title: 'Sync Conflict',
                     message: 'You have unsaved local changes from a previous connection. Keep local state or load from server?',
                     confirmText: 'Keep Local',
-                    onConfirm: () => { console.log('[CourtSide] Host choosing local state.'); pushStateToSupabase(); _finalizeRejoin(savedCode); },
-                    onCancel: () => { console.log('[CourtSide] Host choosing server state.'); applyRemoteState(sessionData); localStorage.removeItem('cs_pending_sync'); _finalizeRejoin(savedCode); }
+                    onConfirm: () => { Log.info('Host choosing local state.'); pushStateToSupabase(); _finalizeRejoin(savedCode); },
+                    onCancel: () => { Log.info('Host choosing server state.'); applyRemoteState(sessionData); localStorage.removeItem('cs_pending_sync'); _finalizeRejoin(savedCode); }
                 });
                 return; // Callback handles finalization
             } else {
@@ -1495,7 +1486,7 @@ async function tryAutoRejoin() {
         _finalizeRejoin(savedCode);
 
     } catch (e) {
-        console.error('CourtSide: tryAutoRejoin failed', e);
+        Log.error('tryAutoRejoin failed', e);
         if (savedCode) {
             currentRoomCode = savedCode;
             isOnlineSession = true;
@@ -1540,7 +1531,7 @@ document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && isOnlineSession) {
         // If socket is stale or dead, reconnect immediately
         if (!sbManager || !sbManager.socket || sbManager.socket.readyState !== WebSocket.OPEN) {
-            console.log('[CourtSide] Tab resumed, reconnecting socket...');
+            Log.info('Tab resumed, reconnecting socket...');
             if (sbManager) sbManager.connect(currentRoomCode);
         } else if (!isOperator && typeof SidelineView !== 'undefined') {
             // Refresh state to catch missed broadcasts while backgrounded
@@ -1619,7 +1610,7 @@ async function archiveRoundToSupabase(snapshot) {
                 squad:     snapshot.squadSnapshot || [],
             }),
         });
-    } catch (e) { console.error('CourtSide: archive failed', e); }
+    } catch (e) { Log.error('archive failed', e); }
 }
 
 // ---------------------------------------------------------------------------

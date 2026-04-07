@@ -3,16 +3,6 @@
 // Responsibilities: Manages all modal/overlay UI elements consistently.
 // =============================================================================
 
-function _escapeHTML(str) {
-    if (typeof str !== 'string') return '';
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
 const UIManager = {
     _modal: null,
     _backdrop: null,
@@ -54,7 +44,7 @@ const UIManager = {
 
     confirm({ title, message, confirmText = 'Confirm', onConfirm, onCancel, isDestructive = false }) {
         const confirmBtnClass = isDestructive ? 'btn-main btn-danger' : 'btn-main';
-        const content = `<div class="menu-card"><h2>${_escapeHTML(title)}</h2><p>${_escapeHTML(message)}</p><button id="modalConfirm" class="${confirmBtnClass} menu-btn">${_escapeHTML(confirmText)}</button><button id="modalCancel" class="btn-cancel">Cancel</button></div>`;
+        const content = `<div class="menu-card"><h2>${escapeHTML(title)}</h2><p>${escapeHTML(message)}</p><button id="modalConfirm" class="${confirmBtnClass} menu-btn">${escapeHTML(confirmText)}</button><button id="modalCancel" class="btn-cancel">Cancel</button></div>`;
         this.show(content, 'card');
         document.getElementById('modalConfirm').onclick = () => { this.hide(); onConfirm(); };
         document.getElementById('modalCancel').onclick = () => { this.hide(); if (onCancel) onCancel(); };
@@ -63,9 +53,9 @@ const UIManager = {
     prompt({ title, initialValue = '', placeholder = '', confirmText = 'OK', onConfirm, onCancel }) {
         const content = `
             <div class="menu-card">
-                <h2>${_escapeHTML(title)}</h2>
-                <input type="text" id="modalInput" class="input-modal-field" value="${_escapeHTML(initialValue)}" placeholder="${_escapeHTML(placeholder)}">
-                <button id="modalConfirm" class="btn-main menu-btn">${_escapeHTML(confirmText)}</button>
+                <h2>${escapeHTML(title)}</h2>
+                <input type="text" id="modalInput" class="input-modal-field" value="${escapeHTML(initialValue)}" placeholder="${escapeHTML(placeholder)}">
+                <button id="modalConfirm" class="btn-main menu-btn">${escapeHTML(confirmText)}</button>
                 <button id="modalCancel" class="btn-cancel">Cancel</button>
             </div>
         `;

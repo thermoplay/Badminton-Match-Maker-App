@@ -7,6 +7,17 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const crypto = require('crypto'); // Node.js crypto module for hashing
 
+/** Normalize room code for consistency */
+function normalizeRoomCode(raw) {
+    if (!raw) return '';
+    let code = String(raw).toUpperCase().trim();
+    const stripped = code.replace(/[^A-Z0-9]/g, '');
+    if (stripped.length === 8 && !code.includes('-')) {
+        return stripped.slice(0, 4) + '-' + stripped.slice(4);
+    }
+    return code;
+}
+
 async function sbFetch(path, options = {}) {
     console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
     const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
@@ -36,7 +47,8 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { room_code, operator_key, squad, current_matches, player_queue } = req.body;
+    const { room_code: raw_code, operator_key, squad, current_matches, player_queue } = req.body;
+    const room_code = normalizeRoomCode(raw_code);
 
     if (!room_code || !operator_key) {
         return res.status(400).json({ error: 'Missing required fields' });

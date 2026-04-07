@@ -28,6 +28,17 @@ const crypto = require('crypto'); // Node.js crypto module for hashing
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
+/** Normalize room code for consistency */
+function normalizeRoomCode(raw) {
+    if (!raw) return '';
+    let code = String(raw).toUpperCase().trim();
+    const stripped = code.replace(/[^A-Z0-9]/g, '');
+    if (stripped.length === 8 && !code.includes('-')) {
+        return stripped.slice(0, 4) + '-' + stripped.slice(4);
+    }
+    return code;
+}
+
 async function sbFetch(path, options = {}) {
     const method = options.method || 'GET';
     const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
@@ -82,14 +93,7 @@ export default async function handler(req, res) {
         }
 
         // Clean and normalize room code
-        let code = String(room_code).toUpperCase().trim();
-        // Auto-hyphenate only if hyphen is missing and it looks like a standard 8-char code
-        if (!code.includes('-')) {
-            const stripped = code.replace(/[^A-Z0-9]/g, '');
-            if (stripped.length === 8) {
-                code = stripped.slice(0, 4) + '-' + stripped.slice(4);
-            }
-        }
+        const code = normalizeRoomCode(room_code);
 
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = String(player_uuid).trim();
@@ -161,13 +165,7 @@ export default async function handler(req, res) {
         const { room_code, status } = req.query;
         if (!room_code) return res.status(400).json({ error: 'Missing room_code' });
 
-        let code = String(room_code).toUpperCase().trim();
-        if (!code.includes('-')) {
-            const stripped = code.replace(/[^A-Z0-9]/g, '');
-            if (stripped.length === 8) {
-                code = stripped.slice(0, 4) + '-' + stripped.slice(4);
-            }
-        }
+        const code = normalizeRoomCode(room_code);
 
         // Reconciliation support: Fetch currently active members from session_members
         // This allows the host to recover players who are active in the DB but missing locally.
@@ -197,13 +195,7 @@ export default async function handler(req, res) {
         // This is an authenticated action that deletes a row from `session_members`.
         // It is triggered by the host UI (e.g., player leaves, host kicks player).
         if (player_uuid && room_code && operator_key) {
-            let code = String(room_code).toUpperCase().trim();
-            if (!code.includes('-')) {
-                const stripped = code.replace(/[^A-Z0-9]/g, '');
-                if (stripped.length === 8) {
-                    code = stripped.slice(0, 4) + '-' + stripped.slice(4);
-                }
-            }
+            const code = normalizeRoomCode(room_code);
             const uuid = String(player_uuid).trim();
 
             // --- Input Validation ---
@@ -243,13 +235,7 @@ export default async function handler(req, res) {
         // This deletes a row from `play_requests` using its unique ID.
         // It's called when the host approves or denies a join notification.
         if (id && room_code && operator_key) {
-            let code = String(room_code).toUpperCase().trim();
-            if (!code.includes('-')) {
-                const stripped = code.replace(/[^A-Z0-9]/g, '');
-                if (stripped.length === 8) {
-                    code = stripped.slice(0, 4) + '-' + stripped.slice(4);
-                }
-            }
+            const code = normalizeRoomCode(room_code);
 
             // Verify operator key
             const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
