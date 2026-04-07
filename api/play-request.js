@@ -112,7 +112,7 @@ export default async function handler(req, res) {
             sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`)
         ]);
 
-        if (!sessionCheck.ok) return res.status(500).json({ error: 'Database connection failed' });
+        if (!sessionCheck.ok) return res.status(500).json({ error: 'Database connection failed', details: sessionCheck.status });
         if (!sessionCheck.data?.length) return res.status(404).json({ error: `Room ${code} not found` });
 
         const session = sessionCheck.data[0];

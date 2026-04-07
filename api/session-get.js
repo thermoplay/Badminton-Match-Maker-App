@@ -6,17 +6,38 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-async function sbFetch(path) {
-    console.log(`[sbFetch] Making request to: ${SUPABASE_URL}/rest/v1${path}`);
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+/** Normalize room code for consistency */
+function normalizeRoomCode(raw) {
+    if (!raw) return '';
+    let code = String(raw).toUpperCase().trim();
+    const stripped = code.replace(/[^A-Z0-9]/g, '');
+    if (stripped.length === 8 && !code.includes('-')) {
+        return stripped.slice(0, 4) + '-' + stripped.slice(4);
+    }
+    return code;
+}
+
+async function sbFetch(path, options = {}) {
+    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${baseUrl}/rest/v1${cleanPath}`;
+
+    console.log(`[sbFetch] Making request to: ${url}`);
+    const res = await fetch(url, {
         headers: {
             'apikey':        SUPABASE_KEY,
             'Authorization': `Bearer ${SUPABASE_KEY}`,
             'Content-Type':  'application/json',
         },
+        method: options.method || 'GET',
     });
+
+    let data = null;
     const text = await res.text();
-    return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
+    try { if (text) data = JSON.parse(text); } catch(e) {}
+
+    if (!res.ok) console.error(`[sbFetch] Error ${res.status}:`, text);
+    return { ok: res.ok, status: res.status, data };
 }
 
 export default async function handler(req, res) {
@@ -33,11 +54,12 @@ export default async function handler(req, res) {
     }
 
     const { code } = req.query;
-    if (!code || !/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code.toUpperCase())) {
+    const codeClean = normalizeRoomCode(code);
+
+    if (!codeClean || !/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(codeClean)) {
         return res.status(400).json({ error: 'Invalid room code' });
     }
 
-    const codeClean = code.toUpperCase();
     const result = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(codeClean)}&limit=1`);
 
     if (!result.ok) {
