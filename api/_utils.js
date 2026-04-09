@@ -32,7 +32,8 @@ export async function sbFetch(path, options = {}) {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type':  'application/json',
-        'Prefer':        options.prefer || (method === '
+        'Prefer':        options.prefer || (method === 'POST' ? 'return=minimal' : 'return=representation'),
+    };
 
     try {
         const res = await fetch(url, {
