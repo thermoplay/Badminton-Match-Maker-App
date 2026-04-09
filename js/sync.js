@@ -53,7 +53,7 @@ window._sessionMembers = {};
  */
 function _generateStateHash(squad, queue) {
     // Create a deterministic string representing the core state
-    const s = (squad || []).filter(Boolean).map(p => (p.uuid || '') + (p.active ? '1' : '0')).sort().join(''); // Use UUID consistently
+    const s = (squad || []).map(p => (p.uuid || p.name) + (p.active ? '1' : '0')).sort().join('');
     const q = (queue || []).join(',');
     const str = `${s}|${q}`;
     let hash = 0;
@@ -90,32 +90,11 @@ class SupabaseRealtimeManager {
         if (this.socket) this.disconnect();
         this.roomCode = roomCode;
 
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
-
         this.socket = new WebSocket(`${this.url}?apikey=${this.key}&vsn=1.0.0`);
         this.socket.onopen    = () => this._onOpen();
         this.socket.onmessage = (msg) => this._onMessage(msg);
         this.socket.onerror   = () => this._onError();
         this.socket.onclose   = () => this._onClose();
-    }
-
-    /**
-     * Proactively verifies if the current socket is actually alive.
-     * Critical for mobile wake-from-sleep where readyState may be a "zombie" 1 (OPEN).
-     */
-    verifyConnection() {
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-            Log.info('Realtime: Socket not open, initiating connection...');
-            this.connect(this.roomCode);
-            return;
-        }
-        
-        // Force an immediate heartbeat to flush the pipe and verify TCP health
-        Log.debug('Realtime: Proactively verifying connection health...');
-        this._sendHeartbeat(`hb-verify-${Date.now()}`);
     }
 
     disconnect() {
@@ -162,7 +141,7 @@ class SupabaseRealtimeManager {
             config: {
                 broadcast: { self: false },
                 presence: { key: '' },
-                postgres_changes: [{ event: 'UPDATE', schema: 'public', table: 'sessions', filter: `room_code=eq.${roomCode}` }]
+                postgres_changes: [{ event: 'UPDATE', schema: 'public', table: 'sessions', filter: `room_code=eq."${roomCode}"` }]
             }
         });
 
@@ -174,7 +153,7 @@ class SupabaseRealtimeManager {
             config: {
                 broadcast: { self: false },
                 presence: { key: '' },
-                postgres_changes: [{ event: '*', schema: 'public', table: 'session_members', filter: `room_code=eq.${roomCode}` }]
+                postgres_changes: [{ event: '*', schema: 'public', table: 'session_members', filter: `room_code=eq."${roomCode}"` }]
             }
         });
 
@@ -184,7 +163,7 @@ class SupabaseRealtimeManager {
                 config: {
                     broadcast: { self: false },
                     presence: { key: '' },
-                    postgres_changes: [{ event: 'INSERT', schema: 'public', table: 'play_requests', filter: `room_code=eq.${roomCode}` }]
+                    postgres_changes: [{ event: 'INSERT', schema: 'public', table: 'play_requests', filter: `room_code=eq."${roomCode}"` }]
                 }
             });
         }
@@ -193,7 +172,7 @@ class SupabaseRealtimeManager {
         join('realtime:public:passport_signals', {
             config: {
                 broadcast: { self: false },
-                postgres_changes: [{ event: 'INSERT', schema: 'public', table: 'passport_signals', filter: `room_code=eq.${roomCode}` }]
+                postgres_changes: [{ event: 'INSERT', schema: 'public', table: 'passport_signals', filter: `room_code=eq."${roomCode}"` }]
             }
         });
 
@@ -210,7 +189,7 @@ class SupabaseRealtimeManager {
 
     _flushPendingActions() {
         if (_pendingActions.length === 0) return;
-        Log.info(`Connection restored. Flushing ${_pendingActions.length} pending actions...`);
+        console.log(`[CourtSide] Connection restored. Flushing ${_pendingActions.length} pending actions...`);
         while(_pendingActions.length > 0) {
             const { type, payload } = _pendingActions.shift();
             this.broadcast(type, payload);
@@ -224,7 +203,7 @@ class SupabaseRealtimeManager {
             // Phoenix Reply handling (Joins, Heartbeats)
             if (data.event === 'phx_reply' && data.ref) {
                 if (this.pendingHeartbeats.has(data.ref)) this._measureLatency(data.ref);
-                if (data.payload?.status === 'error') Log.error('Realtime error:', data.payload.response);
+                if (data.payload?.status === 'error') console.error('[CourtSide] Realtime error:', data.payload.response);
                 return;
             }
 
@@ -239,7 +218,7 @@ class SupabaseRealtimeManager {
             else if (data.event === 'broadcast' && data.payload?.type) _handleBroadcast(data.payload);
 
         } catch (e) {
-            Log.error('Realtime: Error processing message', e);
+            console.error('[CourtSide] Realtime: Error processing message', e);
         }
     }
 
@@ -254,7 +233,7 @@ class SupabaseRealtimeManager {
             // Exponential Backoff: 1s, 2s, 4s... up to 30s
             const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
             this.reconnectAttempts++;
-            this.reconnectTimer = setTimeout(() => this.connect(this.roomCode), delay);
+            setTimeout(() => this.connect(this.roomCode), delay);
         }
     }
 
@@ -263,16 +242,14 @@ class SupabaseRealtimeManager {
         this.heartbeatInterval = setInterval(() => {
             if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
             const ref = `hb-${Date.now()}`;
-            this._sendHeartbeat(ref);
+            this.pendingHeartbeats.set(ref, Date.now());
+            this.socket.send(JSON.stringify({
+                topic: 'phoenix',
+                event: 'heartbeat',
+                payload: {},
+                ref: ref
+            }));
         }, 5000); // 5s ping
-    }
-
-    _sendHeartbeat(ref) {
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-        this.pendingHeartbeats.set(ref, Date.now());
-        this.socket.send(JSON.stringify({
-            topic: 'phoenix', event: 'heartbeat', payload: {}, ref: ref
-        }));
     }
 
     _stopHeartbeat() {
@@ -309,7 +286,6 @@ async function apiCall(route, options = {}, retries = 2) {
         headers: { 'Content-Type': 'application/json' },
         body:    options.body ? JSON.stringify(options.body) : undefined,
     };
-    Log.info(`[API] Requesting: ${url}`);
 
     for (let i = 0; i <= retries; i++) {
         try {
@@ -347,7 +323,7 @@ async function createOnlineSession() {
     try {
         const roomCode = generateRoomCode();
         const opKey    = generateOperatorKey();
-        const result   = await apiCall('sessions', {
+        const result   = await apiCall('session-create', {
             method: 'POST',
             body: {
                 room_code: roomCode,
@@ -355,7 +331,7 @@ async function createOnlineSession() {
                 court_names: StateStore.get('courtNames'),
                 squad: StateStore.squad,
                 current_matches: StateStore.currentMatches,
-                player_queue: StateStore.playerQueue,
+                player_queue: StateStore.playerQueue
             },
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
@@ -387,7 +363,7 @@ async function createOnlineSession() {
         Haptic.success();
         _updatePlayerCount();
     } catch (e) {
-        Log.error('create failed', e);
+        console.error('CourtSide: create failed', e);
         showSyncStatus(e.message || 'Failed to create session. Check connection.', 'error');
         Haptic.error();
     }
@@ -398,12 +374,15 @@ async function createOnlineSession() {
 // ---------------------------------------------------------------------------
 
 async function joinOnlineSession(roomCode) {
-    const code = normalizeRoomCode(roomCode);
+    let code = (roomCode || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (code.length === 8) {
+        code = code.slice(0, 4) + '-' + code.slice(4);
+    }
 
     if (!code) return;
     showSyncStatus('Joining…', 'info');
     try {
-        const result = await apiCall(`sessions?code=${encodeURIComponent(code)}`);
+        const result = await apiCall(`session-get?code=${encodeURIComponent(code)}`);
         if (!result.ok) {
             const msg = result.status === 0 ? 'Network error. Retrying...' : 'Room not found. Check code.';
             showSyncStatus(msg, 'error');
@@ -422,7 +401,7 @@ async function joinOnlineSession(roomCode) {
         const savedHash  = localStorage.getItem('cs_op_key_hash');
         currentRoomCode = code;
         isOnlineSession = true;
-        if (savedCode === code && savedOpKey) {
+        if (savedCode === code && savedHash && savedHash === session.operator_key) {
             isOperator      = true;
             operatorKey     = savedOpKey;
             operatorKeyHash = savedHash;
@@ -445,7 +424,7 @@ async function joinOnlineSession(roomCode) {
         closeOverlay();
         Haptic.bump();
     } catch (e) {
-        Log.error('join failed', e);
+        console.error('CourtSide: join failed', e);
         showSyncStatus('Could not join. Try again.', 'error');
         Haptic.error();
     }
@@ -490,9 +469,9 @@ function pushStateToSupabase(force = false, targetUUIDs = null) {
         _dirtyUUIDs = new Set();
 
         try {
-            const res = await apiCall('sessions', {
+            const res = await apiCall('session-update', {
                 method: 'PATCH',
-                body: { 
+                body: {
                     room_code:        currentRoomCode,
                     operator_key:     operatorKey,
                     squad:            squadToSend,
@@ -639,11 +618,6 @@ function broadcastMatchResult(winnerUUIDs, loserUUIDs, gameLabel) {
     });
 }
 
-function broadcastPlayerRemoved(playerUUID, playerName) {
-    if (!isOperator) return;
-    _broadcast('player_removed', { playerUUID, playerName });
-}
-
 /**
  * BUG 3 FIX — player broadcasts their name change to the host.
  * Any subscriber can call this (not operator-only).
@@ -675,7 +649,7 @@ function broadcastSessionEnded(recapData) {
 async function memberApprove(playerUUID) {
     if (!isOperator || !currentRoomCode || !operatorKey || !playerUUID) return;
     try {
-        const r = await fetch('/api/members', {
+        const r = await fetch('/api/member-approve', {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -684,8 +658,8 @@ async function memberApprove(playerUUID) {
                 operator_key: operatorKey,
             }),
         });
-        if (!r.ok) Log.error('member-approve failed:', r.status);
-    } catch (e) { Log.error('member-approve error:', e); }
+        if (!r.ok) console.error('[CourtSide] member-approve failed:', r.status);
+    } catch (e) { console.error('[CourtSide] member-approve error:', e); }
 }
 window.memberApprove = memberApprove;
 
@@ -696,7 +670,7 @@ window.memberApprove = memberApprove;
 async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
     if (!currentRoomCode || !playerUUID) return;
     try {
-        const r = await fetch('/api/members', {
+        const r = await fetch('/api/member-rename', {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -706,8 +680,8 @@ async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
                 spirit_animal: spiritAnimal
             }),
         });
-        if (!r.ok) Log.error('member-rename failed:', r.status);
-    } catch (e) { Log.error('member-rename error:', e); }
+        if (!r.ok) console.error('[CourtSide] member-rename failed:', r.status);
+    } catch (e) { console.error('[CourtSide] member-rename error:', e); }
 }
 
 /**
@@ -724,12 +698,15 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     // before falling back to the module-level variable or window global.
     // The module-level currentRoomCode may not be set yet if joinOnlineSession()
     // is still in-flight when this is called from PlayerMode.boot().
-    let roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || '';
-    // Normalize room code for consistency with API
-    currentRoomCode = normalizeRoomCode(roomCode); // keep local var in sync
+    let roomCode = explicitRoomCode || currentRoomCode || window.currentRoomCode || null;
+    if (roomCode) {
+        roomCode = roomCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (roomCode.length === 8) roomCode = roomCode.slice(0, 4) + '-' + roomCode.slice(4);
+    }
+    currentRoomCode        = roomCode; // keep local var in sync
     _syncState();
     try {
-        const r = await fetch('/api/members', {
+        const r = await fetch('/api/member-upsert', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -739,9 +716,9 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
                 spirit_animal: emoji
             }),
         });
-        if (!r.ok) { Log.error('member-upsert failed:', r.status); return null; }
+        if (!r.ok) { console.error('[CourtSide] member-upsert failed:', r.status); return null; }
         return await r.json();  // { ok, status, member }
-    } catch (e) { Log.error('member-upsert error:', e); return null; }
+    } catch (e) { console.error('[CourtSide] member-upsert error:', e); return null; }
 }
 
 // ---------------------------------------------------------------------------
@@ -855,10 +832,14 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     if (!newName?.trim() || !playerUUID) return;
     const trimmed = newName.trim();
 
-    const currentSquad = StateStore.squad;
-    const playerIndex = currentSquad.findIndex(p => p.uuid === playerUUID || p.name === oldName);
+    // 1. Find player by UUID (stored on squad member at approval) — rename-safe
+    let player = StateStore.squad.find(p => p.uuid === playerUUID);
+    // 2. Fallback: find by oldName if uuid not yet on squad member
+    if (!player) player = StateStore.squad.find(p => p.name === oldName);
 
-    if (playerIndex === -1) {
+    if (!player) {
+        // If player is pending (not in squad yet), update the local playRequests cache
+        // so the Join Notification UI shows the new name immediately.
         if (typeof window.playRequests !== 'undefined') {
             const req = window.playRequests.find(r => r.player_uuid === playerUUID || r.name === oldName);
             if (req) {
@@ -869,14 +850,9 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
         return;
     }
 
-    const player = currentSquad[playerIndex];
     const prevName = player.name;
-    const prevUUID = player.uuid;
-
-    // Create updated player object (Immutable)
-    const updatedPlayer = { ...player, name: trimmed, uuid: playerUUID };
-    const newSquad = [...currentSquad];
-    newSquad[playerIndex] = updatedPlayer;
+    player.name    = trimmed;
+    player.uuid    = playerUUID;   // ensure uuid is set for future lookups
 
     // Update uuid_map: rename the key, ensure new key exists
     const uuidMap = window._sessionUUIDMap || {};
@@ -886,36 +862,43 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     uuidMap[trimmed] = playerUUID;
     window._sessionUUIDMap = uuidMap;
 
+    // KEY FIX: Update name in player queue to prevent player from being removed during sync
+    if (StateStore.playerQueue) {
+        const newQueue = StateStore.playerQueue.map(n => (n === prevName ? trimmed : n));
+        StateStore.set('playerQueue', newQueue);
+    }
+
     // KEY FIX: Update name in approved players list (used for DB push)
     if (window._approvedPlayers) {
         const entry = window._approvedPlayers[playerUUID] || window._approvedPlayers[prevName];
         if (entry) {
             entry.name = trimmed;
+            if (window._approvedPlayers[prevName]) {
+                delete window._approvedPlayers[prevName];
+                window._approvedPlayers[playerUUID] = entry;
+            }
         }
     }
 
-    // --- UUID CORRECTION SYNC ---
-    // If the player's UUID changed (e.g. host-added dummy ID replaced by real Passport ID),
-    // we must update the UUID in the playerQueue and any current matches to prevent state break.
-    if (prevUUID && prevUUID !== playerUUID) {
-        const newQueue = StateStore.playerQueue.map(u => u === prevUUID ? playerUUID : u);
-        const newMatches = StateStore.currentMatches.map(m => ({
-            ...m,
-            teams: m.teams.map(t => t.map(u => u === prevUUID ? playerUUID : u))
-        }));
-        
-        StateStore.setState({
-            squad: newSquad,
-            playerQueue: newQueue,
-            currentMatches: newMatches
+    // Update active matches if the player is currently in a game
+    let matchUpdated = false;
+    if (StateStore.currentMatches) {
+        StateStore.currentMatches.forEach(m => {
+            m.teams.forEach((team, tIdx) => {
+                if (team.includes(prevName)) {
+                    m.teams[tIdx] = team.map(n => n === prevName ? trimmed : n);
+                    matchUpdated = true;
+                }
+            });
         });
-    } else {
-        StateStore.set('squad', newSquad);
     }
 
     renderSquad();
-    rebuildMatchCardIndices();
+    if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    
+    // Reactive sync via StateStore ensures DB and spectators stay updated
+    StateStore.set('squad', StateStore.squad);
 
     // Force an immediate broadcast to bypass the 200ms throttle for real-time responsiveness
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
@@ -923,7 +906,6 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
 window._applyNameUpdate = _applyNameUpdate;
-window._applySpiritAnimalUpdate = _applySpiritAnimalUpdate;
 window._generateStateHash = _generateStateHash;
 
 // Host applies a spirit animal update broadcast from a player
@@ -963,11 +945,7 @@ function _applyStatusUpdate(playerUUID, isActive) {
     if (oldStatus !== player.active) {
         renderSquad();
         checkNextButtonState();
-        if (typeof renderQueueStrip === 'function') renderQueueStrip();
-        // Group the squad update atomically with StateStore.setState
-        // The player object within squad is already mutated in place, so passing
-        // the existing squad reference here is sufficient to signal the change.
-        StateStore.setState({ squad: StateStore.squad });
+        StateStore.set('squad', StateStore.squad);
 
         // Force immediate broadcast so the Ready/Resting status updates instantly for everyone
         if (typeof broadcastGameState === 'function') broadcastGameState(true);
@@ -996,7 +974,7 @@ function _handlePostgresChange(payload) {
 
     if (table === 'play_requests' || payload?.data?.table === 'play_requests') {
         if (isOperator && record && typeof window.onPlayRequestInsert === 'function') {
-            Log.info('Realtime: New play request received', record);
+            console.log('[CourtSide] Realtime: New play request received', record);
             window.onPlayRequestInsert(record);
         }
         return;
@@ -1095,7 +1073,7 @@ function applyRemoteState(session) {
 
     const ts = session.last_active ? new Date(session.last_active).getTime() : 0;
     if (ts > 0 && ts < _lastRemoteUpdate) {
-        Log.info('ignoring stale remote update');
+        console.log('CourtSide: ignoring stale remote update');
         return;
     }
     _lastRemoteUpdate = ts || Date.now();
@@ -1114,7 +1092,7 @@ function applyRemoteState(session) {
             ]
         };
     });
-    const loadedQueue = (session.player_queue || []).filter(uuid => loadedSquad.find(p => p.uuid === uuid)); // FIX: Filter by UUID
+    const loadedQueue = (session.player_queue || []).filter(name => loadedSquad.find(p => p.name === name));
     const loadedCourtNames = session.court_names || {};
     let loadedCourts = 1;
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
@@ -1211,13 +1189,6 @@ function _handleMemberChange(record, oldRecord, eventType) {
                 // Delegate to _applyNameUpdate which handles uuid_map + squad + render
                 _applyNameUpdate(uuid, prev.player_name, name);
                 showSessionToast(`✏️ ${prev.player_name} → ${name}`);
-            }
-
-            // Auto-sync for Open Party: If a member is active but not in squad, add them
-            if (record.status === 'active') {
-                if (typeof window.autoAddOpenPlayer === 'function') {
-                    window.autoAddOpenPlayer(record);
-                }
             }
         } else if (eventType === 'DELETE') {
             delete window._sessionMembers[uuid];
@@ -1339,13 +1310,14 @@ function showReconnectingIndicator(show, text = '⟳ Reconnecting…') {
 async function endAndDeleteSession() {
     if (!isOperator || !currentRoomCode) return;
     try {
-        await apiCall('sessions', {
+        await apiCall('session-delete', {
             method: 'DELETE',
             body: { room_code: currentRoomCode, operator_key: operatorKey },
         });
-    } catch (e) { Log.error('delete failed', e); }
+    } catch (e) { console.error('CourtSide: delete failed', e); }
     leaveSession();
 }
+
 // ---------------------------------------------------------------------------
 // UI helpers
 // ---------------------------------------------------------------------------
@@ -1362,7 +1334,7 @@ function updateSessionUI() {
     badge.className     = 'session-badge';
     badge.innerHTML = `
         <span class="session-dot ${isOperator ? 'dot-operator' : 'dot-spectator'}"></span>
-        <span class="session-code" style="cursor:pointer;" onclick="copyInviteLink()" title="Tap to share invite">${currentRoomCode} 🔗</span>
+        <span class="session-code">${currentRoomCode}</span>
         <span class="session-role">${isOperator ? 'HOST' : 'LIVE'}</span>
     `;
     if (!isOperator) document.body.classList.add('spectator-mode');
@@ -1420,112 +1392,97 @@ async function tryAutoRejoin() {
     const role      = urlParams.get('role');
 
     if (joinCode) {
+        // In player mode, PlayerMode.boot() (triggered by window.onload) owns the
+        // full join flow. We must NOT call joinOnlineSession here because it would
+        // race with boot(), call applyRemoteState() with _joinCode=null, and
+        // overwrite the sideline view before boot() has set PlayerMode._joinCode.
+        // Instead, just pre-seed the room code so memberUpsert() has it available.
         if (role === 'player') {
             currentRoomCode        = joinCode;
             window.currentRoomCode = joinCode;
+            // Save joinCode to window so window.onload can read it even after URL is cleaned
             window._pendingJoinCode = joinCode;
             _syncState();
+            // Strip ?join= but preserve ?role= so window.onload can still see it
             const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
             window.history.replaceState({}, document.title, cleanUrl);
             return;
         }
-        const cleanUrl = window.location.origin + window.location.pathname + (role ? `?role=${role}` : '');
+        // Host/spectator mode: do the full join
+        const cleanUrl = window.location.origin + window.location.pathname +
+            (role ? `?role=${role}` : '');
         window.history.replaceState({}, document.title, cleanUrl);
         await joinOnlineSession(joinCode);
         return;
     }
-
     const savedCode = localStorage.getItem('cs_room_code');
     if (!savedCode) return;
-
     try {
-        let sessionData = null;
-        const result = await apiCall(`sessions?code=${encodeURIComponent(savedCode)}`);
-        
+        const result = await apiCall(`session-get?code=${encodeURIComponent(savedCode)}`);
         if (!result.ok) {
+            // FIX: Only wipe if the session is confirmed GONE (404).
+            // If it's a network error (status 0) or server error (500), 
+            // we keep the credentials and will try to reconnect via the online listener.
             if (result.status === 404) {
                 localStorage.removeItem('cs_room_code');
                 localStorage.removeItem('cs_operator_key');
                 localStorage.removeItem('cs_op_key_hash');
+                
+                // PROACTIVE CLEANUP: Clear session-specific stale data from local vault
                 const saved = localStorage.getItem('cs_pro_vault');
                 if (saved) {
                     const data = JSON.parse(saved);
                     data.currentMatches = [];
                     data.roundHistory = [];
-                    data.guestList = [];
+                    data.guestList = []; // Clear guests to prevent stale data in next session
                     localStorage.setItem('cs_pro_vault', JSON.stringify(data));
                 }
-                return; 
-            } else {
-                console.warn(`[CourtSide] session-get error ${result.status}. Attempting Realtime recovery.`);
-                showSyncStatus(`Connection error. Attempting to reconnect...`, 'error');
             }
-        } else {
-            sessionData = result.data?.session || result.data;
-            if (!sessionData) throw new Error('Invalid session data received from server.');
+            return;
         }
-
+        const session = result.data?.session || result.data;
         currentRoomCode = savedCode;
         isOnlineSession = true;
-
-        const savedOpKey = localStorage.getItem('cs_operator_key');
-        const savedHash  = localStorage.getItem('cs_op_key_hash');
-
-        if (sessionData) {
-            // Since the server no longer returns the operator_key hash for security,
-            // we trust our local credentials if they exist for this specific room code.
-            if (savedOpKey && savedCode === currentRoomCode) {
-                isOperator      = true;
-                operatorKey     = savedOpKey;
-                operatorKeyHash = savedHash;
-            } else {
-                isOperator      = false;
-                operatorKey     = null;
-                operatorKeyHash = null;
-            }
-            showSessionToast(`👁 Rejoined session`);
-        } else {
-            // Network error path: fallback to local credentials to keep UI functional
-            isOperator      = !!savedOpKey;
-            operatorKey     = savedOpKey;
+        const savedHash = localStorage.getItem('cs_op_key_hash');
+        if (savedHash && savedHash === session.operator_key) {
+            isOperator      = true;
+            operatorKey     = localStorage.getItem('cs_operator_key');
             operatorKeyHash = savedHash;
+        } else {
+            isOperator = false;
         }
-        
         _syncState();
-        _isBootingSession = true;
 
+        // CONFLICT RESOLUTION:
+        // Enhanced strategy: Check if local state has unsaved changes.
         const hasPending = localStorage.getItem('cs_pending_sync') === 'true';
-        if (sessionData) {
-            if (isOperator && hasPending) {
-                UIManager.confirm({
-                    title: 'Sync Conflict',
-                    message: 'You have unsaved local changes from a previous connection. Keep local state or load from server?',
-                    confirmText: 'Keep Local',
-                    onConfirm: () => { Log.info('Host choosing local state.'); pushStateToSupabase(); _finalizeRejoin(savedCode); },
-                    onCancel: () => { Log.info('Host choosing server state.'); applyRemoteState(sessionData); localStorage.removeItem('cs_pending_sync'); _finalizeRejoin(savedCode); }
-                });
-                return; // Callback handles finalization
-            } else {
-                applyRemoteState(sessionData);
-            }
-        }
-
-        _finalizeRejoin(savedCode);
-
-    } catch (e) {
-        Log.error('tryAutoRejoin failed', e);
-        if (savedCode) {
-            currentRoomCode = savedCode;
-            isOnlineSession = true;
-            isOperator = !!localStorage.getItem('cs_operator_key');
-            operatorKey = localStorage.getItem('cs_operator_key');
-            operatorKeyHash = localStorage.getItem('cs_op_key_hash');
-            _syncState();
+        
+        _isBootingSession = true;
+        if (isOperator && hasPending) {
+            // Conflict! Prompt host.
+            UIManager.confirm({
+                title: 'Sync Conflict',
+                message: 'You have unsaved local changes from a previous connection. Keep local state or load from server?',
+                confirmText: 'Keep Local',
+                onConfirm: () => {
+                    console.log('[CourtSide] Host choosing local state.');
+                    pushStateToSupabase();
+                    _finalizeRejoin(savedCode);
+                },
+                onCancel: () => {
+                    console.log('[CourtSide] Host choosing server state.');
+                    applyRemoteState(session);
+                    localStorage.removeItem('cs_pending_sync');
+                    _finalizeRejoin(savedCode);
+                }
+            });
+        } else {
+            applyRemoteState(session);
             _finalizeRejoin(savedCode);
-            showSyncStatus('Connection failed. Attempting to reconnect...', 'error');
         }
-    }
-}   
+    } catch { /* silently stay offline */ }
+}
+
 function _finalizeRejoin(savedCode) {
     _isBootingSession = false;
     if (!sbManager) sbManager = new SupabaseRealtimeManager(_RT_URL, _RT_KEY);
@@ -1556,18 +1513,13 @@ window.addEventListener('online', () => {
 // Visibility change handler for mobile sleep/wake cycles
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && isOnlineSession) {
-        Log.info('Tab resumed, verifying connectivity...');
-        
-        if (sbManager) {
-            // Reset backoff counter on manual resume to ensure immediate retry
-            sbManager.reconnectAttempts = 0;
-            sbManager.verifyConnection();
-        }
-
-        // Force a background state refresh for everyone (Host and Player) 
-        // to catch anything missed while the app was backgrounded.
-        if (typeof SidelineView !== 'undefined' && currentRoomCode) {
-            SidelineView._performRefresh(true); // silent refresh
+        // If socket is stale or dead, reconnect immediately
+        if (!sbManager || !sbManager.socket || sbManager.socket.readyState !== WebSocket.OPEN) {
+            console.log('[CourtSide] Tab resumed, reconnecting socket...');
+            if (sbManager) sbManager.connect(currentRoomCode);
+        } else if (!isOperator && typeof SidelineView !== 'undefined') {
+            // Refresh state to catch missed broadcasts while backgrounded
+            SidelineView._performRefresh(true);
         }
     }
 });
@@ -1582,22 +1534,23 @@ let presenceHeartbeat = null;
 async function registerPresence() {
     if (isOperator) return;
     try {
-        await apiCall('sessions', {
+        await apiCall('session-presence', {
             method: 'POST',
             body: { room_code: currentRoomCode, action: 'join' },
         });
         clearInterval(presenceHeartbeat);
         presenceHeartbeat = setInterval(async () => {
             if (!isOnlineSession) { clearInterval(presenceHeartbeat); return; }
-            await apiCall('sessions', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
+            await apiCall('session-presence', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
         }, 20000);
-    } catch (e) { Log.error('presence registration failed', e); }
+    } catch { /* silent */ }
 }
 
 function updateSpectatorCount(count) {
     spectatorCount = count;
     const countEl = document.getElementById('spectatorCount');
     if (countEl) {
+        countEl.textContent   = `👁 ${count}`;
         countEl.style.display = count > 0 ? 'inline-flex' : 'none';
     }
 }
@@ -1641,7 +1594,7 @@ async function archiveRoundToSupabase(snapshot) {
                 squad:     snapshot.squadSnapshot || [],
             }),
         });
-    } catch (e) { Log.error('archive failed', e); }
+    } catch (e) { console.error('CourtSide: archive failed', e); }
 }
 
 // ---------------------------------------------------------------------------

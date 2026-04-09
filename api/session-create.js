@@ -7,34 +7,20 @@
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const crypto = require('crypto'); // Node.js crypto module for hashing
-import { ROOM_CODE_REGEX, normalizeRoomCode } from './_utils';
 
 async function sbFetch(path, options = {}) {
-    if (!SUPABASE_URL || !SUPABASE_KEY) {
-        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
-    }
-
-    const method = options.method || 'GET';
-    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
-
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    const url = `${baseUrl}/rest/v1${cleanPath}`;
-
-    console.log(`[sbFetch] Making request to: ${url}`);
     const controller = new AbortController();
     // Fix: Reduce timeout to 9s to ensure we catch it before Vercel's 10s hard limit
     const timeout    = setTimeout(() => controller.abort(), 9000);
     try {
-        const res = await fetch(url, {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
             headers: {
                 'apikey':        SUPABASE_KEY,
                 'Authorization': `Bearer ${SUPABASE_KEY}`,
                 'Content-Type':  'application/json',
                 'Prefer':        options.prefer || 'return=representation',
             },
-            method: method,
+            method: options.method || 'GET',
             body:   options.body ? JSON.stringify(options.body) : undefined,
             signal: controller.signal,
         });
@@ -45,6 +31,18 @@ async function sbFetch(path, options = {}) {
         clearTimeout(timeout);
         if (e.name === 'AbortError') throw new Error('Supabase request timed out');
         throw e;
+    }
+}
+
+async function cleanupStaleSessions() {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    try {
+        await sbFetch(
+            `/sessions?last_active=lt.${encodeURIComponent(cutoff)}`,
+            { method: 'DELETE', prefer: 'return=minimal' }
+        );
+    } catch (e) {
+        console.warn('[session-create] Stale cleanup failed:', e.message);
     }
 }
 
@@ -66,24 +64,24 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Server Error: Missing SUPABASE_URL or KEY' });
     }
 
-    // 2. Body Validation
-    if (!req.body) return res.status(400).json({ error: 'Empty body' });
-    const { room_code: raw_code, operator_key, operator_key_hash, squad, current_matches, player_queue } = req.body;
+    const { room_code, operator_key, operator_key_hash, squad, current_matches, player_queue } = req.body;
 
-    const room_code = normalizeRoomCode(raw_code);
-
-    // Always hash the incoming operator_key for storage
-    const finalHash = operator_key ? crypto.createHash('sha256').update(operator_key).digest('hex') : null;
+    // Hash the raw key if provided, otherwise use the pre-hashed one (for future compatibility)
+    let finalHash = operator_key_hash;
+    if (!finalHash && operator_key) {
+        finalHash = operator_key;
+    }
 
     if (!room_code || !finalHash) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    if (!ROOM_CODE_REGEX.test(room_code)) {
+    if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(room_code)) {
         return res.status(400).json({ error: 'Invalid room code format' });
     }
 
-    // TODO: Move cleanupStaleSessions to a Vercel Cron Job to keep this function snappy.
+    // Run cleanup in parallel — doesn't block the response
+    cleanupStaleSessions().catch(err => console.warn('Cleanup failed', err));
 
     try {
         const result = await sbFetch('/sessions', {

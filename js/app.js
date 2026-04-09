@@ -61,7 +61,7 @@ function saveToDisk() {
         };
         localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
     } catch (e) {
-        Log.warn('Failed to save to disk. Storage might be full.', e);
+        console.warn('CourtSide: Failed to save to disk. Storage might be full.', e);
         if (typeof showSessionToast === 'function') showSessionToast('⚠️ Storage warning: Data not saved locally.');
     }
 }
@@ -85,7 +85,7 @@ function migratePlayer(p) {
     if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
     if (p.matchHistory     == null) p.matchHistory     = [];
-    if (!p.uuid) p.uuid = Passport._uuid(); // Ensure everyone has an ID for achievements
+    if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
     if (p.spiritAnimal     == null) p.spiritAnimal     = null;
     return p;
 }
@@ -128,7 +128,7 @@ function loadFromDisk() {
             if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
             renderQueueStrip();
         } catch (e) {
-            Log.error('Failed to parse saved data.', e);
+            console.error('CourtSide: Failed to parse saved data.', e);
             StateStore.setState({ squad: [], currentMatches: [], roundHistory: [] });
         }
     }
@@ -157,7 +157,7 @@ function addPlayer() {
     // Use migratePlayer to ensure all required logic fields (ELO, stats) are initialized
     const newPlayer = migratePlayer({
         name: name,
-        uuid: Passport._uuid(),
+        uuid: _generateUUID(),
         active: true
     });
     
@@ -198,7 +198,7 @@ function editPlayerName() {
             if (!trimmedNewName) return;
 
             // Check for name collision (case-insensitive, but not against the player's own old name)
-            if (StateStore.squad.some(player => player && player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
+            if (StateStore.squad.some(player => player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
                 alert('A player with this name already exists.');
                 return;
             }
@@ -242,20 +242,6 @@ function toggleBatterySaver() {
 }
 window.toggleBatterySaver = toggleBatterySaver;
 
-function toggleOpenParty() {
-    const current = StateStore.get('isOpenParty') || false;
-    const next = !current;
-    StateStore.set('isOpenParty', next);
-    showSessionToast(`🔓 Open Party: ${next ? 'ON' : 'OFF'}`);
-    if (next && window.playRequests && window.playRequests.length > 0) {
-        [...window.playRequests].forEach(r => {
-            approvePlayRequest(r.name, r.id, r.player_uuid || null);
-        });
-    }
-    showOverlay('sync');
-}
-window.toggleOpenParty = toggleOpenParty;
-
 /**
  * Forces a reconciliation of the player queue with the active squad.
  * Useful for fixing edge-case ordering issues or missing players.
@@ -291,9 +277,6 @@ function deletePlayer() {
             if (typeof removePlayerFromSession === 'function') {
                 await removePlayerFromSession(p.uuid, p.name);
             }
-            if (typeof broadcastPlayerRemoved === 'function') {
-                broadcastPlayerRemoved(p.uuid, p.name);
-            }
             closeMenu();
         }
     });
@@ -313,7 +296,7 @@ function completeSwap(targetUUID) {
     const p2 = StateStore.squad.find(x => x.uuid === targetUUID);
     
     if (p1 && p2 && typeof window.swapActivePlayers === 'function') {
-        if (window.swapActivePlayers(p1.uuid, p2.uuid)) {
+        if (window.swapActivePlayers(p1.name, p2.name)) {
             showSessionToast(`Swapped ${p1.name} & ${p2.name}`);
             Haptic.success(); // StateStore.set in swapActivePlayers will trigger sync
         } else {
@@ -350,7 +333,7 @@ function _autoAddHostToSquad() {
     const hostUUID = passport.playerUUID;
 
     // Check if a player with this UUID or name already exists.
-    const hostIsInSquad = StateStore.squad.some(p => p && ((p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase()));
+    const hostIsInSquad = StateStore.squad.some(p => (p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase());
 
     if (!hostIsInSquad) {
         const hostAsPlayer = migratePlayer({ // Use migratePlayer to ensure all fields are present
@@ -360,8 +343,8 @@ function _autoAddHostToSquad() {
         
         StateStore.squad.unshift(hostAsPlayer); // Add to the front of the squad list
         
-        if (!StateStore.playerQueue.includes(hostUUID)) {
-            StateStore.playerQueue.unshift(hostUUID); // Also add to front of queue
+        if (!StateStore.playerQueue.includes(hostName)) {
+            StateStore.playerQueue.unshift(hostName); // Also add to front of queue
         }
         
         StateStore.set('squad', StateStore.squad); // Trigger sync
@@ -419,7 +402,7 @@ async function _removePlayerFromRemoteDB(playerUUID) {
             })
         });
     } catch (e) {
-        Log.error('Failed to remove member from DB session', e);
+        console.error('[CourtSide] Failed to remove member from DB session', e);
     }
 }
 
@@ -429,10 +412,10 @@ async function removePlayerFromSession(playerUUID, playerName) {
 
     let pIndex = -1;
     if (playerUUID) {
-        pIndex = StateStore.squad.findIndex(p => p && p.uuid === playerUUID);
+        pIndex = StateStore.squad.findIndex(p => p.uuid === playerUUID);
     }
     if (pIndex === -1 && playerName) {
-        pIndex = StateStore.squad.findIndex(p => p && p.name.toLowerCase() === playerName.toLowerCase());
+        pIndex = StateStore.squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
     }
 
     if (pIndex === -1) return; // Player not in squad
@@ -462,39 +445,19 @@ function renderSquad() {
     const container = document.getElementById('squadList');
     if (!container) return;
 
-    // Ensure search bar exists
-    if (!document.getElementById('squadSearchInput')) {
-        const searchWrap = document.createElement('div');
-        searchWrap.className = 'input-row';
-        searchWrap.style.marginBottom = '12px';
-        searchWrap.innerHTML = `
-            <input type="text" id="squadSearchInput" placeholder="Search players..." 
-                   style="flex:1;" oninput="window.squadSearchQuery = this.value; renderSquad();">
-        `;
-        container.parentNode.insertBefore(searchWrap, container);
-    }
-
-    const query = (window.squadSearchQuery || '').toLowerCase().trim();
-
     const existingChips = new Map();
     container.querySelectorAll('.player-chip').forEach(chip => {
         const uuid = chip.dataset.uuid;
         if (uuid) existingChips.set(uuid, chip);
     });
 
-    const newContent = document.createDocumentFragment();
+    const fragment = document.createDocumentFragment();
 
-    StateStore.squad.forEach((p, idx) => {
-        if (!p) return;
-        // Apply search filter
-        if (query && !p.name.toLowerCase().includes(query)) return;
-
+    StateStore.squad.forEach(p => {
         const isNew = p.games === 0 && p.wins === 0;
-        const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
             <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
-            ${waitBadge}
         `;
         const isSwapping = p.uuid === swapSourceUUID;
         const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''}`;
@@ -506,8 +469,10 @@ function renderSquad() {
             if (chip.className !== chipClasses) {
                 chip.className = chipClasses;
             }
-            // Update innerHTML if content changed (includes wait badge)
-            if (chip.innerHTML !== chipContent) {
+            // A simple check on the name span's content is enough to trigger a refresh of the chip's innerHTML.
+            const currentNameHTML = chip.querySelector('.chip-name')?.innerHTML || '';
+            const newNameHTML = `${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}`;
+            if (currentNameHTML !== newNameHTML) {
                 chip.innerHTML = chipContent;
             }
             existingChips.delete(p.uuid);
@@ -522,9 +487,12 @@ function renderSquad() {
             newChip.addEventListener('touchstart', () => startPress(p.uuid));
             newChip.addEventListener('touchend', () => endPress(p.uuid));
             newChip.addEventListener('contextmenu', (e) => e.preventDefault());
-            newContent.appendChild(newChip);
+            fragment.appendChild(newChip);
         }
     });
+
+    // Append all new chips in a single DOM operation for performance.
+    container.appendChild(fragment);
 
     // Any chips left in existingChips are for players who have been removed
     existingChips.forEach(chip => {
@@ -534,11 +502,6 @@ function renderSquad() {
             chip.remove();
         }, { once: true });
     });
-
-    if (query) {
-        container.innerHTML = '';
-    }
-    container.appendChild(newContent);
 }
 
 function checkNextButtonState() {
@@ -549,7 +512,7 @@ function checkNextButtonState() {
     btn.style.pointerEvents = canProceed ? 'auto'    : 'none';
     btn.style.cursor        = canProceed ? 'pointer' : 'default';
     btn.style.background    = canProceed ? 'var(--accent)' : '#2a2a3a';
-    btn.textContent         = StateStore.currentMatches.length === 0 ? 'Start Session' : 'Matches in Progress';
+    btn.textContent         = StateStore.currentMatches.length === 0 ? 'Start Session' : 'Running…';
 }
 
 function setCourts(n) {
@@ -575,7 +538,7 @@ function setCourts(n) {
             document.getElementById('matchContainer').innerHTML = '';
             const onCourt = StateStore.squad.filter(p => p.active);
             onCourt.forEach(p => {
-                if (!StateStore.playerQueue.includes(p.uuid)) StateStore.playerQueue.unshift(p.uuid);
+                if (!StateStore.playerQueue.includes(p.name)) StateStore.playerQueue.unshift(p.name);
             });
             generateMatches();
         },
@@ -591,8 +554,6 @@ function setCourts(n) {
 // ---------------------------------------------------------------------------
 // LONG-PRESS MENU
 // ---------------------------------------------------------------------------
-
-let _lastTapInfo = { uuid: null, time: 0 };
 
 function startPress(uuid) {
     isLongPress = false;
@@ -611,35 +572,16 @@ function startPress(uuid) {
 function endPress(uuid) {
     clearTimeout(pressTimer);
     if (!isLongPress) {
-        const now = Date.now();
-        if (_lastTapInfo.uuid === uuid && (now - _lastTapInfo.time) < 300) {
-            // Double tap detected: Toggle Ready/Resting
-            togglePlayerActive(uuid);
-            _lastTapInfo = { uuid: null, time: 0 };
-        } else {
-            _lastTapInfo = { uuid, time: now };
-            
-            // Single tap fallback: If resting, toggle to ready. 
-            const player = StateStore.squad.find(p => p.uuid === uuid);
-            if (player && !player.active) {
-                togglePlayerActive(uuid);
-            }
+        const player = StateStore.squad.find(p => p.uuid === uuid);
+        if (player && !player.active) {
+            Haptic.tap();
+            player.active = true;
+            renderSquad();
+            // Trigger reactive sync and immediate broadcast
+            StateStore.set('squad', StateStore.squad);
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
         }
     }
-}
-
-function togglePlayerActive(uuid) {
-    const player = StateStore.squad.find(p => p.uuid === uuid);
-    if (!player) return;
-    
-    Haptic.tap();
-    player.active = !player.active;
-    renderSquad();
-    checkNextButtonState();
-
-    // Trigger reactive sync and immediate broadcast
-    StateStore.set('squad', StateStore.squad);
-    if (typeof broadcastGameState === 'function') broadcastGameState(true);
 }
 
 function openMenu(uuid) {
@@ -765,12 +707,8 @@ function joinManualCode() {
     const input = document.getElementById('manualRoomCodeInput');
     const raw = input?.value?.trim();
     if (raw) {
-        let code = raw.toUpperCase().trim();
-        // Auto-hyphenate only if hyphen is missing and it looks like a standard 8-char code
-        if (!code.includes('-')) {
-            const stripped = code.replace(/[^A-Z0-9]/g, '');
-            if (stripped.length === 8) code = stripped.slice(0, 4) + '-' + stripped.slice(4);
-        }
+        // Normalize room code: strip non-alphanumeric and add hyphen if 8 chars
+        let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
         if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
 
         if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
@@ -821,10 +759,6 @@ function showOverlay(type) {
                         <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
                             onclick="toggleBatterySaver()">
                             🔋 Battery Saver: ${StateStore.get('batterySaver') ? 'ON' : 'OFF'}
-                        </button>
-                        <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
-                            onclick="toggleOpenParty()">
-                            🔓 Open Party: ${StateStore.get('isOpenParty') ? 'ON' : 'OFF'}
                         </button>
                         <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
                             onclick="resyncQueue()">🔄 Re-sync Queue</button>
@@ -923,7 +857,7 @@ function showOverlay(type) {
                         correctLevel:  QRCtor.CorrectLevel?.H || 0,
                     });
                 } else if (qrDiv) {
-                    Log.warn('QRCode library not loaded, showing plain URL');
+                    console.warn('[CourtSide] QRCode library not loaded, showing plain URL');
                     qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
                 }
             }
@@ -969,11 +903,11 @@ function confirmEndSession() {
 
             // 4. Delete from DB (authenticated call)
             if (roomCode && window.operatorKey) {
-                fetch('/api/sessions', {
+                fetch('/api/session-delete', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ room_code: roomCode, operator_key: window.operatorKey }),
-                }).catch(e => Log.error('Silent delete failed', e));
+                }).catch(e => console.error('[CourtSide] Silent delete failed', e));
             }
         }
     });
@@ -1014,10 +948,12 @@ function _showHostRecap(recap) {
     document.body.classList.add('session-ended');
     closeOverlay();
 
+    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+
     const leaderboardHTML = recap.squad.map((p, i) => `
         <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);">
             <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
-            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${escapeHTML(p.name)}</div>
+            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${esc(p.name)}</div>
             <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.wins}W</div>
         </div>
     `).join('');
@@ -1030,10 +966,10 @@ function _showHostRecap(recap) {
             <div style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
                 <div style="font-size:3rem; margin-bottom:10px;">🏆</div>
                 <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
-                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${escapeHTML(recap.mvp.name)}</div>
+                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(recap.mvp.name)}</div>
                 <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${recap.mvp.wins} Wins · ${recap.mvp.games} Games</div>
                 <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
-                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${escapeHTML(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
+                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
             </div>
 
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
@@ -1043,17 +979,17 @@ function _showHostRecap(recap) {
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">IRON MAN</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.ironMan.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.ironMan.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.ironMan.sessionPlayCount} Games</div>
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">HOT HAND</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.hotHand.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.hotHand.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.hotHand.streak} Win Streak</div>
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">SHARP SHOOTER</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.sharpShooter.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.sharpShooter.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.sharpShooter.wr}% Win Rate</div>
                 </div>
             </div>
@@ -1086,7 +1022,7 @@ function generateQR() {
     if (!qrDiv) return;
     qrDiv.innerHTML = '';
     const QRCtor = window.QRCodeConstructor || window.QRCode;
-    if (!QRCtor) { Log.error('generateQR: QRCode library not loaded'); return; }
+    if (!QRCtor) { console.error('[CourtSide] generateQR: QRCode library not loaded'); return; }
     new QRCtor(qrDiv, {
         text:         token,
         width:        200,
@@ -1113,27 +1049,9 @@ function copySyncToken() {
     }
 }
 
-async function copyInviteLink() {
+function copyInviteLink() {
     if (!currentRoomCode) return;
     const url = window.location.origin + window.location.pathname + '?join=' + currentRoomCode + '&role=player';
-    
-    const shareData = {
-        title: 'CourtSide Pro Session',
-        text: `Check-in to our badminton session early! Room Code: ${currentRoomCode}`,
-        url: url
-    };
-
-    // Use native share sheet if available (easier for FB/Messenger)
-    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
-        try {
-            await navigator.share(shareData);
-            return;
-        } catch (e) {
-            if (e.name !== 'AbortError') Log.error('Share failed', e);
-        }
-    }
-
-    // Fallback to clipboard
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url)
             .then(() => showSessionToast('🔗 Invite link copied!'))
@@ -1312,6 +1230,15 @@ function confirmEraseAllData() {
 // ---------------------------------------------------------------------------
 // UTILITIES
 // ---------------------------------------------------------------------------
+
+function escapeHTML(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 // ---------------------------------------------------------------------------
 // UNDO LAST ROUND
@@ -1565,7 +1492,7 @@ function renderStatsTab(tab) {
                 <div class="sl-searching-text">FETCHING GLOBAL RANKINGS…</div>
             </div>`;
 
-        fetch('/api/match-history?type=leaderboard')
+        fetch('/api/leaderboard-get')
             .then(res => res.json())
             .then(data => {
                 // Guard: only render if user is still on the leaderboard tab
@@ -1610,18 +1537,8 @@ function renderStatsTab(tab) {
                 const winIdx  = m.winnerTeamIndex;
                 if (winIdx === null || winIdx === undefined) return '';
                 const loseIdx = winIdx === 0 ? 1 : 0;
-
-                const squadLookup = round.squadSnapshot || [];
-                const getName = (id) => {
-                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
-                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
-                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
-                    return p ? p.name : id;
-                };
-
-                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
-                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
-
+                const winners = m.teams[winIdx]?.join(' & ') || '?';
+                const losers  = m.teams[loseIdx]?.join(' & ') || '?';
                 return `
                     <div class="history-game">
                         <div class="history-game-label">Game ${gi + 1}</div>
@@ -1872,7 +1789,7 @@ async function sharePlayerCard() {
             }
         }, 'image/png');
     } catch (e) {
-        Log.error('Share failed:', e);
+        console.error('Share failed:', e);
     }
     Haptic.success();
 }
@@ -1891,11 +1808,11 @@ async function shareAuraPoster(matchIdx) {
             teamB: (m.teams[1] || []).join(' & '),
             title: 'LIVE NOW'
         }).catch(e => {
-            Log.error('Aura poster failed:', e);
+            console.error('Aura poster failed:', e);
             showSessionToast('Could not generate poster');
         });
     } else {
-        Log.error('generateShareableImage function not found.');
+        console.error('generateShareableImage function not found.');
         showSessionToast('Share function is unavailable.');
     }
 }
@@ -2024,8 +1941,6 @@ async function pollPlayRequests() {
         playRequests = incoming;
         window.playRequests = playRequests;
 
-        const isOpen = StateStore.get('isOpenParty');
-
         for (const r of incoming) {
             if (!_lastSeenRequestIds.has(r.id)) {
                 // Always mark as seen immediately to prevent race-induced duplicate processing
@@ -2036,50 +1951,27 @@ async function pollPlayRequests() {
                 const existing = StateStore.squad.find(p => 
                     (r.player_uuid && p.uuid === r.player_uuid) || 
                     (p.name.toLowerCase() === r.name.toLowerCase()) ||
-                    (r.player_uuid && uuidMap[r.name] === r.player_uuid)
+                    (r.player_uuid && uuidMap[r.name] === r.player_uuid) ||
+                    (r.name && StateStore.playerQueue.includes(r.name)) // Proactive queue check
                 );
 
                 if (existing) {
-                    Log.info(`Auto-resolving request for ${r.name} (already in squad)`);
+                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad)`);
 
                     // UUID Correction: If manually added by host, adopt the player's real UUID
                     // so memberApprove() and future syncs use the correct canonical ID.
                     if (r.player_uuid && existing.uuid !== r.player_uuid) {
-                        Log.info(`Correcting UUID for ${existing.name}: ${existing.uuid} -> ${r.player_uuid}`);
-                        const oldUUID = existing.uuid;
-                        const newUUID = r.player_uuid;
-                        existing.uuid = newUUID;
-
-                        // Atomically update matches and queue to use the new canonical UUID
-                        const newMatches = StateStore.currentMatches.map(m => ({
-                            ...m,
-                            teams: m.teams.map(t => t.map(u => u === oldUUID ? newUUID : u))
-                        }));
-                        const newQueue = StateStore.playerQueue.map(u => u === oldUUID ? newUUID : u);
-
-                        StateStore.setState({
-                            squad: StateStore.squad,
-                            currentMatches: newMatches,
-                            playerQueue: newQueue
-                        });
-
-                        renderSquad();
-                        rebuildMatchCardIndices();
+                        existing.uuid = r.player_uuid;
+                        renderSquad(); // Update DOM datasets
                         saveToDisk();
                     }
 
-                    if (existing.uuid && typeof window.memberApprove === 'function') await window.memberApprove(existing.uuid);
+                    if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
                     fetch('/api/play-request', {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ id: r.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
                     }).catch(() => {});
-                    continue;
-                }
-
-                if (isOpen) {
-                    Log.info(`Auto-approving ${r.name} (Open Party)`);
-                    approvePlayRequest(r.name, r.id, r.player_uuid || null);
                     continue;
                 }
                 showJoinNotification(r.name, r.id, r.player_uuid || null, r.spirit_animal || null);
@@ -2193,14 +2085,16 @@ function _resolvePlayerForSession(name, incomingUUID) {
         if (player) {
             // Update name if changed
             if (player.name !== name) {
-                Log.info(`Updating name for ${player.uuid}: ${player.name} -> ${name}`);
+                console.log(`[CourtSide] Updating name for ${player.uuid}: ${player.name} -> ${name}`);
                 player.name = name;
             }
             return player;
         }
     }
 
+    // 2. If not found by UUID, treat as NEW.
     // 2. Secondary: Name-based lookup (Smart Recognition)
+    // If UUID didn't match but the name does, assume it's the same person
     // (e.g., host added them manually first or UUIDs were cleared).
     player = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
     if (player) {
@@ -2221,14 +2115,14 @@ function _resolvePlayerForSession(name, incomingUUID) {
     // 3. Create new player
     player = migratePlayer({
         name: finalName,
-        uuid: validUUID || Passport._uuid(),
+        uuid: validUUID || _generateUUID(),
     });
 
     return player;
 }
 
 async function approvePlayRequest(name, id, playerUUID = null) {
-    Log.info(`Approving ${name}, UUID: ${playerUUID}`);
+    console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
     
     // Priority 1: Check if achievements were already reconciled by the Join RPC
     const requestRow = playRequests.find(r => String(r.id) === String(id));
@@ -2267,7 +2161,7 @@ async function approvePlayRequest(name, id, playerUUID = null) {
             achievementIds.forEach(id => currentSet.add(id));
             player.achievements = Array.from(currentSet);
         } catch (e) {
-            Log.error(`Failed to fetch achievements for ${player.name}`, e);
+            console.error(`Failed to fetch achievements for ${player.name}`, e);
         }
     }
     player.active = true;
@@ -2309,6 +2203,16 @@ function _makeApprovalToken() {
     return Array.from({ length: 12 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 }
 
+function _generateUUID() {
+    if (window.Passport && typeof window.Passport._uuid === 'function') {
+        return window.Passport._uuid();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
 async function denyPlayRequest(id) {
     try {
         await fetch('/api/play-request', {
@@ -2329,9 +2233,26 @@ window.onPlayRequestInsert = function(record) {
 
         // BUG FIX: Same duplicate guard for realtime events
         const uuidMap = window._sessionUUIDMap || {};
-        
-        if (StateStore.get('isOpenParty')) {
-            approvePlayRequest(record.name, record.id, record.player_uuid);
+        const existing = StateStore.squad.find(p => 
+            (record.player_uuid && p.uuid === record.player_uuid) || 
+            (p.name.toLowerCase() === record.name.toLowerCase()) ||
+            (record.player_uuid && uuidMap[record.name] === record.player_uuid) ||
+            (record.name && StateStore.playerQueue.includes(record.name)) // Proactive queue check
+        );
+
+        if (existing) {
+            // Adopt real UUID for manual additions triggered by realtime events
+            if (record.player_uuid && existing.uuid !== record.player_uuid) {
+                existing.uuid = record.player_uuid;
+                renderSquad();
+            }
+
+            if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+            fetch('/api/play-request', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: record.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+            }).catch(() => {});
             return;
         }
 
@@ -2339,50 +2260,6 @@ window.onPlayRequestInsert = function(record) {
     }
     pollPlayRequests(); // Fetch full list to ensure badge count is accurate
 };
-
-/**
- * Automatically adds a player to the host squad when they join via Open Party.
- * Triggered by session_member realtime updates.
- */
-function autoAddOpenPlayer(record) {
-    if (!window.isOperator || !record) return;
-
-    const existing = StateStore.squad.find(p => p.uuid === record.player_uuid);
-    if (existing) {
-        // Name/Emoji Correction: If the player is already in the squad but joined 
-        // via Open Party with a different name or spirit animal, update them now.
-        let changed = false;
-        if (record.player_name && existing.name !== record.player_name) {
-            if (typeof window._applyNameUpdate === 'function') {
-                window._applyNameUpdate(record.player_uuid, existing.name, record.player_name);
-            }
-            changed = true;
-        }
-        if (record.spirit_animal !== undefined && existing.spiritAnimal !== record.spirit_animal) {
-            if (typeof window._applySpiritAnimalUpdate === 'function') {
-                window._applySpiritAnimalUpdate(record.player_uuid, record.spirit_animal);
-            }
-            changed = true;
-        }
-        return;
-    }
-
-    const newPlayer = migratePlayer({
-        name: record.player_name,
-        uuid: record.player_uuid,
-        spiritAnimal: record.spirit_animal,
-        active: true
-    });
-
-    const newSquad = [...StateStore.squad, newPlayer];
-    const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
-
-    StateStore.setState({ squad: newSquad, playerQueue: newQueue });
-    renderSquad();
-    showSessionToast(`🔓 ${newPlayer.name} joined instantly`);
-}
-window.autoAddOpenPlayer = autoAddOpenPlayer;
 
 function ensureHostUI() {
     // Only the host needs these elements
@@ -2469,7 +2346,7 @@ const _startPolling = () => {
                 activeInDB.forEach(dbPlayer => {
                     const inLocal = StateStore.squad.some(p => p.uuid === dbPlayer.player_uuid);
                     if (!inLocal) {
-                        Log.info(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
+                        console.log(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
                         approvePlayRequest(dbPlayer.name, dbPlayer.id, dbPlayer.player_uuid);
                     }
                 });
@@ -2616,11 +2493,7 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
     const loserUUIDs  = loserNames .map(resolveUUID).filter(Boolean);
 
     // 1. Broadcast match result (winner banner + haptic for players in this game)
-    const getName = (uuid) => {
-        const p = StateStore.squad.find(s => s.uuid === uuid);
-        return p ? p.name : 'Unknown Player';
-    };
-    const winnerDisplayNames = winnerUUIDs.map(getName).join(' & ');
+    const winnerDisplayNames = winnerNames.join(' & ');
     if (typeof _broadcast === 'function' && isOnlineSession) {
         _broadcast('match_resolved', {
             winnerNames:  winnerDisplayNames,
@@ -2649,7 +2522,7 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
                 loser_uuids:  loserUUIDs,
                 game_label:   label,
             }),
-        }).catch(e => Log.error('Signal dispatch failed:', e));
+        }).catch(e => console.error('Signal dispatch failed:', e));
     }
 }
 
@@ -2685,13 +2558,12 @@ function showPassportWelcome(passport) {
     const choiceView = document.getElementById('iwtpChoiceView');
     if (!choiceView) return;
 
-    const isOpen = StateStore.get('isOpenParty');
     choiceView.innerHTML = `
         <div class="iwtp-title">Welcome back,</div>
         <div class="iwtp-passport-name">${escapeHTML(passport.playerName)}</div>
         <div class="iwtp-subtitle">Your passport was found on this device.</div>
         <button class="iwtp-btn" onclick="passportJoinSession()">
-            🏀 ${isOpen ? 'Join Instantly' : 'Check-in to Room'} ${escapeHTML(currentRoomCode || '')}
+            🏀 Join Session ${escapeHTML(currentRoomCode || '')}
         </button>
         <button class="iwtp-choice-btn iwtp-choice-existing" style="margin-top:10px;" onclick="passportRenameAndJoin()">
             ✏️ Join with a different name
@@ -2863,7 +2735,7 @@ async function initApp() {
         const _raw = localStorage.getItem('cs_player_passport');
         passport = _raw ? JSON.parse(_raw) : null;
     } catch (e) {
-        Log.warn('initApp: localStorage read failed', e);
+        console.warn('[CourtSide] initApp: localStorage read failed', e);
         passport = null;
     }
 
@@ -2886,7 +2758,7 @@ async function initApp() {
     // A host rejoining their own session via an invite link should be treated as a host.
     const savedCode = localStorage.getItem('cs_room_code');
     const savedOpKey = localStorage.getItem('cs_operator_key');
-    const isHostOfThisSession = (savedCode && savedOpKey) && (!joinCode || savedCode === joinCode);
+    const isHostOfThisSession = (joinCode && savedCode === joinCode && savedOpKey);
 
     // If the URL says "player" but we are NOT the host of this specific session, boot into player mode.
     if (role === 'player' && !isHostOfThisSession) {
@@ -2907,14 +2779,14 @@ async function initApp() {
     try {
         loadFromDisk();
     } catch (e) {
-        Log.error('initApp: loadFromDisk failed', e);
+        console.error('[CourtSide] initApp: loadFromDisk failed', e);
     }
 
     // If the user has a passport from playing, auto-add them to their own squad.
     _autoAddHostToSquad();
 
     if (typeof tryAutoRejoin === 'function') {
-        await tryAutoRejoin().catch(e => Log.error('tryAutoRejoin failed', e));
+        await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
     }
 
     // Show landing if no data and not in a session
@@ -2932,7 +2804,7 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('actionMenu')?.classList.add('actionMenu');
 
     initApp().catch(err => {
-        Log.error('initApp() failed:', err);
+        console.error('[CourtSide] initApp() failed:', err);
         if (typeof _csShowError === 'function') {
             _csShowError('App init failed: ' + (err?.message || err));
         }
@@ -2941,7 +2813,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Global Error Safety Net
 window.addEventListener('error', (event) => {
-    Log.error('Global Error', event.error);
+    console.error('[CourtSide Global Error]', event.error);
     // Only show toast if UI is ready
     if (typeof showSessionToast === 'function' && document.body) {
         showSessionToast('⚠️ An error occurred. Please refresh if issues persist.');

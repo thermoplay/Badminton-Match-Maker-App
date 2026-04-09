@@ -11,7 +11,7 @@
 
 /** Finds a player object by UUID. Returns undefined if not found. */
 function findP(uuid) {
-    return StateStore.squad.find(p => p && p.uuid === uuid);
+    return StateStore.squad.find(p => p.uuid === uuid);
 }
 
 // ---------------------------------------------------------------------------
@@ -102,17 +102,9 @@ function _recordMatchStats(match, timestamp = Date.now()) {
         const winIdx = match.winnerTeamIndex;
         const isWin = winIdx !== null && winIdx === (isTeamA ? 0 : 1);
         
-        let partnerUUID = null;
-        // Determine partner UUID if it's a doubles match
-        if (isTeamA && tA.length === 2) { // Doubles on Team A
-            partnerUUID = tA.find(tp => tp.uuid !== p.uuid)?.uuid;
-        } else if (!isTeamA && tB.length === 2) { // Doubles on Team B
-            partnerUUID = tB.find(tp => tp.uuid !== p.uuid)?.uuid;
-        }
-
         p.matchHistory = p.matchHistory || [];
-        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), partnerUUID: partnerUUID, time: timestamp }); // Store UUIDs
-        if (p.matchHistory.length > 10) p.matchHistory.pop(); // Keep last 10 matches for history/sparkline
+        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), time: timestamp });
+        if (p.matchHistory.length > 5) p.matchHistory.pop();
     });
 
     const addHistory = (p, teammate, opponents) => {
@@ -225,16 +217,6 @@ async function processCourtResult(mIdx) {
     // 4. Create snapshot including the achievements and pre-change state
     _createRoundSnapshot(match, newlyUnlocked, preSquad, preQueue);
 
-    // --- UX IMPROVEMENT: Wait-Round Badges ---
-    // Increment waitRounds for everyone currently waiting in the queue (not on ANY court)
-    const allPlaying = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
-    StateStore.playerQueue.forEach(uuid => {
-        if (!allPlaying.has(uuid)) {
-            const p = findP(uuid);
-            if (p) p.waitRounds = (p.waitRounds || 0) + 1;
-        }
-    });
-
     // 5. Rotate players for the next round
     rotateCourtPlayers(match);
 
@@ -249,9 +231,6 @@ async function processCourtResult(mIdx) {
         _handleInsufficientPlayersForNextMatch(mIdx);
         return;
     }
-
-    // Reset waitRounds for the players entering the court
-    next4.forEach(p => p.waitRounds = 0);
 
     _generateAndRenderNextMatchForCourt(mIdx, next4);
     _finalizeCourtResultUpdate(resolutionTS, matchPlayerUUIDs);
@@ -324,7 +303,7 @@ function applyELOForMatch(m) {
 // QUEUE ENGINE
 // ---------------------------------------------------------------------------
 //
-// playerQueue — ordered array of player UUIDs representing the rotation.
+// playerQueue — ordered array of player NAMES representing the rotation.
 // The first N*4 names (enough for courtCount courts) play each round.
 // After results are entered, losers go to the back first, then winners,
 // ensuring winners wait slightly longer (a small earned rest).
@@ -343,20 +322,18 @@ function applyELOForMatch(m) {
 // ---------------------------------------------------------------------------
 
 function initQueue() {
-    const activeUUIDs = StateStore.squad.filter(p => p && p.active).map(p => p.uuid);
+    const activeUUIDs = StateStore.squad.filter(p => p.active).map(p => p.uuid);
 
     // Keep existing queue order for names already in it — only append newcomers
-    const currentQueue = Array.isArray(StateStore.playerQueue) ? StateStore.playerQueue : [];
-    const inQueue  = new Set(currentQueue);
+    const inQueue  = new Set(StateStore.playerQueue);
     const newUUIDs = activeUUIDs.filter(u => !inQueue.has(u));
 
-    // Robust Filter: Only keep UUIDs that are currently in the active squad
-    const activeSet = new Set(activeUUIDs);
-    const cleanedQueue = currentQueue.filter(u => activeSet.has(u));
+    // Remove names no longer in the active squad
+    const newQueue = StateStore.playerQueue.filter(u => StateStore.squad.find(p => p.uuid === u && p.active));
 
     // Append newcomers at the back and update the store
-    const finalQueue = [...cleanedQueue, ...newUUIDs];
-    StateStore.set('playerQueue', finalQueue);
+    newQueue.push(...newUUIDs);
+    StateStore.set('playerQueue', newQueue);
 }
 
 // ---------------------------------------------------------------------------
@@ -483,8 +460,7 @@ function combinations4(arr) {
 // Get the candidate pool for one court — front of the queue, excluding
 // players already assigned to another court this round.
 function getCandidatePool(onCourt) {
-    // BUG FIX: Removed initQueue() from here. It is now called once at the 
-    // start of generateMatches() to prevent redundant state updates during loops.
+    initQueue();
     const pool     = [];
     const poolSet  = new Set();
     const poolSize = 4 * POOL_FACTOR;
@@ -493,7 +469,7 @@ function getCandidatePool(onCourt) {
         if (pool.length >= poolSize) break;
         if (onCourt.has(uuid)) continue;
         if (poolSet.has(uuid))  continue;
-        const p = StateStore.squad.find(s => s && s.uuid === uuid && s.active);
+        const p = StateStore.squad.find(s => s.uuid === uuid && s.active);
         if (!p) continue;
         pool.push(p);
         poolSet.add(uuid);
@@ -635,10 +611,7 @@ function _createMatchesForCourts(courtCount) {
         const players = pullNextFromQueue(assignedThisRound);
         if (players.length < 4) break;
 
-        players.forEach(p => {
-            assignedThisRound.add(p.uuid);
-            p.waitRounds = 0; // Reset for starting players
-        });
+        players.forEach(p => assignedThisRound.add(p.uuid));
         const match = buildMatchFromPlayers(players);
         StateStore.currentMatches.push(match);
 
@@ -691,7 +664,7 @@ function renderQueueStrip() {
 
     // Queue: active players not on court, in queue order
     const waiting = StateStore.playerQueue
-        .map(uuid => StateStore.squad.find(p => p && p.uuid === uuid))
+        .map(uuid => StateStore.squad.find(p => p.uuid === uuid))
         .filter(p => p && p.active && !onCourt.has(p.uuid));
 
     if (waiting.length === 0) {
@@ -778,8 +751,8 @@ function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now(), storyBadges =
 
     const courtNames = StateStore.get('courtNames') || {};
     const courtName = courtNames[idx] || `Court ${idx + 1}`;
-    const labelEl = card.querySelector('.match-label'); // This element already has the onclick
-    labelEl.innerHTML = `<span class="court-name-text">${escapeHTML(courtName)}</span><span class="edit-court-icon">✏️</span>`;
+    const labelEl = card.querySelector('.match-label');
+    labelEl.textContent = courtName;
     labelEl.onclick = () => openCourtRename(idx);
 
     const header = card.querySelector('.match-header');
@@ -867,25 +840,6 @@ function closeTeamBuilder() {
  */
 function renderTeamBuilder() {
     const m = StateStore.currentMatches[builderMatchIdx];
-
-    // --- UX IMPROVEMENT: Live Odds in Team Builder ---
-    const tAObjs = builderTeams[0].map(u => findP(u)).filter(Boolean);
-    const tBObjs = builderTeams[1].map(u => findP(u)).filter(Boolean);
-    const odds = calculateOdds(tAObjs, tBObjs);
-
-    let oddsEl = document.getElementById('builderLiveOdds');
-    if (!oddsEl) {
-        oddsEl = document.createElement('div');
-        oddsEl.id = 'builderLiveOdds';
-        oddsEl.className = 'prob-container';
-        oddsEl.style.cssText = 'display:flex; justify-content:center; margin: 0 auto 16px; width:fit-content;';
-        const teamsLayout = document.querySelector('.builder-teams');
-        if (teamsLayout) teamsLayout.parentNode.insertBefore(oddsEl, teamsLayout);
-    }
-    oddsEl.innerHTML = `
-        <div class="prob-pill ${odds[0] >= 50 ? 'highlight' : ''}">${odds[0]}%</div>
-        <div class="prob-pill ${odds[1] > 50 ? 'highlight' : ''}">${odds[1]}%</div>
-    `;
 
     // All names currently in this game
     const inGame = new Set([...builderTeams[0], ...builderTeams[1]]);
@@ -1093,7 +1047,7 @@ function handleDragStart(e) {
     this.style.opacity = '0.4';
     _dragSrcEl = this;
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', this.dataset.uuid);
+    e.dataTransfer.setData('text/plain', this.dataset.name);
 }
 
 function handleDragOver(e) {
@@ -1112,10 +1066,10 @@ function handleDragLeave(e) {
 
 function handleDrop(e) {
     if (e.stopPropagation) e.stopPropagation();
-    const srcUUID = e.dataTransfer.getData('text/plain');
-    const destUUID = this.dataset.uuid;
-    if (srcUUID && destUUID && srcUUID !== destUUID) {
-        reorderPlayerQueue(srcUUID, destUUID);
+    const srcName = e.dataTransfer.getData('text/plain');
+    const destName = this.dataset.name;
+    if (srcName && destName && srcName !== destName) {
+        reorderPlayerQueue(srcName, destName);
     }
     return false;
 }
@@ -1127,14 +1081,14 @@ function handleDragEnd(e) {
     });
 }
 
-function reorderPlayerQueue(srcUUID, destUUID) {
+function reorderPlayerQueue(srcName, destName) {
     const newQueue = [...StateStore.playerQueue];
-    const srcIdx = newQueue.indexOf(srcUUID);
+    const srcIdx = newQueue.indexOf(srcName);
     if (srcIdx === -1) return;
     newQueue.splice(srcIdx, 1);
-    const destIdx = newQueue.indexOf(destUUID);
-    if (destIdx !== -1) newQueue.splice(destIdx, 0, srcUUID);
-    else newQueue.push(srcUUID);
+    const destIdx = newQueue.indexOf(destName);
+    if (destIdx !== -1) newQueue.splice(destIdx, 0, srcName);
+    else newQueue.push(srcName);
     StateStore.set('playerQueue', newQueue);
     
     renderQueueStrip();
@@ -1147,16 +1101,16 @@ function reorderPlayerQueue(srcUUID, destUUID) {
 // CROSS-COURT SWAP LOGIC
 // ---------------------------------------------------------------------------
 
-function swapActivePlayers(uuidA, uuidB) {
+function swapActivePlayers(nameA, nameB) {
     let locA = null, locB = null;
 
     // 1. Locate both players in current matches
     StateStore.currentMatches.forEach((m, mIdx) => {
         m.teams.forEach((team, tIdx) => {
-            const pIdx = team.indexOf(uuidA);
+            const pIdx = team.indexOf(nameA);
             if (pIdx !== -1) locA = { mIdx, tIdx, pIdx };
             
-            const pIdxB = team.indexOf(uuidB);
+            const pIdxB = team.indexOf(nameB);
             if (pIdxB !== -1) locB = { mIdx, tIdx, pIdx: pIdxB };
         });
     });
@@ -1164,8 +1118,8 @@ function swapActivePlayers(uuidA, uuidB) {
     if (!locA || !locB) return false;
 
     // 2. Perform Swap in State
-    StateStore.currentMatches[locA.mIdx].teams[locA.tIdx][locA.pIdx] = uuidB;
-    StateStore.currentMatches[locB.mIdx].teams[locB.tIdx][locB.pIdx] = uuidA;
+    StateStore.currentMatches[locA.mIdx].teams[locA.tIdx][locA.pIdx] = nameB;
+    StateStore.currentMatches[locB.mIdx].teams[locB.tIdx][locB.pIdx] = nameA;
 
     // 3. Update affected matches (recalc odds, reset winner, re-render)
     const updateMatch = (idx) => {
