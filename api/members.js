@@ -25,7 +25,7 @@ export default async function handler(req, res) {
         // 2. Register for session & Fetch Current State
         const [existing, sessionRes] = await Promise.all([ // This was already correct, no quotes needed for `player_uuid`
             sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${player_uuid}&limit=1`),
-            sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&limit=1`)
+            sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&limit=1`)
         ]);
         
         if (existing.ok && existing.data?.length > 0) {

@@ -1,4 +1,4 @@
-export const ROOM_CODE_REGEX = /^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/;
+export const ROOM_CODE_REGEX = /^[A-Z0-9]{2,6}-?[A-Z0-9]{2,6}$/;
 export const UUID_REGEX = /^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/;
 
 /** Normalize room code for consistency */
@@ -6,8 +6,10 @@ export function normalizeRoomCode(raw) {
     if (!raw) return '';
     let code = String(raw).toUpperCase().trim();
     const stripped = code.replace(/[^A-Z0-9]/g, '');
-    if (stripped.length === 8 && !code.includes('-')) {
-        return stripped.slice(0, 4) + '-' + stripped.slice(4);
+    // Auto-hyphenate any unhyphenated even-length code (e.g. 6, 8, 10 chars)
+    if (!code.includes('-') && stripped.length >= 4 && stripped.length % 2 === 0) {
+        const mid = stripped.length / 2;
+        return stripped.slice(0, mid) + '-' + stripped.slice(mid);
     }
     return code;
 }

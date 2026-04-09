@@ -135,8 +135,8 @@ export default async function handler(req, res) {
 
         // Filter: only show requests from the last 3 hours to prevent zombie prompts.
         const since = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-        const r = await sbFetch( // This was already correct, no quotes needed for `requested_at`
-            `/play_requests?room_code=eq."${encodeURIComponent(code)}"&requested_at=gte.${encodeURIComponent(since)}&order=requested_at.asc`
+        const r = await sbFetch(
+            `/play_requests?room_code=eq.${encodeURIComponent(code)}&requested_at=gte.${encodeURIComponent(since)}&order=requested_at.asc`
         );
         return res.status(200).json({ requests: r.data || [] });
     }
@@ -162,7 +162,7 @@ export default async function handler(req, res) {
             // ------------------------
 
             // Verify operator key
-            const sessionRes = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`); 
+            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`); 
             if (!sessionRes.ok) {
                 return res.status(500).json({ error: `Database error: ${sessionRes.data?.message || 'Unknown'}` });
             }

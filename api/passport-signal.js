@@ -65,7 +65,7 @@ export default async function handler(req, res) {
         const { player_uuid, room_code } = req.body;
         if (!player_uuid) return res.status(400).json({ error: 'Missing player_uuid' });
 
-        const path = `/passport_signals?player_uuid=eq.${encodeURIComponent(player_uuid)}&room_code=eq."${encodeURIComponent(room_code)}"`;
+        const path = `/passport_signals?player_uuid=eq.${encodeURIComponent(player_uuid)}&room_code=eq.${encodeURIComponent(room_code)}`;
         const r = await sbFetch(path, { method: 'DELETE' });
 
         return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
