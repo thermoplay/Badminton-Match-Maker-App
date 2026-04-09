@@ -1179,7 +1179,10 @@ const PlayerMode = {
         // we can skip the join request entirely. This prevents redundant notifications 
         // for players the host has already manually added or approved previously.
         try {
-            // Optimisation: Reuse squad data from boot's proactive check if available
+            // Proactively show sideline view to avoid white-screen or empty-state flash
+            SidelineView.show();
+
+            // Optimization: Reuse squad data from boot's proactive check if available
             const sessionData = window.squad?.length > 0 ? { ok: true, json: () => ({ session: { squad: window.squad, is_open_party: this._isOpenParty } }) } : null;
             const sessionRes = sessionData || await fetch(`/api/sessions?code=${encodeURIComponent(joinCode)}`);
             
@@ -1199,6 +1202,7 @@ const PlayerMode = {
                     if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
                         broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
                     }
+                    this._updateLiveFeed(session, passport);
                     this._subscribeAndPoll(joinCode, passport);
                     this.setStatus('approved', `Welcome back, ${passport.playerName}`, "Reconnected ✅");
                     if (panel) panel.classList.remove('sl-booting');
