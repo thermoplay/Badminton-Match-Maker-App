@@ -343,7 +343,7 @@ function applyELOForMatch(m) {
 // ---------------------------------------------------------------------------
 
 function initQueue() {
-    const activeUUIDs = StateStore.squad.filter(p => p.active).map(p => p.uuid);
+    const activeUUIDs = StateStore.squad.filter(p => p && p.active).map(p => p.uuid);
 
     // Keep existing queue order for names already in it — only append newcomers
     const currentQueue = Array.isArray(StateStore.playerQueue) ? StateStore.playerQueue : [];
@@ -493,7 +493,7 @@ function getCandidatePool(onCourt) {
         if (pool.length >= poolSize) break;
         if (onCourt.has(uuid)) continue;
         if (poolSet.has(uuid))  continue;
-        const p = StateStore.squad.find(s => s.uuid === uuid && s.active);
+        const p = StateStore.squad.find(s => s && s.uuid === uuid && s.active);
         if (!p) continue;
         pool.push(p);
         poolSet.add(uuid);
@@ -691,7 +691,7 @@ function renderQueueStrip() {
 
     // Queue: active players not on court, in queue order
     const waiting = StateStore.playerQueue
-        .map(uuid => StateStore.squad.find(p => p.uuid === uuid))
+        .map(uuid => StateStore.squad.find(p => p && p.uuid === uuid))
         .filter(p => p && p.active && !onCourt.has(p.uuid));
 
     if (waiting.length === 0) {

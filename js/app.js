@@ -198,7 +198,7 @@ function editPlayerName() {
             if (!trimmedNewName) return;
 
             // Check for name collision (case-insensitive, but not against the player's own old name)
-            if (StateStore.squad.some(player => player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
+            if (StateStore.squad.some(player => player && player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
                 alert('A player with this name already exists.');
                 return;
             }
@@ -350,7 +350,7 @@ function _autoAddHostToSquad() {
     const hostUUID = passport.playerUUID;
 
     // Check if a player with this UUID or name already exists.
-    const hostIsInSquad = StateStore.squad.some(p => (p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase());
+    const hostIsInSquad = StateStore.squad.some(p => p && ((p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase()));
 
     if (!hostIsInSquad) {
         const hostAsPlayer = migratePlayer({ // Use migratePlayer to ensure all fields are present
@@ -429,10 +429,10 @@ async function removePlayerFromSession(playerUUID, playerName) {
 
     let pIndex = -1;
     if (playerUUID) {
-        pIndex = StateStore.squad.findIndex(p => p.uuid === playerUUID);
+        pIndex = StateStore.squad.findIndex(p => p && p.uuid === playerUUID);
     }
     if (pIndex === -1 && playerName) {
-        pIndex = StateStore.squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
+        pIndex = StateStore.squad.findIndex(p => p && p.name.toLowerCase() === playerName.toLowerCase());
     }
 
     if (pIndex === -1) return; // Player not in squad
@@ -485,6 +485,7 @@ function renderSquad() {
     const newContent = document.createDocumentFragment();
 
     StateStore.squad.forEach((p, idx) => {
+        if (!p) return;
         // Apply search filter
         if (query && !p.name.toLowerCase().includes(query)) return;
 
