@@ -99,7 +99,7 @@ export default async function handler(req, res) {
             // Bypassing the RPC to avoid persistent "text = uuid" type mismatches.
             
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`);
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });
@@ -146,7 +146,7 @@ export default async function handler(req, res) {
             }
 
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`);
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
             const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });

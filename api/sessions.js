@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     if (method === 'GET') {
         const codeClean = normalizeRoomCode(code);
         if (!codeClean || !ROOM_CODE_REGEX.test(codeClean)) return res.status(400).json({ error: 'Invalid room code' });
-
+        
         const result = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(codeClean)}"&select=room_code,squad,current_matches,player_queue,last_active,is_open_party,court_names,uuid_map,approved_players,guest_list&limit=1`);
         if (!result.ok) return res.status(result.status).json({ error: 'Database connection failed' });
         if (!result.data?.length) return res.status(404).json({ error: 'Room not found' });
@@ -73,7 +73,7 @@ export default async function handler(req, res) {
     if (method === 'PATCH') {
         const { room_code: raw_code, operator_key, squad, current_matches } = req.body;
         const code = normalizeRoomCode(raw_code);
-
+        
         const check = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key,squad&limit=1`);
         if (!check.ok || !check.data?.length) return res.status(404).json({ error: 'Session not found' });
         
@@ -135,14 +135,14 @@ export default async function handler(req, res) {
     // --- DELETE: End Session ---
     if (method === 'DELETE') {
         const { room_code, operator_key } = req.body;
-        const check = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(room_code)}"&select=operator_key&limit=1`);
+        const check = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
         if (!check.ok || !check.data?.length) return res.status(404).json({ error: 'Not found' });
 
         const incomingHash = crypto.createHash('sha256').update(operator_key).digest('hex');
         if (check.data[0].operator_key !== incomingHash) return res.status(403).json({ error: 'Unauthorized' });
 
         const result = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(room_code)}"`, { method: 'DELETE' });
-        return res.status(result.ok ? 200 : 500).json({ deleted: result.ok });
+        return res.status(result.ok ? 200 : 500).json({ deleted: result.ok }); // This line was already correct
     }
 
     return res.status(405).json({ error: 'Method not allowed' });

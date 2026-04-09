@@ -23,8 +23,8 @@ export default async function handler(req, res) {
         });
 
         // 2. Register for session & Fetch Current State
-        const [existing, sessionRes] = await Promise.all([
-            sbFetch(`/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${player_uuid}&limit=1`),
+        const [existing, sessionRes] = await Promise.all([ // This was already correct, no quotes needed for `player_uuid`
+            sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${player_uuid}&limit=1`),
             sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&limit=1`)
         ]);
         
@@ -53,14 +53,14 @@ export default async function handler(req, res) {
 
         // Sub-route: Host Approval
         if (operator_key) {
-            const check = await sbFetch(`/sessions?room_code=eq."${encodeURIComponent(code)}"&select=operator_key&limit=1`);
+            const check = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
             const incomingHash = crypto.createHash('sha256').update(operator_key).digest('hex');
             if (check.data?.[0]?.operator_key !== incomingHash) return res.status(403).json({ error: 'Unauthorized' });
 
-            const result = await sbFetch(`/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${player_uuid}`, {
+            const result = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${player_uuid}`, {
                 method: 'PATCH',
                 body: { status: 'active', approved_at: new Date().toISOString() }
-            });
+            }); // This was already correct, no quotes needed for `player_uuid`
             return res.status(result.ok ? 200 : 500).json({ ok: result.ok, approved: true });
         }
 
@@ -69,19 +69,19 @@ export default async function handler(req, res) {
         if (new_name) updates.player_name = new_name;
         if (spirit_animal !== undefined) updates.spirit_animal = spirit_animal;
 
-        const result = await sbFetch(`/session_members?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${player_uuid}`, {
+        const result = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${player_uuid}`, {
             method: 'PATCH',
             body: updates
         });
 
         // Sync to global profile
         await sbFetch(`/players?uuid=eq.${player_uuid}`, { method: 'PATCH', body: { name: new_name, spirit_animal, last_active: new Date().toISOString() } });
-
+        
         // Restore: Update pending play_requests so host sees the new name/animal immediately
-        const reqUpdates = {};
+        const reqUpdates = {}; // This was already correct, no quotes needed for `player_uuid`
         if (new_name) reqUpdates.name = new_name;
         if (spirit_animal !== undefined) reqUpdates.spirit_animal = spirit_animal;
-        await sbFetch(`/play_requests?room_code=eq."${encodeURIComponent(code)}"&player_uuid=eq.${player_uuid}`, { method: 'PATCH', body: reqUpdates });
+        await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${player_uuid}`, { method: 'PATCH', body: reqUpdates });
 
         return res.status(result.ok ? 200 : 500).json({ ok: result.ok, updated: true });
     }
