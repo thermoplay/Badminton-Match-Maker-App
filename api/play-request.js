@@ -27,53 +27,7 @@
 const crypto = require('crypto'); // Node.js crypto module for hashing
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-/** Normalize room code for consistency */
-function normalizeRoomCode(raw) {
-    if (!raw) return '';
-    let code = String(raw).toUpperCase().trim();
-    const stripped = code.replace(/[^A-Z0-9]/g, '');
-    if (stripped.length === 8 && !code.includes('-')) {
-        return stripped.slice(0, 4) + '-' + stripped.slice(4);
-    }
-    return code;
-}
-
-async function sbFetch(path, options = {}) {
-    const method = options.method || 'GET';
-    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    
-    console.log(`[sbFetch] Making request to: ${baseUrl}/rest/v1${cleanPath}`);
-    const headers = {
-        'apikey':        SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type':  'application/json',
-    };
-
-    if (method !== 'GET') {
-        headers['Prefer'] = options.prefer || 'return=minimal';
-    }
-
-    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
-        headers: { ...headers, ...(options.headers || {}) },
-        method:  method,
-        body:    options.body ? JSON.stringify(options.body) : undefined,
-    });
-
-    const text = await res.text();
-    if (!res.ok) {
-        console.error(`[sbFetch] Supabase Error ${res.status}:`, text);
-    }
-
-    let data = null;
-    try {
-        if (text) data = JSON.parse(text);
-    } catch (e) {
-        console.error('[sbFetch] JSON parse failed:', text);
-    }
-    return { ok: res.ok, status: res.status, data };
-}
+import { ROOM_CODE_REGEX, UUID_REGEX, normalizeRoomCode, sbFetch } from './_utils';
 
 export default async function handler(req, res) {
     // 1. Handle CORS
@@ -99,8 +53,8 @@ export default async function handler(req, res) {
         const uuid = String(player_uuid).trim();
 
         // Input Validation
-        if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
-        if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) return res.status(400).json({ error: 'Invalid player UUID format' });
+        if (!ROOM_CODE_REGEX.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
+        if (!UUID_REGEX.test(uuid)) return res.status(400).json({ error: 'Invalid player UUID format' });
 
         // ── REVERTED: Standard Table Operations ──────────────────────────────
         // Reverting to standard PostgREST calls because the RPC is hitting 
@@ -199,10 +153,10 @@ export default async function handler(req, res) {
             const uuid = String(player_uuid).trim();
 
             // --- Input Validation ---
-            if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) {
+            if (!ROOM_CODE_REGEX.test(code)) {
                 return res.status(400).json({ error: 'Invalid room code format' });
             }
-            if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
+            if (!UUID_REGEX.test(uuid)) {
                 return res.status(400).json({ error: 'Invalid player UUID format' });
             }
             // ------------------------

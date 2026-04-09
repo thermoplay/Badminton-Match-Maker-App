@@ -19,13 +19,14 @@ const StateStore = (() => {
         lastUpdated: Date.now(),
     };
 
+    const _listeners = new Set();
+
     let _syncTimer = null;
     /** Batches sync operations to the next execution tick to prevent redundant calls. */
-    const _triggerSync = () => {
+    const _triggerSync = (keysChanged) => {
         if (_syncTimer) return;
         _syncTimer = setTimeout(() => {
-            if (typeof window.saveToDisk === 'function') window.saveToDisk();
-            if (typeof window.broadcastGameState === 'function') window.broadcastGameState();
+            _listeners.forEach(callback => callback(keysChanged));
             _syncTimer = null;
         }, 0);
     };
@@ -40,7 +41,7 @@ const StateStore = (() => {
             _state[key] = Array.isArray(value) ? [...value] : (typeof value === 'object' && value !== null ? { ...value } : value);
             _state.lastUpdated = Date.now();
             if (['squad', 'currentMatches', 'playerQueue'].includes(key)) {
-                _triggerSync();
+                _triggerSync([key]);
             }
         } else {
             console.warn(`[StateStore] Attempted to set unknown state key: ${key}`);
@@ -56,8 +57,13 @@ const StateStore = (() => {
         _state = { ..._state, ...newState, lastUpdated: Date.now() };
 
         if (needsSync) {
-            _triggerSync();
+            _triggerSync(Object.keys(newState));
         }
+    };
+
+    const subscribe = (callback) => {
+        _listeners.add(callback);
+        return () => _listeners.delete(callback);
     };
 
     return {
@@ -65,12 +71,13 @@ const StateStore = (() => {
         set,
         getState,
         setState,
+        subscribe,
         // Expose direct access to arrays for push/pop operations if needed,
         // though using setters is preferred.
-        get squad() { return _state.squad; },
-        get currentMatches() { return _state.currentMatches; },
-        get playerQueue() { return _state.playerQueue; },
-        get roundHistory() { return _state.roundHistory; },
+        get squad() { return [..._state.squad]; },
+        get currentMatches() { return [..._state.currentMatches]; },
+        get playerQueue() { return [..._state.playerQueue]; },
+        get roundHistory() { return [..._state.roundHistory]; },
         get lastUpdated() { return _state.lastUpdated; },
     };
 })();

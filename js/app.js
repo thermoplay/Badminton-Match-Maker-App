@@ -291,6 +291,9 @@ function deletePlayer() {
             if (typeof removePlayerFromSession === 'function') {
                 await removePlayerFromSession(p.uuid, p.name);
             }
+            if (typeof broadcastPlayerRemoved === 'function') {
+                broadcastPlayerRemoved(p.uuid, p.name);
+            }
             closeMenu();
         }
     });
@@ -522,9 +525,6 @@ function renderSquad() {
         }
     });
 
-    container.innerHTML = ''; // Clear only once per search/render cycle
-    container.appendChild(newContent);
-
     // Any chips left in existingChips are for players who have been removed
     existingChips.forEach(chip => {
         chip.classList.add('player-chip-removing');
@@ -533,6 +533,11 @@ function renderSquad() {
             chip.remove();
         }, { once: true });
     });
+
+    if (query) {
+        container.innerHTML = '';
+    }
+    container.appendChild(newContent);
 }
 
 function checkNextButtonState() {
@@ -963,7 +968,7 @@ function confirmEndSession() {
 
             // 4. Delete from DB (authenticated call)
             if (roomCode && window.operatorKey) {
-                fetch('/api/session-delete', {
+                fetch('/api/sessions', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ room_code: roomCode, operator_key: window.operatorKey }),
@@ -1559,7 +1564,7 @@ function renderStatsTab(tab) {
                 <div class="sl-searching-text">FETCHING GLOBAL RANKINGS…</div>
             </div>`;
 
-        fetch('/api/leaderboard-get')
+        fetch('/api/match-history?type=leaderboard')
             .then(res => res.json())
             .then(data => {
                 // Guard: only render if user is still on the leaderboard tab

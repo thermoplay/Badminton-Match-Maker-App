@@ -9,15 +9,7 @@
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-const hdrs = () => {
-    return {
-        'apikey':        SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type':  'application/json',
-        'Prefer':        'return=representation',
-    };
-};
+import { sbFetch } from './_utils';
 
 export default async function handler(req, res) {
 
@@ -47,12 +39,8 @@ export default async function handler(req, res) {
 
         if (signals.length === 0) return res.status(200).json({ sent: 0 });
 
-        let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-        if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
-
-        const r = await fetch(`${baseUrl}/rest/v1/passport_signals`, {
+        const r = await sbFetch('/passport_signals', {
             method:  'POST',
-            headers: hdrs(),
             body:    JSON.stringify(signals),
         });
 
@@ -66,19 +54,10 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Missing player_uuid or room_code' });
         }
 
-        let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-        if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+        const path = `/passport_signals?player_uuid=eq.${encodeURIComponent(player_uuid)}&room_code=eq."${encodeURIComponent(room_code)}"&order=created_at.desc&limit=1`;
+        const r = await sbFetch(path);
 
-        const r = await fetch(
-            `${baseUrl}/rest/v1/passport_signals` +
-            `?player_uuid=eq.${encodeURIComponent(player_uuid)}` +
-            `&room_code=eq."${encodeURIComponent(room_code)}"` +
-            `&order=created_at.desc&limit=1`,
-            { headers: hdrs() }
-        );
-
-        const data = await r.json();
-        return res.status(200).json({ signal: data?.[0] || null });
+        return res.status(200).json({ signal: r.data?.[0] || null });
     }
 
     // PLAYER → acknowledge + clear
@@ -86,15 +65,8 @@ export default async function handler(req, res) {
         const { player_uuid, room_code } = req.body;
         if (!player_uuid) return res.status(400).json({ error: 'Missing player_uuid' });
 
-        let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-        if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
-
-        const r = await fetch(
-            `${baseUrl}/rest/v1/passport_signals` +
-            `?player_uuid=eq.${encodeURIComponent(player_uuid)}` +
-            `&room_code=eq."${encodeURIComponent(room_code)}"`,
-            { method: 'DELETE', headers: hdrs() }
-        );
+        const path = `/passport_signals?player_uuid=eq.${encodeURIComponent(player_uuid)}&room_code=eq."${encodeURIComponent(room_code)}"`;
+        const r = await sbFetch(path, { method: 'DELETE' });
 
         return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
     }

@@ -897,7 +897,7 @@ const SidelineView = {
 
         if (!code) return;
         try {
-            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
+            const res = await fetch(`/api/sessions?code=${encodeURIComponent(code)}`);
             if (res.ok) {
                 const data = await res.json();
                 if (data.session && typeof applyRemoteState === 'function') {
@@ -935,9 +935,11 @@ const SidelineView = {
             if (navigator.onLine) {
                 el.className = 'sl-network-icon online';
                 el.title = 'Online';
+                this._updateReconnectButton('online');
             } else {
                 el.className = 'sl-network-icon offline';
                 el.title = 'Offline';
+                this._updateReconnectButton('offline');
             }
         };
         
@@ -1075,7 +1077,7 @@ const PlayerMode = {
         // bypass the entire join/name-entry flow immediately.
         if (joinCode && passport.playerUUID) {
             try {
-                const res = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
+                const res = await fetch(`/api/sessions?code=${encodeURIComponent(joinCode)}`);
                 if (res.ok) {
                     const data = await res.json();
                     const session = data.session || {};
@@ -1181,7 +1183,7 @@ const PlayerMode = {
         try {
             // Optimisation: Reuse squad data from boot's proactive check if available
             const sessionData = window.squad?.length > 0 ? { ok: true, json: () => ({ session: { squad: window.squad, is_open_party: this._isOpenParty } }) } : null;
-            const sessionRes = sessionData || await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
+            const sessionRes = sessionData || await fetch(`/api/sessions?code=${encodeURIComponent(joinCode)}`);
             
             if (sessionRes.ok) {
                 const data = await sessionRes.json();
@@ -1981,7 +1983,7 @@ const PlayerMode = {
 
     async _verifyToken(roomCode, savedToken, passport) {
         try {
-            const res  = await fetch(`/api/session-get?code=${encodeURIComponent(roomCode)}`);
+            const res  = await fetch(`/api/sessions?code=${encodeURIComponent(roomCode)}`);
             if (!res.ok) return false;
             const data = await res.json();
             const approved = data?.session?.approved_players || {};
@@ -2155,7 +2157,7 @@ const PlayerMode = {
         btn.textContent = 'Checking...';
         
         try {
-            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
+            const res = await fetch(`/api/sessions?code=${encodeURIComponent(code)}`);
             if (res.ok) {
                 btn.textContent = 'ROOM FOUND • JOIN NOW';
                 btn.style.background = 'var(--accent)';

@@ -12,17 +12,7 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const crypto = require('crypto'); // Node.js crypto module for hashing
-
-/** Normalize room code for consistency */
-function normalizeRoomCode(raw) {
-    if (!raw) return '';
-    let code = String(raw).toUpperCase().trim();
-    const stripped = code.replace(/[^A-Z0-9]/g, '');
-    if (stripped.length === 8 && !code.includes('-')) {
-        return stripped.slice(0, 4) + '-' + stripped.slice(4);
-    }
-    return code;
-}
+import { ROOM_CODE_REGEX, UUID_REGEX, normalizeRoomCode } from './_utils';
 
 async function sb(path, options = {}) {
     if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -73,7 +63,7 @@ export default async function handler(req, res) {
             const code = normalizeRoomCode(room_code);
 
             // Validation
-            if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) {
+            if (!ROOM_CODE_REGEX.test(code)) {
                 return res.status(400).json({ error: 'Invalid room code format' });
             }
 
@@ -116,15 +106,18 @@ export default async function handler(req, res) {
             }
 
             // 2. Update individual player ratings
-            for (const res of results) {
-                await sb(`/players?uuid=eq.${encodeURIComponent(res.player_uuid)}`, {
-                    method: 'PATCH',
-                    body: {
-                        rating: res.rating,
-                        last_active: new Date().toISOString()
-                    }
-                });
-            }
+            // IMPROVEMENT: Batch UPSERT ratings to avoid sequential network round-trips.
+            const ratingUpdates = results.map(r => ({
+                uuid: r.player_uuid,
+                rating: r.rating,
+                last_active: new Date().toISOString()
+            }));
+
+            await sb('/players', {
+                method: 'POST',
+                body: ratingUpdates,
+                prefer: 'resolution=merge-duplicates'
+            });
 
             // 3. Log achievements directly
             for (const ach of (req.body.achievements || [])) {
@@ -145,10 +138,10 @@ export default async function handler(req, res) {
             const code = normalizeRoomCode(room_code);
 
             // Validation
-            if (!/^[A-Z0-9]{2,6}-[A-Z0-9]{2,6}$/.test(code)) {
+            if (!ROOM_CODE_REGEX.test(code)) {
                 return res.status(400).json({ error: 'Invalid room code format' });
             }
-            if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(player_uuid)) {
+            if (!UUID_REGEX.test(player_uuid)) {
                 return res.status(400).json({ error: 'Invalid player UUID format' });
             }
 
@@ -178,7 +171,13 @@ export default async function handler(req, res) {
     // GET: Fetch achievements for a player
     // -------------------------------------------------------------------------
     if (req.method === 'GET') {
-        const { player_uuid } = req.query;
+        const { player_uuid, type } = req.query;
+
+        // Sub-route: Global Leaderboard
+        if (type === 'leaderboard') {
+            const response = await sb('/career_stats?order=elo.desc&limit=10');
+            return res.status(response.ok ? 200 : 500).json({ players: response.data || [] });
+        }
 
         // --- Fetch achievements for a specific player ---
         if (player_uuid) {

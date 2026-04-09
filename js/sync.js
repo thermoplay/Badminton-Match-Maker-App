@@ -90,11 +90,32 @@ class SupabaseRealtimeManager {
         if (this.socket) this.disconnect();
         this.roomCode = roomCode;
 
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+
         this.socket = new WebSocket(`${this.url}?apikey=${this.key}&vsn=1.0.0`);
         this.socket.onopen    = () => this._onOpen();
         this.socket.onmessage = (msg) => this._onMessage(msg);
         this.socket.onerror   = () => this._onError();
         this.socket.onclose   = () => this._onClose();
+    }
+
+    /**
+     * Proactively verifies if the current socket is actually alive.
+     * Critical for mobile wake-from-sleep where readyState may be a "zombie" 1 (OPEN).
+     */
+    verifyConnection() {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            Log.info('Realtime: Socket not open, initiating connection...');
+            this.connect(this.roomCode);
+            return;
+        }
+        
+        // Force an immediate heartbeat to flush the pipe and verify TCP health
+        Log.debug('Realtime: Proactively verifying connection health...');
+        this._sendHeartbeat(`hb-verify-${Date.now()}`);
     }
 
     disconnect() {
@@ -233,7 +254,7 @@ class SupabaseRealtimeManager {
             // Exponential Backoff: 1s, 2s, 4s... up to 30s
             const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
             this.reconnectAttempts++;
-            setTimeout(() => this.connect(this.roomCode), delay);
+            this.reconnectTimer = setTimeout(() => this.connect(this.roomCode), delay);
         }
     }
 
@@ -242,14 +263,16 @@ class SupabaseRealtimeManager {
         this.heartbeatInterval = setInterval(() => {
             if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
             const ref = `hb-${Date.now()}`;
-            this.pendingHeartbeats.set(ref, Date.now());
-            this.socket.send(JSON.stringify({
-                topic: 'phoenix',
-                event: 'heartbeat',
-                payload: {},
-                ref: ref
-            }));
+            this._sendHeartbeat(ref);
         }, 5000); // 5s ping
+    }
+
+    _sendHeartbeat(ref) {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+        this.pendingHeartbeats.set(ref, Date.now());
+        this.socket.send(JSON.stringify({
+            topic: 'phoenix', event: 'heartbeat', payload: {}, ref: ref
+        }));
     }
 
     _stopHeartbeat() {
@@ -324,7 +347,7 @@ async function createOnlineSession() {
     try {
         const roomCode = generateRoomCode();
         const opKey    = generateOperatorKey();
-        const result   = await apiCall('session-create', {
+        const result   = await apiCall('sessions', {
             method: 'POST',
             body: {
                 room_code: roomCode,
@@ -332,7 +355,7 @@ async function createOnlineSession() {
                 court_names: StateStore.get('courtNames'),
                 squad: StateStore.squad,
                 current_matches: StateStore.currentMatches,
-                player_queue: StateStore.playerQueue
+                player_queue: StateStore.playerQueue,
             },
         });
         if (!result.ok) throw new Error(result.data?.error || 'Create failed');
@@ -380,7 +403,7 @@ async function joinOnlineSession(roomCode) {
     if (!code) return;
     showSyncStatus('Joining…', 'info');
     try {
-        const result = await apiCall(`session-get?code=${encodeURIComponent(code)}`);
+        const result = await apiCall(`sessions?code=${encodeURIComponent(code)}`);
         if (!result.ok) {
             const msg = result.status === 0 ? 'Network error. Retrying...' : 'Room not found. Check code.';
             showSyncStatus(msg, 'error');
@@ -467,9 +490,9 @@ function pushStateToSupabase(force = false, targetUUIDs = null) {
         _dirtyUUIDs = new Set();
 
         try {
-            const res = await apiCall('session-update', {
+            const res = await apiCall('sessions', {
                 method: 'PATCH',
-                body: {
+                body: { 
                     room_code:        currentRoomCode,
                     operator_key:     operatorKey,
                     squad:            squadToSend,
@@ -616,6 +639,11 @@ function broadcastMatchResult(winnerUUIDs, loserUUIDs, gameLabel) {
     });
 }
 
+function broadcastPlayerRemoved(playerUUID, playerName) {
+    if (!isOperator) return;
+    _broadcast('player_removed', { playerUUID, playerName });
+}
+
 /**
  * BUG 3 FIX — player broadcasts their name change to the host.
  * Any subscriber can call this (not operator-only).
@@ -647,7 +675,7 @@ function broadcastSessionEnded(recapData) {
 async function memberApprove(playerUUID) {
     if (!isOperator || !currentRoomCode || !operatorKey || !playerUUID) return;
     try {
-        const r = await fetch('/api/member-approve', {
+        const r = await fetch('/api/members', {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -668,7 +696,7 @@ window.memberApprove = memberApprove;
 async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
     if (!currentRoomCode || !playerUUID) return;
     try {
-        const r = await fetch('/api/member-rename', {
+        const r = await fetch('/api/members', {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -701,7 +729,7 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     currentRoomCode = normalizeRoomCode(roomCode); // keep local var in sync
     _syncState();
     try {
-        const r = await fetch('/api/member-upsert', {
+        const r = await fetch('/api/members', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -1311,14 +1339,13 @@ function showReconnectingIndicator(show, text = '⟳ Reconnecting…') {
 async function endAndDeleteSession() {
     if (!isOperator || !currentRoomCode) return;
     try {
-        await apiCall('session-delete', {
+        await apiCall('sessions', {
             method: 'DELETE',
             body: { room_code: currentRoomCode, operator_key: operatorKey },
         });
     } catch (e) { Log.error('delete failed', e); }
     leaveSession();
 }
-
 // ---------------------------------------------------------------------------
 // UI helpers
 // ---------------------------------------------------------------------------
@@ -1413,7 +1440,7 @@ async function tryAutoRejoin() {
 
     try {
         let sessionData = null;
-        const result = await apiCall(`session-get?code=${encodeURIComponent(savedCode)}`);
+        const result = await apiCall(`sessions?code=${encodeURIComponent(savedCode)}`);
         
         if (!result.ok) {
             if (result.status === 404) {
@@ -1529,13 +1556,18 @@ window.addEventListener('online', () => {
 // Visibility change handler for mobile sleep/wake cycles
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && isOnlineSession) {
-        // If socket is stale or dead, reconnect immediately
-        if (!sbManager || !sbManager.socket || sbManager.socket.readyState !== WebSocket.OPEN) {
-            Log.info('Tab resumed, reconnecting socket...');
-            if (sbManager) sbManager.connect(currentRoomCode);
-        } else if (!isOperator && typeof SidelineView !== 'undefined') {
-            // Refresh state to catch missed broadcasts while backgrounded
-            SidelineView._performRefresh(true);
+        Log.info('Tab resumed, verifying connectivity...');
+        
+        if (sbManager) {
+            // Reset backoff counter on manual resume to ensure immediate retry
+            sbManager.reconnectAttempts = 0;
+            sbManager.verifyConnection();
+        }
+
+        // Force a background state refresh for everyone (Host and Player) 
+        // to catch anything missed while the app was backgrounded.
+        if (typeof SidelineView !== 'undefined' && currentRoomCode) {
+            SidelineView._performRefresh(true); // silent refresh
         }
     }
 });
@@ -1550,23 +1582,22 @@ let presenceHeartbeat = null;
 async function registerPresence() {
     if (isOperator) return;
     try {
-        await apiCall('session-presence', {
+        await apiCall('sessions', {
             method: 'POST',
             body: { room_code: currentRoomCode, action: 'join' },
         });
         clearInterval(presenceHeartbeat);
         presenceHeartbeat = setInterval(async () => {
             if (!isOnlineSession) { clearInterval(presenceHeartbeat); return; }
-            await apiCall('session-presence', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
+            await apiCall('sessions', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
         }, 20000);
-    } catch { /* silent */ }
+    } catch (e) { Log.error('presence registration failed', e); }
 }
 
 function updateSpectatorCount(count) {
     spectatorCount = count;
     const countEl = document.getElementById('spectatorCount');
     if (countEl) {
-        countEl.textContent   = `👁 ${count}`;
         countEl.style.display = count > 0 ? 'inline-flex' : 'none';
     }
 }

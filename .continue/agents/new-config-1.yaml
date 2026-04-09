@@ -1,0 +1,15 @@
+name: iAMawi Config
+version: 1.0.0
+schema: v1
+
+models:
+  - title: "Gemma 4"
+    provider: "ollama"
+    model: "gemma4:31b"
+    apiBase: "http://localhost:11434"
+
+tabAutocompleteModel:
+  title: "Gemma 4 9B"
+  provider: "ollama"
+  model: "gemma4:9b"
+  apiBase: "http://localhost:11434"
