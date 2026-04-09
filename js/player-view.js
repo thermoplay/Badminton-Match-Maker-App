@@ -935,11 +935,9 @@ const SidelineView = {
             if (navigator.onLine) {
                 el.className = 'sl-network-icon online';
                 el.title = 'Online';
-                this._updateReconnectButton('online');
             } else {
                 el.className = 'sl-network-icon offline';
                 el.title = 'Offline';
-                this._updateReconnectButton('offline');
             }
         };
         
