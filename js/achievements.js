@@ -53,11 +53,11 @@ async function checkAndAwardAchievements(match, squad) {
 
     const winIdx = match.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
-    const winnerNames = match.teams[winIdx];
+    const winnerUUIDs = match.teams[winIdx];
     const newlyUnlocked = [];
 
-    const findP = (name) => squad.find(p => p.name === name);
-    const winners = winnerNames.map(findP).filter(Boolean);
+    const findP = (id) => squad.find(p => p.uuid === id);
+    const winners = winnerUUIDs.map(findP).filter(Boolean);
     const allPlayersInMatch = match.teams.flat().map(findP).filter(Boolean);
 
     // This loop can now be synchronous as we are not fetching from the DB on every check.
@@ -136,7 +136,7 @@ async function fetchPlayerAchievements(player_uuid) {
         const data = await res.json();
         return Array.isArray(data.achievements) ? data.achievements : [];
     } catch (e) {
-        console.warn('Failed to fetch achievements (network or API error):', e);
+        Log.warn('Failed to fetch achievements (network or API error):', e);
         return [];
     }
 }
@@ -175,7 +175,7 @@ async function unlockAchievement(player_uuid, achievement_id) {
             })
         });
     } catch (e) {
-        console.error('Failed to unlock achievement:', e);
+        Log.error('Failed to unlock achievement:', e);
     }
 }
 
@@ -189,7 +189,7 @@ function showAchievementToast(playerName, achievement) {
     if (typeof showSessionToast === 'function') {
         showSessionToast(`${achievement.icon} ${playerName} unlocked: ${achievement.name}`);
     } else {
-        console.log(`[Achievement Unlocked!] ${playerName} earned: ${achievement.name}`);
+        Log.info(`[Achievement Unlocked!] ${playerName} earned: ${achievement.name}`);
     }
 }
 

@@ -11,12 +11,22 @@
 // =============================================================================
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const crypto = require('crypto'); // Node.js crypto module for hashing
+import { ROOM_CODE_REGEX, UUID_REGEX, normalizeRoomCode } from './_utils';
 
 async function sb(path, options = {}) {
-    const method = options.method || 'GET';
-    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
+    }
 
+    const method = options.method || 'GET';
+    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
+    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
+
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const url = `${baseUrl}/rest/v1${cleanPath}`;
+
+    console.log(`[sbFetch] Making request to: ${url}`);
     const headers = {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
@@ -24,7 +34,7 @@ async function sb(path, options = {}) {
         'Prefer':        options.prefer || (method === 'POST' ? 'return=minimal' : 'return=representation'),
     };
 
-    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
+    const res = await fetch(url, {
         headers,
         method,
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -47,6 +57,14 @@ export default async function handler(req, res) {
             const { room_code, operator_key, timestamp, matches, squad } = req.body;
             if (!room_code || !matches || !operator_key) {
                 return res.status(400).json({ error: 'Missing fields for match_result' });
+            }
+
+            // Normalize room code
+            const code = normalizeRoomCode(room_code);
+
+            // Validation
+            if (!ROOM_CODE_REGEX.test(code)) {
+                return res.status(400).json({ error: 'Invalid room code format' });
             }
 
             const results = [];
@@ -81,21 +99,25 @@ export default async function handler(req, res) {
             // Bypassing the RPC to avoid persistent "text = uuid" type mismatches.
             
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
-            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== operator_key) {
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
+            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
+            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });
             }
 
             // 2. Update individual player ratings
-            for (const res of results) {
-                await sb(`/players?uuid=eq.${encodeURIComponent(res.player_uuid)}`, {
-                    method: 'PATCH',
-                    body: {
-                        rating: res.rating,
-                        last_active: new Date().toISOString()
-                    }
-                });
-            }
+            // IMPROVEMENT: Batch UPSERT ratings to avoid sequential network round-trips.
+            const ratingUpdates = results.map(r => ({
+                uuid: r.player_uuid,
+                rating: r.rating,
+                last_active: new Date().toISOString()
+            }));
+
+            await sb('/players', {
+                method: 'POST',
+                body: ratingUpdates,
+                prefer: 'resolution=merge-duplicates'
+            });
 
             // 3. Log achievements directly
             for (const ach of (req.body.achievements || [])) {
@@ -112,9 +134,21 @@ export default async function handler(req, res) {
         if (type === 'achievement_unlock') {
             const { player_uuid, achievement_id, room_code, operator_key } = req.body;
             
+            // Normalize room code
+            const code = normalizeRoomCode(room_code);
+
+            // Validation
+            if (!ROOM_CODE_REGEX.test(code)) {
+                return res.status(400).json({ error: 'Invalid room code format' });
+            }
+            if (!UUID_REGEX.test(player_uuid)) {
+                return res.status(400).json({ error: 'Invalid player UUID format' });
+            }
+
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
-            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== operator_key) {
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
+            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
+            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
                 return res.status(403).json({ error: 'Unauthorized' });
             }
 
@@ -137,7 +171,13 @@ export default async function handler(req, res) {
     // GET: Fetch achievements for a player
     // -------------------------------------------------------------------------
     if (req.method === 'GET') {
-        const { player_uuid } = req.query;
+        const { player_uuid, type } = req.query;
+
+        // Sub-route: Global Leaderboard
+        if (type === 'leaderboard') {
+            const response = await sb('/career_stats?order=elo.desc&limit=10');
+            return res.status(response.ok ? 200 : 500).json({ players: response.data || [] });
+        }
 
         // --- Fetch achievements for a specific player ---
         if (player_uuid) {

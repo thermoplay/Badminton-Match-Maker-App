@@ -898,7 +898,7 @@ const SidelineView = {
 
         if (!code) return;
         try {
-            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
+            const res = await fetch(`/api/sessions?code=${encodeURIComponent(code)}`);
             if (res.ok) {
                 const data = await res.json();
                 if (data.session && typeof applyRemoteState === 'function') {
@@ -1150,7 +1150,7 @@ const PlayerMode = {
         // for players the host has already manually added or approved previously.
         try {
             const [sessionRes, requestRes] = await Promise.all([
-                fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`),
+                fetch(`/api/sessions?code=${encodeURIComponent(joinCode)}`),
                 fetch(`/api/play-request?room_code=${encodeURIComponent(joinCode)}`)
             ]);
 
@@ -1891,7 +1891,7 @@ const PlayerMode = {
 
     async _verifyToken(roomCode, savedToken, passport) {
         try {
-            const res  = await fetch(`/api/session-get?code=${encodeURIComponent(roomCode)}`);
+            const res  = await fetch(`/api/sessions?code=${encodeURIComponent(roomCode)}`);
             if (!res.ok) return false;
             const data = await res.json();
             const approved = data?.session?.approved_players || {};
@@ -2069,7 +2069,7 @@ const PlayerMode = {
         btn.textContent = 'Checking...';
         
         try {
-            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
+            const res = await fetch(`/api/sessions?code=${encodeURIComponent(code)}`);
             if (res.ok) {
                 btn.textContent = 'Room Found! Tap to Join';
                 btn.style.background = 'var(--accent)';

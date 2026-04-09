@@ -323,7 +323,7 @@ async function createOnlineSession() {
     try {
         const roomCode = generateRoomCode();
         const opKey    = generateOperatorKey();
-        const result   = await apiCall('session-create', {
+        const result   = await apiCall('sessions', {
             method: 'POST',
             body: {
                 room_code: roomCode,
@@ -382,7 +382,7 @@ async function joinOnlineSession(roomCode) {
     if (!code) return;
     showSyncStatus('Joining…', 'info');
     try {
-        const result = await apiCall(`session-get?code=${encodeURIComponent(code)}`);
+        const result = await apiCall(`sessions?code=${encodeURIComponent(code)}`);
         if (!result.ok) {
             const msg = result.status === 0 ? 'Network error. Retrying...' : 'Room not found. Check code.';
             showSyncStatus(msg, 'error');
@@ -469,7 +469,7 @@ function pushStateToSupabase(force = false, targetUUIDs = null) {
         _dirtyUUIDs = new Set();
 
         try {
-            const res = await apiCall('session-update', {
+            const res = await apiCall('sessions', {
                 method: 'PATCH',
                 body: {
                     room_code:        currentRoomCode,
@@ -649,7 +649,7 @@ function broadcastSessionEnded(recapData) {
 async function memberApprove(playerUUID) {
     if (!isOperator || !currentRoomCode || !operatorKey || !playerUUID) return;
     try {
-        const r = await fetch('/api/member-approve', {
+        const r = await fetch('/api/members', {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -670,7 +670,7 @@ window.memberApprove = memberApprove;
 async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
     if (!currentRoomCode || !playerUUID) return;
     try {
-        const r = await fetch('/api/member-rename', {
+        const r = await fetch('/api/members', {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -706,7 +706,7 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     currentRoomCode        = roomCode; // keep local var in sync
     _syncState();
     try {
-        const r = await fetch('/api/member-upsert', {
+        const r = await fetch('/api/members', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -1310,7 +1310,7 @@ function showReconnectingIndicator(show, text = '⟳ Reconnecting…') {
 async function endAndDeleteSession() {
     if (!isOperator || !currentRoomCode) return;
     try {
-        await apiCall('session-delete', {
+        await apiCall('sessions', {
             method: 'DELETE',
             body: { room_code: currentRoomCode, operator_key: operatorKey },
         });
@@ -1418,7 +1418,7 @@ async function tryAutoRejoin() {
     const savedCode = localStorage.getItem('cs_room_code');
     if (!savedCode) return;
     try {
-        const result = await apiCall(`session-get?code=${encodeURIComponent(savedCode)}`);
+        const result = await apiCall(`sessions?code=${encodeURIComponent(savedCode)}`);
         if (!result.ok) {
             // FIX: Only wipe if the session is confirmed GONE (404).
             // If it's a network error (status 0) or server error (500), 
@@ -1534,14 +1534,14 @@ let presenceHeartbeat = null;
 async function registerPresence() {
     if (isOperator) return;
     try {
-        await apiCall('session-presence', {
+        await apiCall('sessions', {
             method: 'POST',
             body: { room_code: currentRoomCode, action: 'join' },
         });
         clearInterval(presenceHeartbeat);
         presenceHeartbeat = setInterval(async () => {
             if (!isOnlineSession) { clearInterval(presenceHeartbeat); return; }
-            await apiCall('session-presence', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
+            await apiCall('sessions', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
         }, 20000);
     } catch { /* silent */ }
 }

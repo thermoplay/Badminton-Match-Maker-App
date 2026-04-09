@@ -24,43 +24,10 @@
 // play_request to get the host's attention.
 // =============================================================================
 
+const crypto = require('crypto'); // Node.js crypto module for hashing
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-async function sbFetch(path, options = {}) {
-    const method = options.method || 'GET';
-    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    
-    const headers = {
-        'apikey':        SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type':  'application/json',
-    };
-
-    if (method !== 'GET') {
-        headers['Prefer'] = options.prefer || 'return=representation';
-    }
-
-    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
-        headers: { ...headers, ...(options.headers || {}) },
-        method:  method,
-        body:    options.body ? JSON.stringify(options.body) : undefined,
-    });
-
-    const text = await res.text();
-    if (!res.ok) {
-        console.error(`[sbFetch] Supabase Error ${res.status}:`, text);
-    }
-
-    let data = null;
-    try {
-        if (text) data = JSON.parse(text);
-    } catch (e) {
-        console.error('[sbFetch] JSON parse failed:', text);
-    }
-    return { ok: res.ok, status: res.status, data };
-}
+import { ROOM_CODE_REGEX, UUID_REGEX, normalizeRoomCode, sbFetch } from './_utils';
 
 export default async function handler(req, res) {
     // 1. Handle CORS
@@ -79,35 +46,59 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Missing fields for join' });
         }
 
-        // Normalize room code
-        let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
+        // Clean and normalize room code
+        const code = normalizeRoomCode(room_code);
 
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = String(player_uuid).trim();
 
         // Input Validation
-        if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
-        if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) return res.status(400).json({ error: 'Invalid player UUID format' });
+        if (!ROOM_CODE_REGEX.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
+        if (!UUID_REGEX.test(uuid)) return res.status(400).json({ error: 'Invalid player UUID format' });
 
         // ── REVERTED: Standard Table Operations ──────────────────────────────
         // Reverting to standard PostgREST calls because the RPC is hitting 
         // persistent type mismatch errors. Standard calls handle strings better.
-        
-        // 1. Verify Room Exists
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code&limit=1`);
-        if (!sessionCheck.ok || !sessionCheck.data?.length) {
-            return res.status(404).json({ error: 'Room not found' });
+
+        // 1. Parallel Check: Room existence and current member status
+        const [sessionCheck, memberCheck] = await Promise.all([
+            sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party,squad,current_matches,court_names&limit=1`),
+            sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`)
+        ]);
+
+        if (!sessionCheck.ok) return res.status(500).json({ error: 'Database connection failed', details: sessionCheck.data });
+        if (!sessionCheck.data?.length) return res.status(404).json({ error: `Room ${code} not found` });
+
+        const session = sessionCheck.data[0];
+        const inSquad = (session.squad || []).some(p => p && p.uuid === uuid);
+        const isAlreadyActive = memberCheck.ok && memberCheck.data?.[0]?.status === 'active';
+
+        if ((inSquad || isAlreadyActive) && !force) {
+            return res.status(200).json({ alreadyActive: true, ok: true, session });
         }
 
-        // 2. Check if player is already active in this session
-        const memberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
-        if (memberCheck.ok && memberCheck.data?.[0]?.status === 'active' && !force) {
-            return res.status(200).json({ alreadyActive: true, ok: true });
+        const isOpen = !!session.is_open_party;
+        const status = isOpen ? 'active' : 'pending';
+
+        const tasks = [];
+
+        // 2.5 If Open Party, auto-approve membership in DB immediately
+        if (isOpen) {
+            tasks.push(sbFetch('/session_members', {
+                method: 'POST',
+                body: {
+                    room_code: code,
+                    player_uuid: uuid,
+                    player_name: trimmedName,
+                    status: 'active',
+                    spirit_animal: spirit_animal || null
+                },
+                prefer: 'return=minimal,resolution=merge-duplicates'
+            }));
         }
 
         // 3. Create the notification request for the Host
-        const insertReq = await sbFetch('/play_requests', {
+        tasks.push(sbFetch('/play_requests', {
             method: 'POST',
             body: {
                 room_code: code,
@@ -115,21 +106,20 @@ export default async function handler(req, res) {
                 name: trimmedName,
                 spirit_animal: spirit_animal || null
             }
-        });
+        }));
 
-        if (!insertReq.ok) return res.status(500).json({ error: 'Failed to send join request' });
+        const results = await Promise.all(tasks);
+        const failed = results.find(r => !r.ok);
+        if (failed) return res.status(500).json({ error: 'Failed to process join request' });
 
-        return res.status(200).json({ ok: true, status: 'pending' });
+        return res.status(200).json({ ok: true, status, session: isOpen ? session : null });
     }
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {
         const { room_code, status } = req.query;
         if (!room_code) return res.status(400).json({ error: 'Missing room_code' });
 
-        let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        if (code.length === 8) {
-            code = code.slice(0, 4) + '-' + code.slice(4);
-        }
+        const code = normalizeRoomCode(room_code);
 
         // Reconciliation support: Fetch currently active members from session_members
         // This allows the host to recover players who are active in the DB but missing locally.
@@ -159,32 +149,30 @@ export default async function handler(req, res) {
         // This is an authenticated action that deletes a row from `session_members`.
         // It is triggered by the host UI (e.g., player leaves, host kicks player).
         if (player_uuid && room_code && operator_key) {
-            let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            if (code.length === 8) {
-                code = code.slice(0, 4) + '-' + code.slice(4);
-            }
+            const code = normalizeRoomCode(room_code);
             const uuid = String(player_uuid).trim();
 
             // --- Input Validation ---
-            if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+            if (!ROOM_CODE_REGEX.test(code)) {
                 return res.status(400).json({ error: 'Invalid room code format' });
             }
-            if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
+            if (!UUID_REGEX.test(uuid)) {
                 return res.status(400).json({ error: 'Invalid player UUID format' });
             }
             // ------------------------
 
             // Verify operator key
-            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
+            const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`); 
             if (!sessionRes.ok) {
                 return res.status(500).json({ error: `Database error: ${sessionRes.data?.message || 'Unknown'}` });
             }
             if (!sessionRes.data?.[0]) {
-                return res.status(404).json({ error: 'Session not found' });
+                // Don't fail hard, maybe session ended. Just say ok to avoid 404 console spam during sync/cleanup.
+                return res.status(200).json({ ok: true, message: 'Session not found, member removal skipped.' });
             }
+            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
 
-            const opKeyHash = String(operator_key);
-            if (opKeyHash !== sessionRes.data[0].operator_key) {
+            if (incomingOperatorKeyHash !== sessionRes.data[0].operator_key) {
                 return res.status(403).json({ error: 'Invalid operator key' });
             }
 
@@ -196,15 +184,12 @@ export default async function handler(req, res) {
 
             return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
         }
-
+        
         // --- ACTION 2: Host dismisses a pending join request ---
         // This deletes a row from `play_requests` using its unique ID.
         // It's called when the host approves or denies a join notification.
         if (id && room_code && operator_key) {
-            let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            if (code.length === 8) {
-                code = code.slice(0, 4) + '-' + code.slice(4);
-            }
+            const code = normalizeRoomCode(room_code);
 
             // Verify operator key
             const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
@@ -212,8 +197,8 @@ export default async function handler(req, res) {
                 // Don't fail hard, maybe session ended. Just say ok.
                 return res.status(200).json({ ok: true, message: 'Session not found, request likely stale.' });
             }
-            const opKeyHash = String(operator_key);
-            if (opKeyHash !== sessionRes.data[0].operator_key) {
+            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
+            if (incomingOperatorKeyHash !== sessionRes.data[0].operator_key) {
                 return res.status(403).json({ error: 'Invalid operator key' });
             }
 
