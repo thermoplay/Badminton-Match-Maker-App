@@ -216,7 +216,7 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
                 _downloadShareImage(blob);
             }
         } catch (e) {
-            Log.error('Share failed:', e);
+            console.error('[CourtSide] Share failed:', e);
             _downloadShareImage(blob);
         }
     }, 'image/png');

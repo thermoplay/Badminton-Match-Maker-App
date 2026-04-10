@@ -157,21 +157,21 @@ const SidelineView = {
             const courtName = courtNames[i] || `COURT ${i + 1}`;
             const hasWinner = winIdx !== null && winIdx !== undefined;
 
+            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+            const safeNames = (uuids) => uuids.map(u => esc(squad.find(p => p.uuid === u || p.name === u)?.name || 'Unknown')).join(' &amp; ');
+
             // Timer is handled by the global TimerManager in timer.js
             // It reads the `data-started` attribute from the DOM.
             const timerHTML = m.startedAt ? `<span class="sl-court-timer">⏱ 0:00</span>` : '';
 
             // Winner banner
             const winnerBanner = hasWinner
-                ? `<div class="sl-winner-banner">🏆 ${(teams[winIdx] || []).join(' & ')} won</div>`
+                ? `<div class="sl-winner-banner">🏆 ${safeNames(teams[winIdx] || [])} won</div>`
                 : '';
 
             // Team styling
             const aClass = hasWinner ? (winIdx === 0 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
             const bClass = hasWinner ? (winIdx === 1 ? 'sl-team sl-team-won' : 'sl-team sl-team-lost') : 'sl-team';
-
-            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
-            const safeNames = (uuids) => uuids.map(u => esc(squad.find(p => p.uuid === u)?.name || 'Unknown')).join(' &amp; ');
 
             return `
                 <div class="sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}" data-started="${m.startedAt || ''}" onclick="SidelineView.openMatchPreview(${i})">
@@ -206,8 +206,8 @@ const SidelineView = {
         const myName = passport?.playerName;
 
         // Helpers to get stats
-        const getStats = (teamNames) => {
-            const players = teamNames.map(n => squad.find(p => p.name === n)).filter(Boolean);
+        const getStats = (teamUUIDs) => {
+            const players = teamUUIDs.map(id => squad.find(p => p.uuid === id)).filter(Boolean);
             if (players.length === 0) return { wr: 0, streak: 0, games: 0 };
             
             const totalWins = players.reduce((sum, p) => sum + p.wins, 0);
@@ -598,9 +598,17 @@ const SidelineView = {
                     <div class="sl-lab-history" style="margin-top:12px;">
                         ${me.matchHistory.map(h => {
                             const oppNames = (h.oppUUIDs || []).map(id => {
-                                const p = (window.squad || []).find(s => s.uuid === id);
+                                const p = (window.squad || []).find(s => s.uuid === id || s.name === id);
                                 return p ? esc(p.name) : 'Former Player';
                             }).join(' &amp; ');
+                            
+                            let partnerDisplay = '';
+                            if (h.partnerUUID) {
+                                const partnerP = (window.squad || []).find(s => s.uuid === h.partnerUUID);
+                                if (partnerP) {
+                                    partnerDisplay = ` with ${esc(partnerP.name)}`;
+                                }
+                            }
                             const timeAgo = Math.floor((Date.now() - h.time) / 60000);
                             const timeStr = timeAgo < 1 ? 'Just now' : `${timeAgo}m ago`;
                             return `
@@ -608,7 +616,7 @@ const SidelineView = {
                                     <div class="sl-hist-badge">${h.win ? 'W' : 'L'}</div>
                                     <div class="sl-hist-details">
                                         <div class="sl-hist-label">${h.win ? 'Victory' : 'Defeat'}</div>
-                                        <div class="sl-hist-opp">vs ${oppNames}</div>
+                                        <div class="sl-hist-opp">${partnerDisplay} vs ${oppNames}</div>
                                     </div>
                                     <div class="sl-hist-time">${timeStr}</div>
                                 </div>`;
@@ -898,7 +906,7 @@ const SidelineView = {
 
         if (!code) return;
         try {
-            const res = await fetch(`/api/sessions?code=${encodeURIComponent(code)}`);
+            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
             if (res.ok) {
                 const data = await res.json();
                 if (data.session && typeof applyRemoteState === 'function') {
@@ -949,6 +957,12 @@ const SidelineView = {
 };
 
 // =============================================================================
+// VICTORY CARD — stubbed out
+// =============================================================================
+
+const VictoryCard = { show() {}, hide() {}, share() {} };
+
+// =============================================================================
 // PLAYER MODE — boot controller for ?role=player  v6
 // =============================================================================
 
@@ -962,6 +976,7 @@ const PlayerMode = {
     _statePollTimer: null,
     _retryInterval: null,
     _joinRetryTimeout: null,
+    _isOpenParty: false,
 
     resetAndTryAgain() {
         this._joinCode = null;
@@ -1065,6 +1080,17 @@ const PlayerMode = {
         }
         this._joinCode = joinCode;
 
+        // Fetch session metadata first to check for Open Party
+        if (joinCode) {
+            try {
+                const res = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    this._isOpenParty = !!data.session?.is_open_party;
+                }
+            } catch (e) {}
+        }
+
         // 2. Initial UI setup
         this._bootUI(passport, joinCode);
 
@@ -1084,7 +1110,12 @@ const PlayerMode = {
             if (!name) return; // Player cancelled name entry
             passport = Passport.get(); // Re-fetch passport with new name
         } else {
-            this._showWelcomeBack(passport.playerName, joinCode);
+            const action = await this._promptCheckIn(passport, joinCode);
+            if (action === 'rename') {
+                const name = await this._handleNewPlayerName();
+                if (!name) return;
+                passport = Passport.get();
+            }
             this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
         }
 
@@ -1144,13 +1175,17 @@ const PlayerMode = {
         // for players the host has already manually added or approved previously.
         try {
             const [sessionRes, requestRes] = await Promise.all([
-                fetch(`/api/sessions?code=${encodeURIComponent(joinCode)}`),
+                fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`),
                 fetch(`/api/play-request?room_code=${encodeURIComponent(joinCode)}`)
             ]);
 
             if (sessionRes.ok) {
                 const data = await sessionRes.json();
-                const inSquad = (data.session?.squad || []).some(p => p.uuid === passport.playerUUID);
+                const session = data.session || {};
+                const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
+
+                this._isOpenParty = !!session.is_open_party;
+
                 if (inSquad) {
                     this._markApprovedInSession(joinCode);
                     console.log('[PlayerMode] Proactive bypass: already in squad.');
@@ -1200,8 +1235,8 @@ const PlayerMode = {
 
         // Atomic Join Request: checks status, inserts request, or confirms active.
         await this._submitJoinRequest(passport, joinCode, {
-            statusMessage: 'Connecting to court…',
-            statusSubMessage: 'Verifying session'
+            statusMessage: this._isOpenParty ? 'Joining Court…' : 'Connecting to court…',
+            statusSubMessage: this._isOpenParty ? 'Instant Entry Enabled 🔓' : 'Verifying session'
         });
     },
 
@@ -1216,10 +1251,11 @@ const PlayerMode = {
         container.innerHTML = `
             <div class="sl-queued-state" id="slQueuedBlock">
                 <div class="sl-queued-icon">🏀</div>
-                <div class="sl-queued-title">REQUEST SENT</div>
+                <div class="sl-queued-title">${this._isOpenParty ? 'JOINING NOW' : 'REQUEST SENT'}</div>
                 <div class="sl-queued-sub">
-                    Waiting for the host to approve you.<br>
-                    You'll be added to the rotation automatically.
+                    ${this._isOpenParty 
+                        ? 'The court is open. You will be added to the rotation in a few seconds.' 
+                        : 'Waiting for the host to approve you.<br>You\'ll be added to the rotation automatically.'}
                 </div>
                 <div id="slRetryNote" class="sl-retry-note" style="display:none;"></div>
                 <button class="sl-queued-resend" id="slResendBtn">Resend Request</button>
@@ -1250,12 +1286,12 @@ const PlayerMode = {
         const btn = document.getElementById('slResendBtn');
         if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
         try {
-            const res = await fetch('/api/members', {
+            const res = await fetch('/api/play-request', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({
                     room_code:   this._joinCode,
-                    player_name: passport.playerName,
+                    name:        passport.playerName,
                     player_uuid: passport.playerUUID,
                     force:       true, // Force a fresh notification
                 }),
@@ -1305,14 +1341,32 @@ const PlayerMode = {
     _showWelcomeBack(playerName, roomCode) {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
+        const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
         container.innerHTML = `
-            <div class="sl-welcome-back">
-                <div class="sl-welcome-back-icon">🏀</div>
-                <div class="sl-welcome-back-text">
-                    <div class="sl-welcome-back-name">Welcome back, ${playerName.toUpperCase()}</div>
-                    <div class="sl-welcome-back-sub">Joining court ${roomCode}…</div>
-                </div>
+            <div class="sl-name-entry">
+                <div class="iwtp-title">Welcome back,</div>
+                <div class="iwtp-passport-name" style="font-family:var(--font-display); font-size:1.8rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff; margin-bottom:0.25rem;">${esc(playerName)}</div>
+                <div class="iwtp-subtitle">Your passport was found on this device.</div>
+                <button class="iwtp-btn" id="slCheckInBtn">
+                    🏀 ${this._isOpenParty ? 'Join Instantly' : 'Check-in to Room'} ${esc(roomCode || '')}
+                </button>
+                <button class="iwtp-choice-btn iwtp-choice-existing" style="margin-top:10px;" id="slRenameJoinBtn">
+                    ✏️ Join with a different name
+                </button>
             </div>`;
+    },
+
+    /** Interactive prompt for re-joining players. */
+    _promptCheckIn(passport, joinCode) {
+        return new Promise(resolve => {
+            this._showWelcomeBack(passport.playerName, joinCode);
+            
+            const joinBtn = document.getElementById('slCheckInBtn');
+            const renameBtn = document.getElementById('slRenameJoinBtn');
+            
+            if (joinBtn) joinBtn.onclick = () => resolve('join');
+            if (renameBtn) renameBtn.onclick = () => resolve('rename');
+        });
     },
 
     _showNameEntry() {
@@ -1336,7 +1390,7 @@ const PlayerMode = {
                     inputmode="text"
                 >
                 <button class="sl-name-submit" id="slNameEntrySubmit">
-                    JOIN COURT →
+                    CHECK-IN NOW →
                 </button>
                 <button class="sl-back-btn" id="slNameEntryCancel" style="margin-top:10px;">
                     Cancel
@@ -1691,12 +1745,12 @@ const PlayerMode = {
         this.setStatus('pending', statusMessage || 'Request sent!', statusSubMessage || 'Waiting for host to approve… 🏀');
         console.log('[PlayerMode] Joining with UUID:', passport.playerUUID);
         try {
-            const res = await fetch('/api/members', {
+            const res = await fetch('/api/play-request', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({
                     room_code:   joinCode,
-                    player_name: passport.playerName,
+                    name:        passport.playerName,
                     player_uuid: passport.playerUUID,
                     spirit_animal: passport.spiritAnimal,
                     force:       force,
@@ -1885,7 +1939,7 @@ const PlayerMode = {
 
     async _verifyToken(roomCode, savedToken, passport) {
         try {
-            const res  = await fetch(`/api/sessions?code=${encodeURIComponent(roomCode)}`);
+            const res  = await fetch(`/api/session-get?code=${encodeURIComponent(roomCode)}`);
             if (!res.ok) return false;
             const data = await res.json();
             const approved = data?.session?.approved_players || {};
@@ -2063,17 +2117,17 @@ const PlayerMode = {
         btn.textContent = 'Checking...';
         
         try {
-            const res = await fetch(`/api/sessions?code=${encodeURIComponent(code)}`);
+            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
             if (res.ok) {
-                btn.textContent = 'Room Found! Tap to Join';
+                btn.textContent = 'ROOM FOUND • JOIN NOW';
                 btn.style.background = 'var(--accent)';
             } else {
                 if (res.status === 404) {
-                    btn.textContent = 'Room Not Found';
+                    btn.textContent = 'ROOM NOT FOUND';
                 } else if (res.status === 400) {
                     btn.textContent = 'Invalid Format';
                 } else {
-                    btn.textContent = 'Check Code';
+                    btn.textContent = 'CONNECTION ERROR';
                 }
                 btn.style.background = '#334155';
             }

@@ -3254,6 +3254,56 @@ header {
     transition: border-color 0.2s, transform 0.1s, background 0.2s;
 }
 
+.sl-mini-court.active {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, var(--surface2), rgba(0,255,163,0.08));
+    box-shadow: 0 0 15px rgba(0,255,163,0.1);
+}
+
+.sl-mini-court:active { transform: scale(0.97); }
+
+.sl-mini-team {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px;
+}
+
+.sl-mini-net {
+    height: 1.5px;
+    background: var(--border);
+    width: 85%;
+    margin: 0 auto;
+    opacity: 0.4;
+}
+
+.sl-mini-court.active .sl-mini-net { background: var(--accent); opacity: 0.4; }
+
+.sl-mini-label {
+    position: absolute;
+    top: 5px; left: 8px;
+    font-family: var(--font-display);
+    font-size: 0.55rem;
+    font-weight: 900;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.sl-mini-court.active .sl-mini-label { color: var(--accent); opacity: 1; }
+
+.sl-mini-court .avatar {
+    width: 24px; height: 24px;
+    font-size: 0.6rem;
+    border: 1.5px solid var(--bg);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* =============================================================================
+   UNIVERSAL ACTIVE STATES
+   ============================================================================= */
+
 /* =============================================================================
    VISUAL COURT MAP
    ============================================================================= */
@@ -3325,6 +3375,14 @@ header {
     border: 1.5px solid var(--bg);
     box-shadow: 0 2px 4px rgba(0,0,0,0.2);
 }
+
+/* =============================================================================
+   UNIVERSAL ACTIVE STATES
+   ============================================================================= */
+
+/* =============================================================================
+   UNIVERSAL ACTIVE STATES
+   ============================================================================= */
 
 /* Every interactive element gets a tactile press feel */
 button:active,
@@ -5291,10 +5349,6 @@ button:active,
     opacity: 1;
 }
 
-.sl-reconnect-banner span {
-    font-size: 1.1rem;
-}
-
 /* ── Profile View ───────────────────────────────────────────────────────── */
 .sl-profile-card {
     background: var(--surface);
@@ -5386,37 +5440,6 @@ button:active,
     border: 2px solid var(--accent);
     animation: streakRing 2s infinite;
     opacity: 0;
-}
-
-.sl-reconnect-banner {
-    width: 100%;
-    background: rgba(245, 158, 11, 0.1);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    color: #facc15;
-    padding: 12px;
-    border-radius: 12px;
-    font-family: var(--font-display);
-    font-size: 0.85rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin-bottom: 12px;
-    animation: sl-fade-up 0.3s ease;
-    transition: all 0.2s;
-}
-
-.sl-reconnect-banner:active {
-    transform: scale(0.98);
-    background: rgba(245, 158, 11, 0.2);
-}
-
-.sl-reconnect-banner span {
-    font-size: 1.1rem;
 }
 
 /* ── Status Toggle Card ─────────────────────────────────────────────────── */
@@ -5880,12 +5903,15 @@ body.session-ended .play-requests-badge,
 body.session-ended .join-notif,
 body.session-ended #nextUpTicker {
     display: none !important;
-}
-
 /* Search bar styling */
 #squadSearchInput {
     background: var(--surface2);
     border-color: var(--border);
     font-size: 0.85rem;
     padding: 10px 14px;
+}
+#squadSearchInput:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-dim);
+}
 }

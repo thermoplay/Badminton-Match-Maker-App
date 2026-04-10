@@ -4,49 +4,6 @@
 // No dependencies — loaded first, used by app.js and logic.js.
 // =============================================================================
 
-/** Robust HTML Escaping for XSS prevention */
-function escapeHTML(str) {
-    if (typeof str !== 'string') return String(str || '');
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-window.escapeHTML = escapeHTML;
-
-/**
- * Normalizes a room code to the standard ABCD-1234 format.
- * Shared logic for client and server consistency.
- */
-function normalizeRoomCode(raw) {
-    if (!raw) return '';
-    let code = String(raw).toUpperCase().trim();
-    const stripped = code.replace(/[^A-Z0-9]/g, '');
-    // Auto-hyphenate any unhyphenated even-length code (e.g. 6, 8, 10 chars)
-    if (!code.includes('-') && stripped.length >= 4 && stripped.length % 2 === 0) {
-        const mid = stripped.length / 2;
-        return stripped.slice(0, mid) + '-' + stripped.slice(mid);
-    }
-    return code;
-}
-window.normalizeRoomCode = normalizeRoomCode;
-
-/** Standardized Logging Utility */
-const Log = {
-    _prefix: '[CourtSide]',
-    info:  (...args) => console.log('[CourtSide]', ...args),
-    warn:  (...args) => console.warn('[CourtSide]', ...args),
-    error: (...args) => console.error('[CourtSide]', ...args),
-    debug: (...args) => {
-        if (typeof localStorage !== 'undefined' && localStorage.getItem('cs_debug') === 'true') {
-            console.debug('[CourtSide]', ...args);
-        }
-    }
-};
-window.Log = Log;
-
 // ---------------------------------------------------------------------------
 // HAPTIC FEEDBACK
 // Wraps navigator.vibrate with graceful fallback for unsupported devices.

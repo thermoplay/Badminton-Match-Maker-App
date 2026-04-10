@@ -136,7 +136,7 @@ async function fetchPlayerAchievements(player_uuid) {
         const data = await res.json();
         return Array.isArray(data.achievements) ? data.achievements : [];
     } catch (e) {
-        Log.warn('Failed to fetch achievements (network or API error):', e);
+        console.warn('Failed to fetch achievements (network or API error):', e);
         return [];
     }
 }
@@ -175,7 +175,7 @@ async function unlockAchievement(player_uuid, achievement_id) {
             })
         });
     } catch (e) {
-        Log.error('Failed to unlock achievement:', e);
+        console.error('Failed to unlock achievement:', e);
     }
 }
 
@@ -189,7 +189,7 @@ function showAchievementToast(playerName, achievement) {
     if (typeof showSessionToast === 'function') {
         showSessionToast(`${achievement.icon} ${playerName} unlocked: ${achievement.name}`);
     } else {
-        Log.info(`[Achievement Unlocked!] ${playerName} earned: ${achievement.name}`);
+        console.log(`[Achievement Unlocked!] ${playerName} earned: ${achievement.name}`);
     }
 }
 

@@ -61,7 +61,7 @@ function saveToDisk() {
         };
         localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
     } catch (e) {
-        Log.warn('Failed to save to disk. Storage might be full.', e);
+        console.warn('CourtSide: Failed to save to disk. Storage might be full.', e);
         if (typeof showSessionToast === 'function') showSessionToast('⚠️ Storage warning: Data not saved locally.');
     }
 }
@@ -85,7 +85,7 @@ function migratePlayer(p) {
     if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
     if (p.matchHistory     == null) p.matchHistory     = [];
-    if (!p.uuid) p.uuid = Passport._uuid(); // Ensure everyone has an ID for achievements
+    if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
     if (p.spiritAnimal     == null) p.spiritAnimal     = null;
     return p;
 }
@@ -128,7 +128,7 @@ function loadFromDisk() {
             if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
             renderQueueStrip();
         } catch (e) {
-            Log.error('Failed to parse saved data.', e);
+            console.error('CourtSide: Failed to parse saved data.', e);
             StateStore.setState({ squad: [], currentMatches: [], roundHistory: [] });
         }
     }
@@ -157,17 +157,18 @@ function addPlayer() {
     // Use migratePlayer to ensure all required logic fields (ELO, stats) are initialized
     const newPlayer = migratePlayer({
         name: name,
-        uuid: Passport._uuid(),
+        uuid: _generateUUID(),
         active: true
     });
     
     // Update state arrays
-    const newSquad = [...StateStore.squad, newPlayer];
+    StateStore.squad.push(newPlayer);
     const newQueue = [...StateStore.playerQueue];
     if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
 
     // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
-    StateStore.setState({ squad: newSquad, playerQueue: newQueue });
+    StateStore.set('squad', StateStore.squad);
+    StateStore.set('playerQueue', newQueue);
 
     // Connectivity: Force an immediate push to Supabase so spectators see the new player instantly
     if (window.isOnlineSession && window.isOperator && typeof pushStateToSupabase === 'function') {
@@ -197,7 +198,7 @@ function editPlayerName() {
             if (!trimmedNewName) return;
 
             // Check for name collision (case-insensitive, but not against the player's own old name)
-            if (StateStore.squad.some(player => player && player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
+            if (StateStore.squad.some(player => player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
                 alert('A player with this name already exists.');
                 return;
             }
@@ -290,9 +291,6 @@ function deletePlayer() {
             if (typeof removePlayerFromSession === 'function') {
                 await removePlayerFromSession(p.uuid, p.name);
             }
-            if (typeof broadcastPlayerRemoved === 'function') {
-                broadcastPlayerRemoved(p.uuid, p.name);
-            }
             closeMenu();
         }
     });
@@ -312,7 +310,7 @@ function completeSwap(targetUUID) {
     const p2 = StateStore.squad.find(x => x.uuid === targetUUID);
     
     if (p1 && p2 && typeof window.swapActivePlayers === 'function') {
-        if (window.swapActivePlayers(p1.uuid, p2.uuid)) {
+        if (window.swapActivePlayers(p1.name, p2.name)) {
             showSessionToast(`Swapped ${p1.name} & ${p2.name}`);
             Haptic.success(); // StateStore.set in swapActivePlayers will trigger sync
         } else {
@@ -329,16 +327,13 @@ function cancelSwap() {
 }
 
 function toggleRestingState() {
-    const squad = StateStore.squad;
-    if (squad[selectedPlayerIndex]) {
-        squad[selectedPlayerIndex].active = !squad[selectedPlayerIndex].active;
-        StateStore.set('squad', squad);
-    }
-
+    StateStore.squad[selectedPlayerIndex].active = !StateStore.squad[selectedPlayerIndex].active;
     closeMenu();
     renderSquad();
     checkNextButtonState();
 
+    // Trigger reactive sync and immediate broadcast
+    StateStore.set('squad', StateStore.squad);
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
 }
 
@@ -352,7 +347,7 @@ function _autoAddHostToSquad() {
     const hostUUID = passport.playerUUID;
 
     // Check if a player with this UUID or name already exists.
-    const hostIsInSquad = StateStore.squad.some(p => p && ((p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase()));
+    const hostIsInSquad = StateStore.squad.some(p => (p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase());
 
     if (!hostIsInSquad) {
         const hostAsPlayer = migratePlayer({ // Use migratePlayer to ensure all fields are present
@@ -360,14 +355,13 @@ function _autoAddHostToSquad() {
             uuid: hostUUID,
         });
         
-        const newSquad = [hostAsPlayer, ...StateStore.squad];
-        const newQueue = [...StateStore.playerQueue];
+        StateStore.squad.unshift(hostAsPlayer); // Add to the front of the squad list
         
-        if (!newQueue.includes(hostUUID)) {
-            newQueue.unshift(hostUUID); // Also add to front of queue
+        if (!StateStore.playerQueue.includes(hostName)) {
+            StateStore.playerQueue.unshift(hostName); // Also add to front of queue
         }
         
-        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
+        StateStore.set('squad', StateStore.squad); // Trigger sync
         renderSquad(); // Re-render the squad list to show the new player
         showSessionToast(`👋 Welcome, ${hostName}! You've been added to the squad.`);
     }
@@ -412,7 +406,7 @@ function _updateUIAfterPlayerRemoval() {
 async function _removePlayerFromRemoteDB(playerUUID) {
     if (!isOperator || !playerUUID || !currentRoomCode || !operatorKey) return;
     try {
-        await fetch('/api/members', {
+        await fetch('/api/play-request', {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -422,7 +416,7 @@ async function _removePlayerFromRemoteDB(playerUUID) {
             })
         });
     } catch (e) {
-        Log.error('Failed to remove member from DB session', e);
+        console.error('[CourtSide] Failed to remove member from DB session', e);
     }
 }
 
@@ -432,10 +426,10 @@ async function removePlayerFromSession(playerUUID, playerName) {
 
     let pIndex = -1;
     if (playerUUID) {
-        pIndex = StateStore.squad.findIndex(p => p && p.uuid === playerUUID);
+        pIndex = StateStore.squad.findIndex(p => p.uuid === playerUUID);
     }
     if (pIndex === -1 && playerName) {
-        pIndex = StateStore.squad.findIndex(p => p && p.name.toLowerCase() === playerName.toLowerCase());
+        pIndex = StateStore.squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
     }
 
     if (pIndex === -1) return; // Player not in squad
@@ -485,10 +479,9 @@ function renderSquad() {
         if (uuid) existingChips.set(uuid, chip);
     });
 
-    const newContent = document.createDocumentFragment();
+    const fragment = document.createDocumentFragment();
 
     StateStore.squad.forEach((p, idx) => {
-        if (!p) return;
         // Apply search filter
         if (query && !p.name.toLowerCase().includes(query)) return;
 
@@ -525,9 +518,12 @@ function renderSquad() {
             newChip.addEventListener('touchstart', () => startPress(p.uuid));
             newChip.addEventListener('touchend', () => endPress(p.uuid));
             newChip.addEventListener('contextmenu', (e) => e.preventDefault());
-            newContent.appendChild(newChip);
+            fragment.appendChild(newChip);
         }
     });
+
+    // Append all new chips in a single DOM operation for performance.
+    container.appendChild(fragment);
 
     // Any chips left in existingChips are for players who have been removed
     existingChips.forEach(chip => {
@@ -537,11 +533,6 @@ function renderSquad() {
             chip.remove();
         }, { once: true });
     });
-
-    if (query) {
-        container.innerHTML = '';
-    }
-    container.appendChild(newContent);
 }
 
 function checkNextButtonState() {
@@ -578,7 +569,7 @@ function setCourts(n) {
             document.getElementById('matchContainer').innerHTML = '';
             const onCourt = StateStore.squad.filter(p => p.active);
             onCourt.forEach(p => {
-                if (!StateStore.playerQueue.includes(p.uuid)) StateStore.playerQueue.unshift(p.uuid);
+                if (!StateStore.playerQueue.includes(p.name)) StateStore.playerQueue.unshift(p.name);
             });
             generateMatches();
         },
@@ -768,12 +759,8 @@ function joinManualCode() {
     const input = document.getElementById('manualRoomCodeInput');
     const raw = input?.value?.trim();
     if (raw) {
-        let code = raw.toUpperCase().trim();
-        // Auto-hyphenate only if hyphen is missing and it looks like a standard 8-char code
-        if (!code.includes('-')) {
-            const stripped = code.replace(/[^A-Z0-9]/g, '');
-            if (stripped.length === 8) code = stripped.slice(0, 4) + '-' + stripped.slice(4);
-        }
+        // Normalize room code: strip non-alphanumeric and add hyphen if 8 chars
+        let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
         if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
 
         if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
@@ -926,7 +913,7 @@ function showOverlay(type) {
                         correctLevel:  QRCtor.CorrectLevel?.H || 0,
                     });
                 } else if (qrDiv) {
-                    Log.warn('QRCode library not loaded, showing plain URL');
+                    console.warn('[CourtSide] QRCode library not loaded, showing plain URL');
                     qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
                 }
             }
@@ -972,11 +959,11 @@ function confirmEndSession() {
 
             // 4. Delete from DB (authenticated call)
             if (roomCode && window.operatorKey) {
-                fetch('/api/sessions', {
+                fetch('/api/session-delete', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ room_code: roomCode, operator_key: window.operatorKey }),
-                }).catch(e => Log.error('Silent delete failed', e));
+                }).catch(e => console.error('[CourtSide] Silent delete failed', e));
             }
         }
     });
@@ -1017,10 +1004,12 @@ function _showHostRecap(recap) {
     document.body.classList.add('session-ended');
     closeOverlay();
 
+    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+
     const leaderboardHTML = recap.squad.map((p, i) => `
         <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);">
             <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
-            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${escapeHTML(p.name)}</div>
+            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${esc(p.name)}</div>
             <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.wins}W</div>
         </div>
     `).join('');
@@ -1033,10 +1022,10 @@ function _showHostRecap(recap) {
             <div style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
                 <div style="font-size:3rem; margin-bottom:10px;">🏆</div>
                 <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
-                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${escapeHTML(recap.mvp.name)}</div>
+                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(recap.mvp.name)}</div>
                 <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${recap.mvp.wins} Wins · ${recap.mvp.games} Games</div>
                 <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
-                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${escapeHTML(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
+                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
             </div>
 
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
@@ -1046,17 +1035,17 @@ function _showHostRecap(recap) {
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">IRON MAN</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.ironMan.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.ironMan.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.ironMan.sessionPlayCount} Games</div>
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">HOT HAND</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.hotHand.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.hotHand.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.hotHand.streak} Win Streak</div>
                 </div>
                 <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
                     <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">SHARP SHOOTER</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(recap.sharpShooter.name)}</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.sharpShooter.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${recap.sharpShooter.wr}% Win Rate</div>
                 </div>
             </div>
@@ -1089,7 +1078,7 @@ function generateQR() {
     if (!qrDiv) return;
     qrDiv.innerHTML = '';
     const QRCtor = window.QRCodeConstructor || window.QRCode;
-    if (!QRCtor) { Log.error('generateQR: QRCode library not loaded'); return; }
+    if (!QRCtor) { console.error('[CourtSide] generateQR: QRCode library not loaded'); return; }
     new QRCtor(qrDiv, {
         text:         token,
         width:        200,
@@ -1132,7 +1121,7 @@ async function copyInviteLink() {
             await navigator.share(shareData);
             return;
         } catch (e) {
-            if (e.name !== 'AbortError') Log.error('Share failed', e);
+            if (e.name !== 'AbortError') console.error('Share failed', e);
         }
     }
 
@@ -1315,6 +1304,15 @@ function confirmEraseAllData() {
 // ---------------------------------------------------------------------------
 // UTILITIES
 // ---------------------------------------------------------------------------
+
+function escapeHTML(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 // ---------------------------------------------------------------------------
 // UNDO LAST ROUND
@@ -1568,7 +1566,7 @@ function renderStatsTab(tab) {
                 <div class="sl-searching-text">FETCHING GLOBAL RANKINGS…</div>
             </div>`;
 
-        fetch('/api/members?type=leaderboard')
+        fetch('/api/leaderboard-get')
             .then(res => res.json())
             .then(data => {
                 // Guard: only render if user is still on the leaderboard tab
@@ -1875,7 +1873,7 @@ async function sharePlayerCard() {
             }
         }, 'image/png');
     } catch (e) {
-        Log.error('Share failed:', e);
+        console.error('Share failed:', e);
     }
     Haptic.success();
 }
@@ -1894,11 +1892,11 @@ async function shareAuraPoster(matchIdx) {
             teamB: (m.teams[1] || []).join(' & '),
             title: 'LIVE NOW'
         }).catch(e => {
-            Log.error('Aura poster failed:', e);
+            console.error('Aura poster failed:', e);
             showSessionToast('Could not generate poster');
         });
     } else {
-        Log.error('generateShareableImage function not found.');
+        console.error('generateShareableImage function not found.');
         showSessionToast('Share function is unavailable.');
     }
 }
@@ -1976,12 +1974,12 @@ async function submitIWantToPlay() {
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     try {
-        const res = await fetch('/api/members', {
+        const res = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ 
                 room_code: currentRoomCode, 
-                player_name: name,
+                name,
                 player_uuid: p?.playerUUID || null,
                 spirit_animal: p?.spiritAnimal || null
             }),
@@ -2021,7 +2019,7 @@ async function pollPlayRequests() {
     if (_isPolling || !isOnlineSession || !isOperator || !currentRoomCode) return;
     _isPolling = true;
     try {
-        const res  = await fetch(`/api/members?room_code=${encodeURIComponent(currentRoomCode)}`);
+        const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}`);
         const data = await res.json();
         const incoming = data.requests || [];
         playRequests = incoming;
@@ -2039,40 +2037,23 @@ async function pollPlayRequests() {
                 const existing = StateStore.squad.find(p => 
                     (r.player_uuid && p.uuid === r.player_uuid) || 
                     (p.name.toLowerCase() === r.name.toLowerCase()) ||
-                    (r.player_uuid && uuidMap[r.name] === r.player_uuid)
+                    (r.player_uuid && uuidMap[r.name] === r.player_uuid) ||
+                    (r.name && StateStore.playerQueue.includes(r.name)) // Proactive queue check
                 );
 
                 if (existing) {
-                    Log.info(`Auto-resolving request for ${r.name} (already in squad)`);
+                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad)`);
 
                     // UUID Correction: If manually added by host, adopt the player's real UUID
                     // so memberApprove() and future syncs use the correct canonical ID.
                     if (r.player_uuid && existing.uuid !== r.player_uuid) {
-                        Log.info(`Correcting UUID for ${existing.name}: ${existing.uuid} -> ${r.player_uuid}`);
-                        const oldUUID = existing.uuid;
-                        const newUUID = r.player_uuid;
-                        existing.uuid = newUUID;
-
-                        // Atomically update matches and queue to use the new canonical UUID
-                        const newMatches = StateStore.currentMatches.map(m => ({
-                            ...m,
-                            teams: m.teams.map(t => t.map(u => u === oldUUID ? newUUID : u))
-                        }));
-                        const newQueue = StateStore.playerQueue.map(u => u === oldUUID ? newUUID : u);
-
-                        StateStore.setState({
-                            squad: StateStore.squad,
-                            currentMatches: newMatches,
-                            playerQueue: newQueue
-                        });
-
-                        renderSquad();
-                        rebuildMatchCardIndices();
+                        existing.uuid = r.player_uuid;
+                        renderSquad(); // Update DOM datasets
                         saveToDisk();
                     }
 
-                    if (existing.uuid && typeof window.memberApprove === 'function') await window.memberApprove(existing.uuid);
-                    fetch('/api/members', {
+                    if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+                    fetch('/api/play-request', {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ id: r.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
@@ -2081,7 +2062,7 @@ async function pollPlayRequests() {
                 }
 
                 if (isOpen) {
-                    Log.info(`Auto-approving ${r.name} (Open Party)`);
+                    console.log(`[CourtSide] Auto-approving ${r.name} (Open Party)`);
                     approvePlayRequest(r.name, r.id, r.player_uuid || null);
                     continue;
                 }
@@ -2196,14 +2177,16 @@ function _resolvePlayerForSession(name, incomingUUID) {
         if (player) {
             // Update name if changed
             if (player.name !== name) {
-                Log.info(`Updating name for ${player.uuid}: ${player.name} -> ${name}`);
+                console.log(`[CourtSide] Updating name for ${player.uuid}: ${player.name} -> ${name}`);
                 player.name = name;
             }
             return player;
         }
     }
 
+    // 2. If not found by UUID, treat as NEW.
     // 2. Secondary: Name-based lookup (Smart Recognition)
+    // If UUID didn't match but the name does, assume it's the same person
     // (e.g., host added them manually first or UUIDs were cleared).
     player = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
     if (player) {
@@ -2224,14 +2207,14 @@ function _resolvePlayerForSession(name, incomingUUID) {
     // 3. Create new player
     player = migratePlayer({
         name: finalName,
-        uuid: validUUID || Passport._uuid(),
+        uuid: validUUID || _generateUUID(),
     });
 
     return player;
 }
 
 async function approvePlayRequest(name, id, playerUUID = null) {
-    Log.info(`Approving ${name}, UUID: ${playerUUID}`);
+    console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
     
     // Priority 1: Check if achievements were already reconciled by the Join RPC
     const requestRow = playRequests.find(r => String(r.id) === String(id));
@@ -2270,7 +2253,7 @@ async function approvePlayRequest(name, id, playerUUID = null) {
             achievementIds.forEach(id => currentSet.add(id));
             player.achievements = Array.from(currentSet);
         } catch (e) {
-            Log.error(`Failed to fetch achievements for ${player.name}`, e);
+            console.error(`Failed to fetch achievements for ${player.name}`, e);
         }
     }
     player.active = true;
@@ -2312,9 +2295,19 @@ function _makeApprovalToken() {
     return Array.from({ length: 12 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 }
 
+function _generateUUID() {
+    if (window.Passport && typeof window.Passport._uuid === 'function') {
+        return window.Passport._uuid();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
 async function denyPlayRequest(id) {
     try {
-        await fetch('/api/members', {
+        await fetch('/api/play-request', {
             method:  'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ id, room_code: currentRoomCode, operator_key: operatorKey }),
@@ -2332,7 +2325,29 @@ window.onPlayRequestInsert = function(record) {
 
         // BUG FIX: Same duplicate guard for realtime events
         const uuidMap = window._sessionUUIDMap || {};
-        
+        const existing = StateStore.squad.find(p => 
+            (record.player_uuid && p.uuid === record.player_uuid) || 
+            (p.name.toLowerCase() === record.name.toLowerCase()) ||
+            (record.player_uuid && uuidMap[record.name] === record.player_uuid) ||
+            (record.name && StateStore.playerQueue.includes(record.name)) // Proactive queue check
+        );
+
+        if (existing) {
+            // Adopt real UUID for manual additions triggered by realtime events
+            if (record.player_uuid && existing.uuid !== record.player_uuid) {
+                existing.uuid = record.player_uuid;
+                renderSquad();
+            }
+
+            if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+            fetch('/api/play-request', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: record.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+            }).catch(() => {});
+            return;
+        }
+
         if (StateStore.get('isOpenParty')) {
             approvePlayRequest(record.name, record.id, record.player_uuid);
             return;
@@ -2342,50 +2357,6 @@ window.onPlayRequestInsert = function(record) {
     }
     pollPlayRequests(); // Fetch full list to ensure badge count is accurate
 };
-
-/**
- * Automatically adds a player to the host squad when they join via Open Party.
- * Triggered by session_member realtime updates.
- */
-function autoAddOpenPlayer(record) {
-    if (!window.isOperator || !record) return;
-
-    const existing = StateStore.squad.find(p => p.uuid === record.player_uuid);
-    if (existing) {
-        // Name/Emoji Correction: If the player is already in the squad but joined 
-        // via Open Party with a different name or spirit animal, update them now.
-        let changed = false;
-        if (record.player_name && existing.name !== record.player_name) {
-            if (typeof window._applyNameUpdate === 'function') {
-                window._applyNameUpdate(record.player_uuid, existing.name, record.player_name);
-            }
-            changed = true;
-        }
-        if (record.spirit_animal !== undefined && existing.spiritAnimal !== record.spirit_animal) {
-            if (typeof window._applySpiritAnimalUpdate === 'function') {
-                window._applySpiritAnimalUpdate(record.player_uuid, record.spirit_animal);
-            }
-            changed = true;
-        }
-        return;
-    }
-
-    const newPlayer = migratePlayer({
-        name: record.player_name,
-        uuid: record.player_uuid,
-        spiritAnimal: record.spirit_animal,
-        active: true
-    });
-
-    const newSquad = [...StateStore.squad, newPlayer];
-    const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
-
-    StateStore.setState({ squad: newSquad, playerQueue: newQueue });
-    renderSquad();
-    showSessionToast(`🔓 ${newPlayer.name} joined instantly`);
-}
-window.autoAddOpenPlayer = autoAddOpenPlayer;
 
 function ensureHostUI() {
     // Only the host needs these elements
@@ -2465,14 +2436,14 @@ const _startPolling = () => {
             
             // Self-Healing: Check for players who are 'active' in DB but missing in local squad
             try {
-                const res = await fetch(`/api/members?room_code=${encodeURIComponent(currentRoomCode)}&status=active`);
+                const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}&status=active`);
                 const data = await res.json();
                 const activeInDB = data.requests || [];
                 
                 activeInDB.forEach(dbPlayer => {
                     const inLocal = StateStore.squad.some(p => p.uuid === dbPlayer.player_uuid);
                     if (!inLocal) {
-                        Log.info(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
+                        console.log(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
                         approvePlayRequest(dbPlayer.name, dbPlayer.id, dbPlayer.player_uuid);
                     }
                 });
@@ -2579,11 +2550,10 @@ function passportRename() {
 async function handlePassportSignal(signal, passport) {
     SidelineView.refresh();
 
-    await fetch('/api/members', {
+    await fetch('/api/passport-signal', {
         method:  'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-            type:        'signal',
             player_uuid: passport.playerUUID,
             room_code:   currentRoomCode,
         }),
@@ -2620,11 +2590,7 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
     const loserUUIDs  = loserNames .map(resolveUUID).filter(Boolean);
 
     // 1. Broadcast match result (winner banner + haptic for players in this game)
-    const getName = (uuid) => {
-        const p = StateStore.squad.find(s => s.uuid === uuid);
-        return p ? p.name : 'Unknown Player';
-    };
-    const winnerDisplayNames = winnerUUIDs.map(getName).join(' & ');
+    const winnerDisplayNames = winnerNames.join(' & ');
     if (typeof _broadcast === 'function' && isOnlineSession) {
         _broadcast('match_resolved', {
             winnerNames:  winnerDisplayNames,
@@ -2644,17 +2610,16 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
 
     // 3. Durable DB fallback
     if (winnerUUIDs.length > 0 || loserUUIDs.length > 0) {
-        fetch('/api/sessions', {
+        fetch('/api/passport-signal', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
-                type:         'passport_signal',
                 room_code:    currentRoomCode,
                 winner_uuids: winnerUUIDs,
                 loser_uuids:  loserUUIDs,
                 game_label:   label,
             }),
-        }).catch(e => Log.error('Signal dispatch failed:', e));
+        }).catch(e => console.error('Signal dispatch failed:', e));
     }
 }
 
@@ -2742,10 +2707,10 @@ async function submitPassportJoinRequest(name, uuid) {
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     try {
-        const res = await fetch('/api/members', {
+        const res = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ room_code: currentRoomCode, player_name: name, player_uuid: uuid, spirit_animal: p?.spiritAnimal || null }),
+            body:    JSON.stringify({ room_code: currentRoomCode, name, player_uuid: uuid, spirit_animal: p?.spiritAnimal || null }),
         });
 
         if (res.ok) {
@@ -2868,7 +2833,7 @@ async function initApp() {
         const _raw = localStorage.getItem('cs_player_passport');
         passport = _raw ? JSON.parse(_raw) : null;
     } catch (e) {
-        Log.warn('initApp: localStorage read failed', e);
+        console.warn('[CourtSide] initApp: localStorage read failed', e);
         passport = null;
     }
 
@@ -2882,4 +2847,73 @@ async function initApp() {
         _installPassportIWTPOverride();
     }
 
-    // ── PLAYER MODE BOOT ──────────��
+    // ── PLAYER MODE BOOT ─────────────────────────────────────────────────────
+    const urlParams = new URLSearchParams(window.location.search);
+    const joinCode = urlParams.get('join');
+    const role = urlParams.get('role');
+
+    // --- HOST OVERRIDE CHECK ---
+    // A host rejoining their own session via an invite link should be treated as a host.
+    const savedCode = localStorage.getItem('cs_room_code');
+    const savedOpKey = localStorage.getItem('cs_operator_key');
+    const isHostOfThisSession = (joinCode && savedCode === joinCode && savedOpKey);
+
+    // If the URL says "player" but we are NOT the host of this specific session, boot into player mode.
+    if (role === 'player' && !isHostOfThisSession) {
+        document.body.classList.add('player-mode');
+        
+        // Clean URL immediately
+        const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
+        window.history.replaceState({}, document.title, cleanUrl);
+
+        if (typeof PlayerMode !== 'undefined') await PlayerMode.boot(passport, joinCode);
+        return; // Stop here — do not load host logic
+    } else if (isHostOfThisSession) {
+        // We are the host, but clicked a player link. Clean the URL and proceed with host boot.
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+    }
+
+    try {
+        loadFromDisk();
+    } catch (e) {
+        console.error('[CourtSide] initApp: loadFromDisk failed', e);
+    }
+
+    // If the user has a passport from playing, auto-add them to their own squad.
+    _autoAddHostToSquad();
+
+    if (typeof tryAutoRejoin === 'function') {
+        await tryAutoRejoin().catch(e => console.error('[CourtSide] tryAutoRejoin failed', e));
+    }
+
+    // Show landing if no data and not in a session
+    if (StateStore.squad.length === 0 && !isOnlineSession && !urlParams.get('join')) {
+        showLandingPage();
+    }
+}
+
+// =============================================================================
+// ENTRY POINT
+// =============================================================================
+
+window.addEventListener('DOMContentLoaded', () => {
+    // Ensure the original long-press menu gets the correct class for styling
+    document.getElementById('actionMenu')?.classList.add('actionMenu');
+
+    initApp().catch(err => {
+        console.error('[CourtSide] initApp() failed:', err);
+        if (typeof _csShowError === 'function') {
+            _csShowError('App init failed: ' + (err?.message || err));
+        }
+    });
+});
+
+// Global Error Safety Net
+window.addEventListener('error', (event) => {
+    console.error('[CourtSide Global Error]', event.error);
+    // Only show toast if UI is ready
+    if (typeof showSessionToast === 'function' && document.body) {
+        showSessionToast('⚠️ An error occurred. Please refresh if issues persist.');
+    }
+});

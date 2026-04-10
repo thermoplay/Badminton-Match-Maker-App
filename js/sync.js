@@ -323,7 +323,7 @@ async function createOnlineSession() {
     try {
         const roomCode = generateRoomCode();
         const opKey    = generateOperatorKey();
-        const result   = await apiCall('sessions', {
+        const result   = await apiCall('session-create', {
             method: 'POST',
             body: {
                 room_code: roomCode,
@@ -382,14 +382,14 @@ async function joinOnlineSession(roomCode) {
     if (!code) return;
     showSyncStatus('Joining…', 'info');
     try {
-        const result = await apiCall(`sessions?code=${encodeURIComponent(code)}`);
+        const result = await apiCall(`session-get?code=${encodeURIComponent(code)}`);
         if (!result.ok) {
             const msg = result.status === 0 ? 'Network error. Retrying...' : 'Room not found. Check code.';
             showSyncStatus(msg, 'error');
             Haptic.error();
             return;
         }
-        // The sessions API returns { ok, session: {...} }
+        // session-get returns { ok, session: {...} }
         const session = result.data?.session || result.data;
         
         if (!session) {
@@ -469,7 +469,7 @@ function pushStateToSupabase(force = false, targetUUIDs = null) {
         _dirtyUUIDs = new Set();
 
         try {
-            const res = await apiCall('sessions', {
+            const res = await apiCall('session-update', {
                 method: 'PATCH',
                 body: {
                     room_code:        currentRoomCode,
@@ -649,7 +649,7 @@ function broadcastSessionEnded(recapData) {
 async function memberApprove(playerUUID) {
     if (!isOperator || !currentRoomCode || !operatorKey || !playerUUID) return;
     try {
-        const r = await fetch('/api/members', {
+        const r = await fetch('/api/member-approve', {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -670,7 +670,7 @@ window.memberApprove = memberApprove;
 async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
     if (!currentRoomCode || !playerUUID) return;
     try {
-        const r = await fetch('/api/members', {
+        const r = await fetch('/api/member-rename', {
             method:  'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -706,7 +706,7 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
     currentRoomCode        = roomCode; // keep local var in sync
     _syncState();
     try {
-        const r = await fetch('/api/members', {
+        const r = await fetch('/api/member-upsert', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
@@ -862,39 +862,16 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     uuidMap[trimmed] = playerUUID;
     window._sessionUUIDMap = uuidMap;
 
-    // KEY FIX: Update name in player queue to prevent player from being removed during sync
-    if (StateStore.playerQueue) {
-        const newQueue = StateStore.playerQueue.map(n => (n === prevName ? trimmed : n));
-        StateStore.set('playerQueue', newQueue);
-    }
-
     // KEY FIX: Update name in approved players list (used for DB push)
     if (window._approvedPlayers) {
         const entry = window._approvedPlayers[playerUUID] || window._approvedPlayers[prevName];
         if (entry) {
             entry.name = trimmed;
-            if (window._approvedPlayers[prevName]) {
-                delete window._approvedPlayers[prevName];
-                window._approvedPlayers[playerUUID] = entry;
-            }
         }
     }
 
-    // Update active matches if the player is currently in a game
-    let matchUpdated = false;
-    if (StateStore.currentMatches) {
-        StateStore.currentMatches.forEach(m => {
-            m.teams.forEach((team, tIdx) => {
-                if (team.includes(prevName)) {
-                    m.teams[tIdx] = team.map(n => n === prevName ? trimmed : n);
-                    matchUpdated = true;
-                }
-            });
-        });
-    }
-
     renderSquad();
-    if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+    rebuildMatchCardIndices();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
     
     // Reactive sync via StateStore ensures DB and spectators stay updated
@@ -1310,7 +1287,7 @@ function showReconnectingIndicator(show, text = '⟳ Reconnecting…') {
 async function endAndDeleteSession() {
     if (!isOperator || !currentRoomCode) return;
     try {
-        await apiCall('sessions', {
+        await apiCall('session-delete', {
             method: 'DELETE',
             body: { room_code: currentRoomCode, operator_key: operatorKey },
         });
@@ -1334,7 +1311,7 @@ function updateSessionUI() {
     badge.className     = 'session-badge';
     badge.innerHTML = `
         <span class="session-dot ${isOperator ? 'dot-operator' : 'dot-spectator'}"></span>
-        <span class="session-code">${currentRoomCode}</span>
+        <span class="session-code" style="cursor:pointer;" onclick="copyInviteLink()" title="Tap to share invite">${currentRoomCode} 🔗</span>
         <span class="session-role">${isOperator ? 'HOST' : 'LIVE'}</span>
     `;
     if (!isOperator) document.body.classList.add('spectator-mode');
@@ -1418,7 +1395,7 @@ async function tryAutoRejoin() {
     const savedCode = localStorage.getItem('cs_room_code');
     if (!savedCode) return;
     try {
-        const result = await apiCall(`sessions?code=${encodeURIComponent(savedCode)}`);
+        const result = await apiCall(`session-get?code=${encodeURIComponent(savedCode)}`);
         if (!result.ok) {
             // FIX: Only wipe if the session is confirmed GONE (404).
             // If it's a network error (status 0) or server error (500), 
@@ -1534,14 +1511,14 @@ let presenceHeartbeat = null;
 async function registerPresence() {
     if (isOperator) return;
     try {
-        await apiCall('sessions', {
+        await apiCall('session-presence', {
             method: 'POST',
             body: { room_code: currentRoomCode, action: 'join' },
         });
         clearInterval(presenceHeartbeat);
         presenceHeartbeat = setInterval(async () => {
             if (!isOnlineSession) { clearInterval(presenceHeartbeat); return; }
-            await apiCall('sessions', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
+            await apiCall('session-presence', { method: 'POST', body: { room_code: currentRoomCode, action: 'ping' } }).catch(() => {});
         }, 20000);
     } catch { /* silent */ }
 }
@@ -1581,7 +1558,7 @@ updateSessionUI = function() {
 async function archiveRoundToSupabase(snapshot) {
     if (!currentRoomCode) return;
     try {
-        await fetch('/api/sessions', {
+        await fetch('/api/match-history', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({

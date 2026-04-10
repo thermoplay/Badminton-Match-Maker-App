@@ -11,30 +11,20 @@
 // =============================================================================
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const crypto = require('crypto'); // Node.js crypto module for hashing
-import { ROOM_CODE_REGEX, UUID_REGEX, normalizeRoomCode } from './_utils';
 
 async function sb(path, options = {}) {
-    if (!SUPABASE_URL || !SUPABASE_KEY) {
-        return { ok: false, status: 500, data: { error: 'Server environment misconfigured' } };
-    }
-
     const method = options.method || 'GET';
-    let baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
-    if (baseUrl.includes('/rest/v1')) baseUrl = baseUrl.split('/rest/v1')[0];
-
+    const baseUrl = SUPABASE_URL.endsWith('/') ? SUPABASE_URL.slice(0, -1) : SUPABASE_URL;
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    const url = `${baseUrl}/rest/v1${cleanPath}`;
 
-    console.log(`[sbFetch] Making request to: ${url}`);
     const headers = {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type':  'application/json',
-        'Prefer':        options.prefer || (['POST', 'DELETE'].includes(method) ? 'return=minimal' : 'return=representation'),
+        'Prefer':        options.prefer || (method === 'POST' ? 'return=minimal' : 'return=representation'),
     };
 
-    const res = await fetch(url, {
+    const res = await fetch(`${baseUrl}/rest/v1${cleanPath}`, {
         headers,
         method,
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -57,14 +47,6 @@ export default async function handler(req, res) {
             const { room_code, operator_key, timestamp, matches, squad } = req.body;
             if (!room_code || !matches || !operator_key) {
                 return res.status(400).json({ error: 'Missing fields for match_result' });
-            }
-
-            // Normalize room code
-            const code = normalizeRoomCode(room_code);
-
-            // Validation
-            if (!ROOM_CODE_REGEX.test(code)) {
-                return res.status(400).json({ error: 'Invalid room code format' });
             }
 
             const results = [];
@@ -99,25 +81,21 @@ export default async function handler(req, res) {
             // Bypassing the RPC to avoid persistent "text = uuid" type mismatches.
             
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
-            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
-            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
+            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== operator_key) {
                 return res.status(403).json({ error: 'Unauthorized' });
             }
 
             // 2. Update individual player ratings
-            // IMPROVEMENT: Batch UPSERT ratings to avoid sequential network round-trips.
-            const ratingUpdates = results.map(r => ({
-                uuid: r.player_uuid,
-                rating: r.rating,
-                last_active: new Date().toISOString()
-            }));
-
-            await sb('/players', {
-                method: 'POST',
-                body: ratingUpdates,
-                prefer: 'resolution=merge-duplicates'
-            });
+            for (const res of results) {
+                await sb(`/players?uuid=eq.${encodeURIComponent(res.player_uuid)}`, {
+                    method: 'PATCH',
+                    body: {
+                        rating: res.rating,
+                        last_active: new Date().toISOString()
+                    }
+                });
+            }
 
             // 3. Log achievements directly
             for (const ach of (req.body.achievements || [])) {
@@ -134,21 +112,9 @@ export default async function handler(req, res) {
         if (type === 'achievement_unlock') {
             const { player_uuid, achievement_id, room_code, operator_key } = req.body;
             
-            // Normalize room code
-            const code = normalizeRoomCode(room_code);
-
-            // Validation
-            if (!ROOM_CODE_REGEX.test(code)) {
-                return res.status(400).json({ error: 'Invalid room code format' });
-            }
-            if (!UUID_REGEX.test(player_uuid)) {
-                return res.status(400).json({ error: 'Invalid player UUID format' });
-            }
-
             // 1. Verify operator key
-            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
-            const incomingOperatorKeyHash = crypto.createHash('sha256').update(operator_key).digest('hex');
-            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== incomingOperatorKeyHash) {
+            const sessionRes = await sb(`/sessions?room_code=eq.${encodeURIComponent(room_code)}&select=operator_key&limit=1`);
+            if (!sessionRes.ok || sessionRes.data?.[0]?.operator_key !== operator_key) {
                 return res.status(403).json({ error: 'Unauthorized' });
             }
 
@@ -164,33 +130,6 @@ export default async function handler(req, res) {
             return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
         }
 
-        // --- Broadcast win/loss signals ---
-        if (type === 'passport_signal') {
-            const { room_code, winner_uuids, loser_uuids, game_label } = req.body;
-            if (!room_code || !winner_uuids) return res.status(400).json({ error: 'Missing fields' });
-
-            const signals = [
-                ...(winner_uuids || []).map(uuid => ({
-                    room_code,
-                    player_uuid: uuid,
-                    event:       'WIN',
-                    game_label:  game_label || '',
-                    created_at:  new Date().toISOString(),
-                })),
-                ...(loser_uuids || []).map(uuid => ({
-                    room_code,
-                    player_uuid: uuid,
-                    event:       'LOSS',
-                    game_label:  game_label || '',
-                    created_at:  new Date().toISOString(),
-                })),
-            ];
-
-            if (signals.length === 0) return res.status(200).json({ sent: 0 });
-            const r = await sb('/passport_signals', { method: 'POST', body: signals });
-            return res.status(r.ok ? 200 : 500).json({ sent: signals.length });
-        }
-
         return res.status(400).json({ error: 'Invalid POST type specified' });
     }
 
@@ -198,23 +137,7 @@ export default async function handler(req, res) {
     // GET: Fetch achievements for a player
     // -------------------------------------------------------------------------
     if (req.method === 'GET') {
-        const { player_uuid, type } = req.query;
-
-        // Sub-route: Global Leaderboard
-        if (type === 'leaderboard') {
-            const response = await sb('/career_stats?order=elo.desc&limit=10');
-            return res.status(response.ok ? 200 : 500).json({ players: response.data || [] });
-        }
-
-        // --- Fetch signals for a player (Legacy fallback) ---
-        if (type === 'passport_signal') {
-            const { player_uuid, room_code } = req.query;
-            if (!player_uuid || !room_code) return res.status(400).json({ error: 'Missing player_uuid or room_code' });
-
-            const path = `/passport_signals?player_uuid=eq.${encodeURIComponent(player_uuid)}&room_code=eq.${encodeURIComponent(room_code)}&order=created_at.desc&limit=1`;
-            const r = await sb(path);
-            return res.status(200).json({ signal: r.data?.[0] || null });
-        }
+        const { player_uuid } = req.query;
 
         // --- Fetch achievements for a specific player ---
         if (player_uuid) {
@@ -231,16 +154,7 @@ export default async function handler(req, res) {
     }
 
     // -------------------------------------------------------------------------
-    // DELETE: Acknowledge and clear signals
+    // All other methods
     // -------------------------------------------------------------------------
-    if (req.method === 'DELETE') {
-        const { player_uuid, room_code } = req.body;
-        if (!player_uuid || !room_code) return res.status(400).json({ error: 'Missing player_uuid or room_code' });
-
-        const path = `/passport_signals?player_uuid=eq.${encodeURIComponent(player_uuid)}&room_code=eq.${encodeURIComponent(room_code)}`;
-        const r = await sb(path, { method: 'DELETE' });
-        return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
-    }
-
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
 }

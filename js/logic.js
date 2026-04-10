@@ -11,7 +11,7 @@
 
 /** Finds a player object by UUID. Returns undefined if not found. */
 function findP(uuid) {
-    return StateStore.squad.find(p => p && p.uuid === uuid);
+    return StateStore.squad.find(p => p.uuid === uuid);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,8 +111,8 @@ function _recordMatchStats(match, timestamp = Date.now()) {
         }
 
         p.matchHistory = p.matchHistory || [];
-        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), partnerUUID: partnerUUID, time: timestamp }); // Store UUIDs
-        if (p.matchHistory.length > 10) p.matchHistory.pop(); // Keep last 10 matches for history/sparkline
+        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), partnerUUID: partnerUUID, time: timestamp });
+        if (p.matchHistory.length > 5) p.matchHistory.pop();
     });
 
     const addHistory = (p, teammate, opponents) => {
@@ -324,7 +324,7 @@ function applyELOForMatch(m) {
 // QUEUE ENGINE
 // ---------------------------------------------------------------------------
 //
-// playerQueue — ordered array of player UUIDs representing the rotation.
+// playerQueue — ordered array of player NAMES representing the rotation.
 // The first N*4 names (enough for courtCount courts) play each round.
 // After results are entered, losers go to the back first, then winners,
 // ensuring winners wait slightly longer (a small earned rest).
@@ -343,20 +343,18 @@ function applyELOForMatch(m) {
 // ---------------------------------------------------------------------------
 
 function initQueue() {
-    const activeUUIDs = StateStore.squad.filter(p => p && p.active).map(p => p.uuid);
+    const activeUUIDs = StateStore.squad.filter(p => p.active).map(p => p.uuid);
 
     // Keep existing queue order for names already in it — only append newcomers
-    const currentQueue = Array.isArray(StateStore.playerQueue) ? StateStore.playerQueue : [];
-    const inQueue  = new Set(currentQueue);
+    const inQueue  = new Set(StateStore.playerQueue);
     const newUUIDs = activeUUIDs.filter(u => !inQueue.has(u));
 
-    // Robust Filter: Only keep UUIDs that are currently in the active squad
-    const activeSet = new Set(activeUUIDs);
-    const cleanedQueue = currentQueue.filter(u => activeSet.has(u));
+    // Remove names no longer in the active squad
+    const newQueue = StateStore.playerQueue.filter(u => StateStore.squad.find(p => p.uuid === u && p.active));
 
     // Append newcomers at the back and update the store
-    const finalQueue = [...cleanedQueue, ...newUUIDs];
-    StateStore.set('playerQueue', finalQueue);
+    newQueue.push(...newUUIDs);
+    StateStore.set('playerQueue', newQueue);
 }
 
 // ---------------------------------------------------------------------------
@@ -483,8 +481,7 @@ function combinations4(arr) {
 // Get the candidate pool for one court — front of the queue, excluding
 // players already assigned to another court this round.
 function getCandidatePool(onCourt) {
-    // BUG FIX: Removed initQueue() from here. It is now called once at the 
-    // start of generateMatches() to prevent redundant state updates during loops.
+    initQueue();
     const pool     = [];
     const poolSet  = new Set();
     const poolSize = 4 * POOL_FACTOR;
@@ -493,7 +490,7 @@ function getCandidatePool(onCourt) {
         if (pool.length >= poolSize) break;
         if (onCourt.has(uuid)) continue;
         if (poolSet.has(uuid))  continue;
-        const p = StateStore.squad.find(s => s && s.uuid === uuid && s.active);
+        const p = StateStore.squad.find(s => s.uuid === uuid && s.active);
         if (!p) continue;
         pool.push(p);
         poolSet.add(uuid);
@@ -635,8 +632,7 @@ function _createMatchesForCourts(courtCount) {
         const players = pullNextFromQueue(assignedThisRound);
         if (players.length < 4) break;
 
-        players.forEach(p => {
-            assignedThisRound.add(p.uuid);
+        players.forEach(p => .add(p.uuid);
             p.waitRounds = 0; // Reset for starting players
         });
         const match = buildMatchFromPlayers(players);
@@ -691,7 +687,7 @@ function renderQueueStrip() {
 
     // Queue: active players not on court, in queue order
     const waiting = StateStore.playerQueue
-        .map(uuid => StateStore.squad.find(p => p && p.uuid === uuid))
+        .map(uuid => StateStore.squad.find(p => p.uuid === uuid))
         .filter(p => p && p.active && !onCourt.has(p.uuid));
 
     if (waiting.length === 0) {
