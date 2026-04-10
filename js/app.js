@@ -162,13 +162,12 @@ function addPlayer() {
     });
     
     // Update state arrays
-    StateStore.squad.push(newPlayer);
+    const newSquad = [...StateStore.squad, newPlayer];
     const newQueue = [...StateStore.playerQueue];
     if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
 
     // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
-    StateStore.set('squad', StateStore.squad);
-    StateStore.set('playerQueue', newQueue);
+    StateStore.setState({ squad: newSquad, playerQueue: newQueue });
 
     // Connectivity: Force an immediate push to Supabase so spectators see the new player instantly
     if (window.isOnlineSession && window.isOperator && typeof pushStateToSupabase === 'function') {
@@ -330,13 +329,16 @@ function cancelSwap() {
 }
 
 function toggleRestingState() {
-    StateStore.squad[selectedPlayerIndex].active = !StateStore.squad[selectedPlayerIndex].active;
+    const squad = StateStore.squad;
+    if (squad[selectedPlayerIndex]) {
+        squad[selectedPlayerIndex].active = !squad[selectedPlayerIndex].active;
+        StateStore.set('squad', squad);
+    }
+
     closeMenu();
     renderSquad();
     checkNextButtonState();
 
-    // Trigger reactive sync and immediate broadcast
-    StateStore.set('squad', StateStore.squad);
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
 }
 
@@ -358,13 +360,14 @@ function _autoAddHostToSquad() {
             uuid: hostUUID,
         });
         
-        StateStore.squad.unshift(hostAsPlayer); // Add to the front of the squad list
+        const newSquad = [hostAsPlayer, ...StateStore.squad];
+        const newQueue = [...StateStore.playerQueue];
         
-        if (!StateStore.playerQueue.includes(hostUUID)) {
-            StateStore.playerQueue.unshift(hostUUID); // Also add to front of queue
+        if (!newQueue.includes(hostUUID)) {
+            newQueue.unshift(hostUUID); // Also add to front of queue
         }
         
-        StateStore.set('squad', StateStore.squad); // Trigger sync
+        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
         renderSquad(); // Re-render the squad list to show the new player
         showSessionToast(`👋 Welcome, ${hostName}! You've been added to the squad.`);
     }
@@ -409,7 +412,7 @@ function _updateUIAfterPlayerRemoval() {
 async function _removePlayerFromRemoteDB(playerUUID) {
     if (!isOperator || !playerUUID || !currentRoomCode || !operatorKey) return;
     try {
-        await fetch('/api/play-request', {
+        await fetch('/api/members', {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1565,7 +1568,7 @@ function renderStatsTab(tab) {
                 <div class="sl-searching-text">FETCHING GLOBAL RANKINGS…</div>
             </div>`;
 
-        fetch('/api/match-history?type=leaderboard')
+        fetch('/api/members?type=leaderboard')
             .then(res => res.json())
             .then(data => {
                 // Guard: only render if user is still on the leaderboard tab
@@ -1973,12 +1976,12 @@ async function submitIWantToPlay() {
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     try {
-        const res = await fetch('/api/play-request', {
+        const res = await fetch('/api/members', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ 
                 room_code: currentRoomCode, 
-                name,
+                player_name: name,
                 player_uuid: p?.playerUUID || null,
                 spirit_animal: p?.spiritAnimal || null
             }),
@@ -2018,7 +2021,7 @@ async function pollPlayRequests() {
     if (_isPolling || !isOnlineSession || !isOperator || !currentRoomCode) return;
     _isPolling = true;
     try {
-        const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}`);
+        const res  = await fetch(`/api/members?room_code=${encodeURIComponent(currentRoomCode)}`);
         const data = await res.json();
         const incoming = data.requests || [];
         playRequests = incoming;
@@ -2069,7 +2072,7 @@ async function pollPlayRequests() {
                     }
 
                     if (existing.uuid && typeof window.memberApprove === 'function') await window.memberApprove(existing.uuid);
-                    fetch('/api/play-request', {
+                    fetch('/api/members', {
                         method: 'DELETE',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ id: r.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
@@ -2311,7 +2314,7 @@ function _makeApprovalToken() {
 
 async function denyPlayRequest(id) {
     try {
-        await fetch('/api/play-request', {
+        await fetch('/api/members', {
             method:  'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({ id, room_code: currentRoomCode, operator_key: operatorKey }),
@@ -2462,7 +2465,7 @@ const _startPolling = () => {
             
             // Self-Healing: Check for players who are 'active' in DB but missing in local squad
             try {
-                const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}&status=active`);
+                const res = await fetch(`/api/members?room_code=${encodeURIComponent(currentRoomCode)}&status=active`);
                 const data = await res.json();
                 const activeInDB = data.requests || [];
                 
@@ -2576,10 +2579,11 @@ function passportRename() {
 async function handlePassportSignal(signal, passport) {
     SidelineView.refresh();
 
-    await fetch('/api/passport-signal', {
+    await fetch('/api/members', {
         method:  'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
+            type:        'signal',
             player_uuid: passport.playerUUID,
             room_code:   currentRoomCode,
         }),
@@ -2640,10 +2644,11 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
 
     // 3. Durable DB fallback
     if (winnerUUIDs.length > 0 || loserUUIDs.length > 0) {
-        fetch('/api/passport-signal', {
+        fetch('/api/sessions', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
+                type:         'passport_signal',
                 room_code:    currentRoomCode,
                 winner_uuids: winnerUUIDs,
                 loser_uuids:  loserUUIDs,
@@ -2737,10 +2742,10 @@ async function submitPassportJoinRequest(name, uuid) {
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     try {
-        const res = await fetch('/api/play-request', {
+        const res = await fetch('/api/members', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ room_code: currentRoomCode, name, player_uuid: uuid, spirit_animal: p?.spiritAnimal || null }),
+            body:    JSON.stringify({ room_code: currentRoomCode, player_name: name, player_uuid: uuid, spirit_animal: p?.spiritAnimal || null }),
         });
 
         if (res.ok) {
@@ -2877,73 +2882,4 @@ async function initApp() {
         _installPassportIWTPOverride();
     }
 
-    // ── PLAYER MODE BOOT ─────────────────────────────────────────────────────
-    const urlParams = new URLSearchParams(window.location.search);
-    const joinCode = urlParams.get('join');
-    const role = urlParams.get('role');
-
-    // --- HOST OVERRIDE CHECK ---
-    // A host rejoining their own session via an invite link should be treated as a host.
-    const savedCode = localStorage.getItem('cs_room_code');
-    const savedOpKey = localStorage.getItem('cs_operator_key');
-    const isHostOfThisSession = (savedCode && savedOpKey) && (!joinCode || savedCode === joinCode);
-
-    // If the URL says "player" but we are NOT the host of this specific session, boot into player mode.
-    if (role === 'player' && !isHostOfThisSession) {
-        document.body.classList.add('player-mode');
-        
-        // Clean URL immediately
-        const cleanUrl = window.location.origin + window.location.pathname + '?role=player';
-        window.history.replaceState({}, document.title, cleanUrl);
-
-        if (typeof PlayerMode !== 'undefined') await PlayerMode.boot(passport, joinCode);
-        return; // Stop here — do not load host logic
-    } else if (isHostOfThisSession) {
-        // We are the host, but clicked a player link. Clean the URL and proceed with host boot.
-        const cleanUrl = window.location.origin + window.location.pathname;
-        window.history.replaceState({}, document.title, cleanUrl);
-    }
-
-    try {
-        loadFromDisk();
-    } catch (e) {
-        Log.error('initApp: loadFromDisk failed', e);
-    }
-
-    // If the user has a passport from playing, auto-add them to their own squad.
-    _autoAddHostToSquad();
-
-    if (typeof tryAutoRejoin === 'function') {
-        await tryAutoRejoin().catch(e => Log.error('tryAutoRejoin failed', e));
-    }
-
-    // Show landing if no data and not in a session
-    if (StateStore.squad.length === 0 && !isOnlineSession && !urlParams.get('join')) {
-        showLandingPage();
-    }
-}
-
-// =============================================================================
-// ENTRY POINT
-// =============================================================================
-
-window.addEventListener('DOMContentLoaded', () => {
-    // Ensure the original long-press menu gets the correct class for styling
-    document.getElementById('actionMenu')?.classList.add('actionMenu');
-
-    initApp().catch(err => {
-        Log.error('initApp() failed:', err);
-        if (typeof _csShowError === 'function') {
-            _csShowError('App init failed: ' + (err?.message || err));
-        }
-    });
-});
-
-// Global Error Safety Net
-window.addEventListener('error', (event) => {
-    Log.error('Global Error', event.error);
-    // Only show toast if UI is ready
-    if (typeof showSessionToast === 'function' && document.body) {
-        showSessionToast('⚠️ An error occurred. Please refresh if issues persist.');
-    }
-});
+    // ── PLAYER MODE BOOT ──────────��

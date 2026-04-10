@@ -31,7 +31,7 @@ async function sb(path, options = {}) {
         'apikey':        SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type':  'application/json',
-        'Prefer':        options.prefer || (method === 'POST' ? 'return=minimal' : 'return=representation'),
+        'Prefer':        options.prefer || (['POST', 'DELETE'].includes(method) ? 'return=minimal' : 'return=representation'),
     };
 
     const res = await fetch(url, {
@@ -164,6 +164,33 @@ export default async function handler(req, res) {
             return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
         }
 
+        // --- Broadcast win/loss signals ---
+        if (type === 'passport_signal') {
+            const { room_code, winner_uuids, loser_uuids, game_label } = req.body;
+            if (!room_code || !winner_uuids) return res.status(400).json({ error: 'Missing fields' });
+
+            const signals = [
+                ...(winner_uuids || []).map(uuid => ({
+                    room_code,
+                    player_uuid: uuid,
+                    event:       'WIN',
+                    game_label:  game_label || '',
+                    created_at:  new Date().toISOString(),
+                })),
+                ...(loser_uuids || []).map(uuid => ({
+                    room_code,
+                    player_uuid: uuid,
+                    event:       'LOSS',
+                    game_label:  game_label || '',
+                    created_at:  new Date().toISOString(),
+                })),
+            ];
+
+            if (signals.length === 0) return res.status(200).json({ sent: 0 });
+            const r = await sb('/passport_signals', { method: 'POST', body: signals });
+            return res.status(r.ok ? 200 : 500).json({ sent: signals.length });
+        }
+
         return res.status(400).json({ error: 'Invalid POST type specified' });
     }
 
@@ -177,6 +204,16 @@ export default async function handler(req, res) {
         if (type === 'leaderboard') {
             const response = await sb('/career_stats?order=elo.desc&limit=10');
             return res.status(response.ok ? 200 : 500).json({ players: response.data || [] });
+        }
+
+        // --- Fetch signals for a player (Legacy fallback) ---
+        if (type === 'passport_signal') {
+            const { player_uuid, room_code } = req.query;
+            if (!player_uuid || !room_code) return res.status(400).json({ error: 'Missing player_uuid or room_code' });
+
+            const path = `/passport_signals?player_uuid=eq.${encodeURIComponent(player_uuid)}&room_code=eq.${encodeURIComponent(room_code)}&order=created_at.desc&limit=1`;
+            const r = await sb(path);
+            return res.status(200).json({ signal: r.data?.[0] || null });
         }
 
         // --- Fetch achievements for a specific player ---
@@ -194,7 +231,16 @@ export default async function handler(req, res) {
     }
 
     // -------------------------------------------------------------------------
-    // All other methods
+    // DELETE: Acknowledge and clear signals
     // -------------------------------------------------------------------------
+    if (req.method === 'DELETE') {
+        const { player_uuid, room_code } = req.body;
+        if (!player_uuid || !room_code) return res.status(400).json({ error: 'Missing player_uuid or room_code' });
+
+        const path = `/passport_signals?player_uuid=eq.${encodeURIComponent(player_uuid)}&room_code=eq.${encodeURIComponent(room_code)}`;
+        const r = await sb(path, { method: 'DELETE' });
+        return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
+    }
+
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
 }

@@ -39,7 +39,7 @@ export default async function handler(req, res) {
 
     // --- POST: Create Session OR Presence Update ---
     if (method === 'POST') {
-        const { room_code, operator_key, action } = req.body;
+        const { room_code, operator_key, action, type } = req.body;
 
         // Sub-route: Presence Tracking
         if (action) {
@@ -48,6 +48,28 @@ export default async function handler(req, res) {
                 body: { p_room_code: room_code, p_action: action }
             });
             return res.status(result.ok ? 200 : 500).json({ spectator_count: result.data });
+        }
+
+        // Sub-route: Archive Round
+        if (type === 'match_result') {
+            // Log achievements directly
+            for (const ach of (req.body.achievements || [])) {
+                await sbFetch('/player_achievements', {
+                    method: 'POST',
+                    body: { player_uuid: ach.player_uuid, achievement_id: ach.achievement_id }
+                });
+            }
+            return res.status(200).json({ ok: true }); 
+        }
+
+        // Sub-route: Passport Signals
+        if (type === 'passport_signal') {
+            const { winner_uuids = [], loser_uuids = [], game_label = '' } = req.body;
+            const signals = [...winner_uuids.map(u => ({ room_code, player_uuid: u, event: 'WIN', game_label, created_at: new Date().toISOString() })),
+                             ...loser_uuids.map(u => ({ room_code, player_uuid: u, event: 'LOSS', game_label, created_at: new Date().toISOString() }))];
+            if (!signals.length) return res.status(200).json({ ok: true });
+            const r = await sbFetch('/passport_signals', { method: 'POST', body: signals });
+            return res.status(r.ok ? 200 : 500).json({ ok: r.ok });
         }
 
         // Sub-route: Create Session

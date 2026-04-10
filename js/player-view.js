@@ -949,12 +949,6 @@ const SidelineView = {
 };
 
 // =============================================================================
-// VICTORY CARD — stubbed out
-// =============================================================================
-
-const VictoryCard = { show() {}, hide() {}, share() {} };
-
-// =============================================================================
 // PLAYER MODE — boot controller for ?role=player  v6
 // =============================================================================
 
@@ -1256,12 +1250,12 @@ const PlayerMode = {
         const btn = document.getElementById('slResendBtn');
         if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
         try {
-            const res = await fetch('/api/play-request', {
+            const res = await fetch('/api/members', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({
                     room_code:   this._joinCode,
-                    name:        passport.playerName,
+                    player_name: passport.playerName,
                     player_uuid: passport.playerUUID,
                     force:       true, // Force a fresh notification
                 }),
@@ -1697,12 +1691,12 @@ const PlayerMode = {
         this.setStatus('pending', statusMessage || 'Request sent!', statusSubMessage || 'Waiting for host to approve… 🏀');
         console.log('[PlayerMode] Joining with UUID:', passport.playerUUID);
         try {
-            const res = await fetch('/api/play-request', {
+            const res = await fetch('/api/members', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({
                     room_code:   joinCode,
-                    name:        passport.playerName,
+                    player_name: passport.playerName,
                     player_uuid: passport.playerUUID,
                     spirit_animal: passport.spiritAnimal,
                     force:       force,

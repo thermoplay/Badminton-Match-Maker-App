@@ -389,7 +389,7 @@ async function joinOnlineSession(roomCode) {
             Haptic.error();
             return;
         }
-        // session-get returns { ok, session: {...} }
+        // The sessions API returns { ok, session: {...} }
         const session = result.data?.session || result.data;
         
         if (!session) {
@@ -1581,7 +1581,7 @@ updateSessionUI = function() {
 async function archiveRoundToSupabase(snapshot) {
     if (!currentRoomCode) return;
     try {
-        await fetch('/api/match-history', {
+        await fetch('/api/sessions', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
