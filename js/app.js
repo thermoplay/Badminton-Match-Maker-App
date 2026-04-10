@@ -309,8 +309,8 @@ function completeSwap(targetUUID) {
     const p1 = StateStore.squad.find(x => x.uuid === swapSourceUUID);
     const p2 = StateStore.squad.find(x => x.uuid === targetUUID);
     
-    if (p1 && p2 && typeof window.swapActivePlayers === 'function') {
-        if (window.swapActivePlayers(p1.name, p2.name)) {
+    if (p1 && p2 && typeof swapActivePlayers === 'function') {
+        if (swapActivePlayers(p1.uuid, p2.uuid)) {
             showSessionToast(`Swapped ${p1.name} & ${p2.name}`);
             Haptic.success(); // StateStore.set in swapActivePlayers will trigger sync
         } else {
@@ -746,7 +746,7 @@ function openCourtRename(courtIndex) {
             }
 
             StateStore.set('courtNames', newCourtNames);
-            rebuildMatchCardIndices(); // Re-render cards to show new name
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
         }
     });
 }

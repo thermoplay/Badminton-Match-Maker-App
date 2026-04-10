@@ -266,6 +266,8 @@ function processAndNext() {
     if (StateStore.currentMatches.length > 0) return;
     generateMatches();
 }
+window.processAndNext = processAndNext;
+window.processAndNext = processAndNext;
 
 function applyELOForMatch(m) {
     if (m.winnerTeamIndex === null) return;
@@ -632,7 +634,8 @@ function _createMatchesForCourts(courtCount) {
         const players = pullNextFromQueue(assignedThisRound);
         if (players.length < 4) break;
 
-        players.forEach(p => .add(p.uuid);
+        players.forEach(p => {
+            assignedThisRound.add(p.uuid);
             p.waitRounds = 0; // Reset for starting players
         });
         const match = buildMatchFromPlayers(players);
@@ -849,6 +852,8 @@ function openTeamBuilder(mIdx) {
     renderTeamBuilder();
     document.getElementById('teamBuilderModal').style.display = 'flex';
 }
+window.openTeamBuilder = openTeamBuilder;
+window.closeTeamBuilder = closeTeamBuilder;
 
 function closeTeamBuilder() {
     document.getElementById('teamBuilderModal').style.display = 'none';
@@ -1016,6 +1021,7 @@ function builderShuffle() {
     builderSelected = null;
     renderTeamBuilder();
 }
+window.confirmTeamBuilder = confirmTeamBuilder;
 
 /**
  * Confirms the team builder changes, updates currentMatches,
