@@ -126,7 +126,7 @@ function loadFromDisk() {
 
             renderSquad();
             if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-            renderQueueStrip();
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
         } catch (e) {
             console.error('CourtSide: Failed to parse saved data.', e);
             StateStore.setState({ squad: [], currentMatches: [], roundHistory: [] });
@@ -177,7 +177,7 @@ function addPlayer() {
 
     el.value = '';
     renderSquad();
-    renderQueueStrip();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
     checkNextButtonState();
     if (window.Haptic) Haptic.success();
 }
@@ -224,7 +224,7 @@ function editPlayerName() {
 
             renderSquad();
             if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-            renderQueueStrip();
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
             StateStore.set('squad', StateStore.squad); // Trigger sync
 
             // Force an immediate broadcast to bypass the 200ms throttle for real-time responsiveness
@@ -396,8 +396,8 @@ function _removePlayerFromLocalState(playerIndex) {
 /** Updates all relevant UI components after a player has been removed. */
 function _updateUIAfterPlayerRemoval() {
     renderSquad();
-    rebuildMatchCardIndices();
-    renderQueueStrip();
+    if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
     checkNextButtonState();
     if (typeof window.initQueue === 'function') window.initQueue();
 }
@@ -719,7 +719,7 @@ function movePlayerToFront() {
     StateStore.set('playerQueue', newQueue);
     
     closeMenu();
-    renderQueueStrip();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
     Haptic.success();
     if (typeof showSessionToast === 'function') showSessionToast(`${p.name} moved to front`);
 }
@@ -1339,8 +1339,8 @@ function undoLastRound() {
                 playerQueue: snapshot.queueSnapshot || StateStore.playerQueue,
             });
             renderSquad();
-            rebuildMatchCardIndices();
-            renderQueueStrip();
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
             updateUndoButton();
             checkNextButtonState();
             Haptic.bump();
