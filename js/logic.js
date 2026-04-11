@@ -696,10 +696,17 @@ function renderQueueStrip() {
     // Only show NEXT badges when there are genuinely open court slots right now.
     // openSlots = courts that need players = (total spots) - (players already on court)
     // If all courts are busy, openSlots = 0 and nobody gets a badge.
-    const openSlots = Math.max(0, StateStore.get('activeCourts') * 4 - onCourt.size);
-
     strip.style.display = 'block';
     strip.classList.remove('animating');
+
+    const openSlots = Math.max(0, StateStore.get('activeCourts') * 4 - onCourt.size);
+    const currentQueueUUIDs = new Set();
+    const fragment = document.createDocumentFragment();
+    const existingQueueItems = new Map();
+    strip.querySelectorAll('.queue-item').forEach(item => {
+        const uuid = item.dataset.uuid;
+        if (uuid) existingQueueItems.set(uuid, item);
+    });
 
     strip.innerHTML = `
         <div class="queue-strip-header">
@@ -707,16 +714,39 @@ function renderQueueStrip() {
             <span class="queue-strip-count">${waiting.length} waiting</span>
         </div>
         <div class="queue-strip-list">
-            ${waiting.map((p, idx) => `
-                <div class="queue-item" draggable="true" data-uuid="${p.uuid}">
-                    <span class="queue-pos">${idx + 1}</span>
-                    ${Avatar.html(p.name, p.spiritAnimal)}
-                    <span class="queue-name">${escapeHTML(p.name)}</span>
-                    ${idx < openSlots ? '<span class="queue-next-badge">NEXT</span>' : ''}
-                </div>
-            `).join('')}
         </div>
     `;
+
+    const queueListContainer = strip.querySelector('.queue-strip-list');
+
+    waiting.forEach((p, idx) => {
+        currentQueueUUIDs.add(p.uuid);
+        const itemContent = `
+            <span class="queue-pos">${idx + 1}</span>
+            ${Avatar.html(p.name, p.spiritAnimal)}
+            <span class="queue-name">${escapeHTML(p.name)}</span>
+            ${idx < openSlots ? '<span class="queue-next-badge">NEXT</span>' : ''}
+        `;
+        const itemClasses = `queue-item ${idx < openSlots ? 'queue-item-next' : ''}`;
+
+        let item = existingQueueItems.get(p.uuid);
+
+        if (item) {
+            if (item.className !== itemClasses) item.className = itemClasses;
+            if (item.innerHTML.trim() !== itemContent.trim()) item.innerHTML = itemContent;
+            existingQueueItems.delete(p.uuid);
+        } else {
+            const newItem = document.createElement('div');
+            newItem.className = itemClasses;
+            newItem.dataset.uuid = p.uuid;
+            newItem.innerHTML = itemContent;
+            newItem.setAttribute('draggable', 'true');
+            fragment.appendChild(newItem);
+        }
+    });
+
+    existingQueueItems.forEach(item => item.remove()); // Remove items no longer in the queue
+    queueListContainer.appendChild(fragment); // Append new/updated items
 
     // Stagger queue items in
     requestAnimationFrame(() => {
@@ -1087,6 +1117,16 @@ function setupQueueDragAndDrop() {
         item.addEventListener('dragenter', handleDragEnter);
         item.addEventListener('dragover', handleDragOver);
         item.addEventListener('dragleave', handleDragLeave);
+        item.addEventListener('drop', handleDrop);
+        item.addEventListener('dragend', handleDragEnd);
+    });
+
+    // Re-attach D&D listeners to all current items (new and existing)
+    queueListContainer.querySelectorAll('.queue-item').forEach(item => {
+        item.removeEventListener('dragstart', handleDragStart); // Prevent duplicate listeners
+        item.removeEventListener('drop', handleDrop);
+        item.removeEventListener('dragend', handleDragEnd);
+        item.addEventListener('dragstart', handleDragStart);
         item.addEventListener('drop', handleDrop);
         item.addEventListener('dragend', handleDragEnd);
     });

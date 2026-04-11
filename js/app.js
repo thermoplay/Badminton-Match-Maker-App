@@ -434,18 +434,24 @@ function renderSquad() {
     if (!container) return;
 
     // Ensure search bar exists
-    if (!document.getElementById('squadSearchInput')) {
+    let searchInput = document.getElementById('squadSearchInput');
+    if (!searchInput) {
         const searchWrap = document.createElement('div');
         searchWrap.className = 'input-row';
         searchWrap.style.marginBottom = '12px';
-        searchWrap.innerHTML = `
+        searchWrap.innerHTML = ` 
             <input type="text" id="squadSearchInput" placeholder="Search players..." 
                    style="flex:1;" oninput="window.squadSearchQuery = this.value; renderSquad();">
         `;
         container.parentNode.insertBefore(searchWrap, container);
+        searchInput = document.getElementById('squadSearchInput');
     }
 
     const query = (window.squadSearchQuery || '').toLowerCase().trim();
+    // Update the input's value if the query changed externally (e.g., from clearHistorySearch)
+    if (searchInput && searchInput.value !== (window.squadSearchQuery || '')) {
+        searchInput.value = window.squadSearchQuery || '';
+    }
 
     const existingChips = new Map();
     container.querySelectorAll('.player-chip').forEach(chip => {
@@ -453,6 +459,7 @@ function renderSquad() {
         if (uuid) existingChips.set(uuid, chip);
     });
 
+    const currentSquadUUIDs = new Set(); // Keep track of UUIDs in the current render pass
     const fragment = document.createDocumentFragment();
 
     StateStore.squad.forEach((p, idx) => {
@@ -460,6 +467,7 @@ function renderSquad() {
         if (query && !p.name.toLowerCase().includes(query)) return;
 
         const isNew = p.games === 0 && p.wins === 0;
+        currentSquadUUIDs.add(p.uuid); // Add to set of UUIDs that should be present
         const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
@@ -477,7 +485,7 @@ function renderSquad() {
                 chip.className = chipClasses;
             }
             // Update innerHTML if content changed (includes wait badge)
-            if (chip.innerHTML !== chipContent) {
+            if (chip.innerHTML.trim() !== chipContent.trim()) { // Trim to ignore whitespace differences
                 chip.innerHTML = chipContent;
             }
             existingChips.delete(p.uuid);
@@ -496,16 +504,24 @@ function renderSquad() {
         }
     });
 
-    // Append all new chips in a single DOM operation for performance.
-    container.appendChild(fragment);
+    // Append all new chips in a single DOM operation.
+    if (fragment.children.length > 0) {
+        container.appendChild(fragment);
+    }
 
-    // Any chips left in existingChips are for players who have been removed
-    existingChips.forEach(chip => {
-        chip.classList.add('player-chip-removing');
-        // Remove the element from the DOM after the animation finishes
-        chip.addEventListener('animationend', () => {
-            chip.remove();
-        }, { once: true });
+    // Handle removal of chips that are no longer in the squad or are filtered out
+    existingChips.forEach(chip => { // These are chips that were in the DOM but not in the current render pass
+        if (!currentSquadUUIDs.has(chip.dataset.uuid)) { // Truly removed from squad
+            chip.classList.add('player-chip-removing');
+            chip.addEventListener('animationend', () => chip.remove(), { once: true });
+        } else { // Still in squad but filtered out by search
+            chip.style.display = 'none';
+        }
+    });
+    container.querySelectorAll('.player-chip').forEach(chip => { // Ensure visible chips are displayed
+        if (currentSquadUUIDs.has(chip.dataset.uuid) && (!query || chip.textContent.toLowerCase().includes(query))) {
+            chip.style.display = ''; // Show it
+        }
     });
 }
 

@@ -478,7 +478,8 @@ input:focus {
     text-align: center;
     cursor: pointer;
     border: 1.5px solid transparent;
-    transition: all 0.18s ease;
+    transition: transform 0.18s ease, opacity 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+    will-change: transform, opacity, border-color, background, box-shadow;
     user-select: none;
     -webkit-user-select: none;
     letter-spacing: 0.2px;
@@ -710,7 +711,8 @@ input:focus {
     gap: 10px;
     padding: 9px 14px;
     border-bottom: 1px solid var(--border);
-    transition: background 0.15s;
+    transition: opacity 0.25s ease, transform 0.25s ease, background 0.15s;
+    will-change: transform, opacity, background, border-color;
 }
 
 .queue-item:last-child {
@@ -804,6 +806,7 @@ input:focus {
     margin-bottom: 8px;
     overflow: hidden;
     border: 1px solid var(--border);
+    will-change: transform, opacity, border-color, box-shadow;
     animation: cardDrop 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
     box-shadow: 0 4px 30px rgba(0,0,0,0.4);
     contain: content; /* Performance: isolates layout/paint */
@@ -3912,7 +3915,8 @@ button:active,
     border-radius: 16px;
     border: 1.5px solid var(--border);
     background: var(--surface);
-    transition: border-color 0.3s, background 0.3s;
+    transition: border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
+    will-change: border-color, background, box-shadow;
 }
 
 /* State variants */
@@ -5903,6 +5907,7 @@ body.session-ended .play-requests-badge,
 body.session-ended .join-notif,
 body.session-ended #nextUpTicker {
     display: none !important;
+}
 /* Search bar styling */
 #squadSearchInput {
     background: var(--surface2);
