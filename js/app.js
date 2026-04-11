@@ -1599,13 +1599,18 @@ function renderStatsTab(tab) {
                 const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
                 const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
 
+                const durationMs = (m.endedAt && m.startedAt) ? m.endedAt - m.startedAt : 0;
+                const durMin = Math.floor(durationMs / 60000);
+                const durSec = Math.floor((durationMs % 60000) / 1000);
+                const durStr = durationMs > 0 ? `<span style="opacity:0.5; margin-left:6px; font-size:0.6rem;">⏱ ${durMin}:${durSec.toString().padStart(2, '0')}</span>` : '';
+
                 return `
                     <div class="history-game">
                         <div class="history-game-label">Game ${gi + 1}</div>
                         <div class="history-matchup">
                             <span class="history-winner">${escapeHTML(winners)}</span>
                             <span class="history-vs">def.</span>
-                            <span class="history-loser">${escapeHTML(losers)}</span>
+                            <span class="history-loser">${escapeHTML(losers)}</span>${durStr}
                         </div>
                         ${timeHtml}
                     </div>
