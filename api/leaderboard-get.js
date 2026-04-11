@@ -26,8 +26,8 @@ export default async function handler(req, res) {
             if (!map[key]) map[key] = { player_name: r.player_name, total_wins: 0, total_games: 0, elo: '—' };
             // Always use the most recent name for display
             map[key].player_name = r.player_name;
-            map[r.player_name].total_games++;
-            if (r.won) map[r.player_name].total_wins++;
+            map[key].total_games++;
+            if (r.won) map[key].total_wins++;
         });
         const players = Object.values(map).sort((a, b) => b.total_wins - a.total_wins).slice(0, 10);
         return res.status(200).json({ players });

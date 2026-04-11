@@ -1552,13 +1552,18 @@ function renderStatsTab(tab) {
         content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
 
     } else if (tab === 'leaderboard') {
+        const period = window._lbPeriod || 'all';
         content.innerHTML = tabs + `
-            <div class="sl-searching" style="margin-top:40px;">
+            <div style="display:flex; gap:8px; margin-bottom:16px;">
+                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('leaderboard')">All-Time</button>
+                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('leaderboard')">Weekly</button>
+            </div>
+            <div class="sl-searching" style="margin-top:20px;">
                 <div class="sl-searching-spinner"></div>
-                <div class="sl-searching-text">FETCHING GLOBAL RANKINGS…</div>
+                <div class="sl-searching-text">FETCHING ${period.toUpperCase()} RANKINGS…</div>
             </div>`;
 
-        fetch('/api/leaderboard-get')
+        fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
             .then(res => res.json())
             .then(data => {
                 // Guard: only render if user is still on the leaderboard tab
@@ -1569,7 +1574,7 @@ function renderStatsTab(tab) {
                     <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
                         <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
                         <div style="flex:1;">
-                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || 'Unknown')}</div>
+                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
                             <div class="stats-meta">${p.total_wins || p.wins || 0} Wins · ${p.total_games || p.games || 0} Games</div>
                         </div>
                         <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.elo || p.rating || 1200}</div>
