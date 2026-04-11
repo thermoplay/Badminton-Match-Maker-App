@@ -2480,108 +2480,6 @@ function _renderPlayCount(playerName) {
 window.SidelineView = SidelineView;
 window.PlayerMode = PlayerMode;
 
-        if (analyticsContainer && me) {
-            // Rival Logic
-            let rivalName = 'None yet';
-            let rivalCount = 0;
-            if (me.opponentHistory) {
-                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
-                if (rivals.length > 0) {
-                    const rivalP = (window.squad || []).find(p => p.uuid === rivals[0][0]);
-                    rivalName = rivalP ? rivalP.name : 'Unknown';
-                    rivalCount = rivals[0][1];
-                }
-            }
-            const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-            // Form Logic
-            const formHTML = (me.form || []).map(r => 
-                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'rgba(239,68,68,0.2)'}; color:${r==='W'?'#000':'#ef4444'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
-            ).join('');
-
-            // Performance Lab: History List with UUID name resolution
-            let historyHTML = '';
-            if (me.matchHistory && me.matchHistory.length > 0) {
-                historyHTML = `
-                    <div class="sl-lab-history" style="margin-top:12px;">
-                        ${me.matchHistory.map(h => {
-                            const oppNames = (h.oppUUIDs || []).map(id => {
-                                const p = (window.squad || []).find(s => s.uuid === id || s.name === id);
-                                return p ? esc(p.name) : 'Former Player';
-                            }).join(' &amp; ');
-                            
-                            let partnerDisplay = '';
-                            if (h.partnerUUID) {
-                                const partnerP = (window.squad || []).find(s => s.uuid === h.partnerUUID);
-                                if (partnerP) {
-                                    partnerDisplay = ` with ${esc(partnerP.name)}`;
-                                }
-                            }
-                            const timeAgo = Math.floor((Date.now() - h.time) / 60000);
-                            const timeStr = timeAgo < 1 ? 'Just now' : `${timeAgo}m ago`;
-                            return `
-                                <div class="sl-hist-item ${h.win ? 'sl-hist-win' : 'sl-hist-loss'}">
-                                    <div class="sl-hist-badge">${h.win ? 'W' : 'L'}</div>
-                                    <div class="sl-hist-details">
-                                        <div class="sl-hist-label">${h.win ? 'Victory' : 'Defeat'}</div>
-                                        <div class="sl-hist-opp">${partnerDisplay} vs ${oppNames}</div>
-                                    </div>
-                                    <div class="sl-hist-time">${timeStr}</div>
-                                </div>`;
-                        }).join('')}
-                    </div>`;
-            }
-
-            analyticsContainer.innerHTML = `
-                <div class="sl-section-label sl-section-lab" style="margin-top:24px;">
-                    <span class="sl-dot-lab">📊</span> PERFORMANCE LAB
-                    <span class="sl-lab-badge">SESSION LOG</span>
-                </div>
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
-                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
-                    </div>
-                    <div style="width:1px; height:30px; background:var(--border);"></div>
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
-                        <div style="font-size:0.9rem; font-weight:700;">${esc(rivalName)}</div>
-                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
-                    </div>
-                </div>
-                ${historyHTML}`;
-        }
-
-        this._renderH2H(profileView, me);
-
-        if (chemContainer) {
-            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
-            
-            if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
-                const partners = Object.entries(me.partnerStats);
-                partners.sort(([, a], [, b]) => {
-                    if (b.wins !== a.wins) return b.wins - a.wins;
-                    return b.games - a.games;
-                });
-                const best = partners[0];
-                if (best) {
-                    const [uuid, stats] = best;
-                    const partnerP = (window.squad || []).find(p => p.uuid === uuid);
-                    const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
-                    chemContainer.innerHTML = `
-                        <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
-                        <div class="sl-chem-card">
-                            <div class="sl-chem-details">
-                                <div class="sl-chem-name">Best with: <strong>${esc(partnerP ? partnerP.name : 'Unknown')}</strong></div>
-                                <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
-                            </div>
-                        </div>`;
-                }
-            } else {
-                chemContainer.innerHTML = '';
-            }
-        }
-
         // Render Achievements List
         let achLabel = document.getElementById('slProfileAchLabel');
         if (!achLabel && profileView) {
@@ -3524,17 +3422,18 @@ const PlayerMode = {
     _updateStatus(passport) {
         const squad   = window.squad          || [];
         const matches = window.currentMatches || [];
+        const myUUID  = passport.playerUUID;
 
         // Prioritize UUID for all lookups to ensure robustness against name changes.
         const me = squad.find(p => p.uuid === passport.playerUUID);
         const myName = me ? me.name : passport.playerName;
 
         const onCourtNow = new Set(matches.flatMap(m => (m.teams || []).flat()));
-        const playing = me ? onCourtNow.has(me.name) : false;
+        const playing = me ? onCourtNow.has(me.uuid) : false;
         const inSquad = !!me;
 
         // The bench is anyone active and not on court.
-        const bench = squad.filter(p => p.active && !onCourtNow.has(p.name));
+        const bench = squad.filter(p => p.active && !onCourtNow.has(p.uuid));
         const qPos  = me ? bench.findIndex(p => p.uuid === me.uuid) : -1;
 
         const nextUpRaw = window._lastNextUp || '';
