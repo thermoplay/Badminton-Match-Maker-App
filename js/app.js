@@ -203,32 +203,9 @@ function editPlayerName() {
                 return;
             }
 
-            p.name = trimmedNewName;
-
-            // Metadata consistency maps (still using names as secondary lookup keys)
-            const uuidMap = window._sessionUUIDMap || {};
-            if (p.uuid && uuidMap[oldName] === p.uuid) delete uuidMap[oldName];
-            if (p.uuid) uuidMap[p.name] = p.uuid;
-            window._sessionUUIDMap = uuidMap;
-
-            if (window._approvedPlayers) {
-                const entry = window._approvedPlayers[p.uuid] || window._approvedPlayers[oldName];
-                if (entry) {
-                    entry.name = p.name;
-                    if (window._approvedPlayers[oldName]) {
-                        delete window._approvedPlayers[oldName];
-                        window._approvedPlayers[p.uuid] = entry;
-                    }
-                }
+            if (typeof _applyNameUpdate === 'function') {
+                _applyNameUpdate(p.uuid, oldName, trimmedNewName);
             }
-
-            renderSquad();
-            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-            if (typeof renderQueueStrip === 'function') renderQueueStrip();
-            StateStore.set('squad', StateStore.squad); // Trigger sync
-
-            // Force an immediate broadcast to bypass the 200ms throttle for real-time responsiveness
-            if (typeof broadcastGameState === 'function') broadcastGameState(true);
         }
     });
 }
@@ -265,6 +242,7 @@ function resyncQueue() {
     if (typeof initQueue === 'function') {
         initQueue();
         if (typeof renderQueueStrip === 'function') renderQueueStrip();
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
         if (window.Haptic) Haptic.success();
     }
 }
@@ -327,14 +305,10 @@ function cancelSwap() {
 }
 
 function toggleRestingState() {
-    StateStore.squad[selectedPlayerIndex].active = !StateStore.squad[selectedPlayerIndex].active;
+    const p = StateStore.squad[selectedPlayerIndex];
+    if (!p) return;
     closeMenu();
-    renderSquad();
-    checkNextButtonState();
-
-    // Trigger reactive sync and immediate broadcast
-    StateStore.set('squad', StateStore.squad);
-    if (typeof broadcastGameState === 'function') broadcastGameState(true);
+    togglePlayerActive(p.uuid);
 }
 
 function _autoAddHostToSquad() {
@@ -720,6 +694,8 @@ function movePlayerToFront() {
     
     closeMenu();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    saveToDisk();
+    if (typeof broadcastGameState === 'function') broadcastGameState(true);
     Haptic.success();
     if (typeof showSessionToast === 'function') showSessionToast(`${p.name} moved to front`);
 }

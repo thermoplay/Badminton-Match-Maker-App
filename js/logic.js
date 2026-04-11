@@ -267,7 +267,6 @@ function processAndNext() {
     generateMatches();
 }
 window.processAndNext = processAndNext;
-window.processAndNext = processAndNext;
 
 function applyELOForMatch(m) {
     if (m.winnerTeamIndex === null) return;
@@ -558,21 +557,17 @@ function buildMatchFromPlayers(p4) {
 
 // Rebuild DOM indices after a court is removed (so id="match-N" stays accurate)
 function rebuildMatchCardIndices() {
-    const container = document.getElementById('matchContainer');
-    container.innerHTML = '';
-    StateStore.currentMatches.forEach((m, i) => {
-        const tA = m.teams[0].map(u => findP(u)).filter(Boolean);
-        const tB = m.teams[1].map(u => findP(u)).filter(Boolean);
-        if (tA.length > 0 && tB.length > 0) {
-            const cardEl = buildMatchCard(i, tA, tB, m.odds, m.startedAt, m.storyBadges);
-            cardEl.classList.remove('card-entering'); // No animation on rebuild
-            container.appendChild(cardEl);
-            if (m.winnerTeamIndex !== null) {
-                const boxes = cardEl.querySelectorAll('.team-box');
-                if (boxes[m.winnerTeamIndex]) boxes[m.winnerTeamIndex].classList.add('selected');
-            }
-        }
-    });
+    const matchData = StateStore.currentMatches.map((m, i) => ({
+        idx: i,
+        tA: m.teams[0].map(u => findP(u)).filter(Boolean),
+        tB: m.teams[1].map(u => findP(u)).filter(Boolean),
+        odds: m.odds,
+        startedAt: m.startedAt,
+        storyBadges: m.storyBadges,
+        winnerTeamIndex: m.winnerTeamIndex
+    }));
+    
+    renderAllMatchCards(matchData, true); // Pass true to skip entry animations
 }
 
 // ---------------------------------------------------------------------------
@@ -737,19 +732,25 @@ function renderQueueStrip() {
 // MATCH CARD RENDERING
 // ---------------------------------------------------------------------------
 
-function renderAllMatchCards(matchData) {
+function renderAllMatchCards(matchData, skipAnimation = false) {
     const container = document.getElementById('matchContainer');
     container.innerHTML = ''; // Clear existing content
 
     const fragment = document.createDocumentFragment();
-    matchData.forEach(({ idx, tA, tB, odds, startedAt, storyBadges }) => {
+    matchData.forEach(({ idx, tA, tB, odds, startedAt, storyBadges, winnerTeamIndex }) => {
         const cardElement = buildMatchCard(idx, tA, tB, odds, startedAt, storyBadges);
+        if (skipAnimation) cardElement.classList.remove('card-entering');
+        
+        if (winnerTeamIndex !== null && winnerTeamIndex !== undefined) {
+            const boxes = cardElement.querySelectorAll('.team-box');
+            if (boxes[winnerTeamIndex]) boxes[winnerTeamIndex].classList.add('selected');
+        }
         fragment.appendChild(cardElement);
     });
     container.appendChild(fragment);
 
     // Trigger staggered entrance animation
-    requestAnimationFrame(() => {
+    if (!skipAnimation) requestAnimationFrame(() => {
         container.querySelectorAll('.card-entering').forEach((el, i) => {
             setTimeout(() => el.classList.remove('card-entering'), i * 80);
         });

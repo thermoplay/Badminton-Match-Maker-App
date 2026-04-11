@@ -157,8 +157,7 @@ const SidelineView = {
             const courtName = courtNames[i] || `COURT ${i + 1}`;
             const hasWinner = winIdx !== null && winIdx !== undefined;
 
-            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
-            const safeNames = (uuids) => uuids.map(u => esc(squad.find(p => p.uuid === u || p.name === u)?.name || 'Unknown')).join(' &amp; ');
+            const safeNames = (uuids) => uuids.map(u => escapeHTML((window.squad || []).find(p => p.uuid === u || p.name === u)?.name || 'Unknown')).join(' &amp; ');
 
             // Timer is handled by the global TimerManager in timer.js
             // It reads the `data-started` attribute from the DOM.
@@ -224,10 +223,9 @@ const SidelineView = {
         const statsB = getStats(tB);
         const odds = match.odds || [50, 50];
 
-        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         const renderNames = (arr) => arr.map(n => {
             const isMe = myName && n.toLowerCase() === myName.toLowerCase();
-            return isMe ? `<strong style="color: var(--accent);">${esc(n)}</strong>` : esc(n);
+            return isMe ? `<strong style="color: var(--accent);">${escapeHTML(n)}</strong>` : escapeHTML(n);
         }).join('<br>&amp;<br>');
 
         const html = `
@@ -286,7 +284,6 @@ const SidelineView = {
         if (!modal || !content || !recapData) return;
 
         const { totalGames, mvp, ironMan, hotHand, sharpShooter, squad = [] } = recapData;
-        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
         content.innerHTML = `
             <div class="sl-recap-item">
@@ -295,7 +292,7 @@ const SidelineView = {
             </div>
             <div class="sl-recap-item" style="border-color:var(--accent); background:var(--accent-dim);">
                 <div style="font-size:0.6rem; color:var(--accent); font-weight:900; letter-spacing:2px; margin-bottom:4px;">SESSION MVP</div>
-                <span class="sl-recap-val" style="font-size:1.8rem;">${esc(mvp.name)}</span>
+                <span class="sl-recap-val" style="font-size:1.8rem;">${escapeHTML(mvp.name)}</span>
                 <span class="sl-recap-label" style="color:var(--text);">${mvp.wins} Wins · ${mvp.games} Games</span>
                 <button class="sl-share-match-btn" style="margin-top:12px; background:var(--accent); color:#000;" onclick="PlayerMode.shareMVPPoster()">📲 SHARE MVP POSTER</button>
             </div>
@@ -303,12 +300,12 @@ const SidelineView = {
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">
                 <div class="sl-recap-item" style="padding:12px;">
                     <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); text-transform:uppercase;">IRON MAN</div>
-                    <div style="font-size:0.8rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(ironMan.name)}</div>
+                    <div style="font-size:0.8rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(ironMan.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${ironMan.sessionPlayCount} Games</div>
                 </div>
                 <div class="sl-recap-item" style="padding:12px;">
                     <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); text-transform:uppercase;">HOT HAND</div>
-                    <div style="font-size:0.8rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(hotHand.name)}</div>
+                    <div style="font-size:0.8rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(hotHand.name)}</div>
                     <div style="font-size:0.6rem; color:var(--text-muted);">${hotHand.streak} Win Streak</div>
                 </div>
             </div>
@@ -317,7 +314,7 @@ const SidelineView = {
                 ${squad.slice(0, 5).map((p, i) => `
                     <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border);">
                         <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:16px;">${i+1}</div>
-                        <div style="flex:1; font-size:0.8rem; font-weight:600;">${esc(p.name)}</div>
+                        <div style="flex:1; font-size:0.8rem; font-weight:600;">${escapeHTML(p.name)}</div>
                         <div style="font-family:var(--font-display); font-weight:800; color:var(--text);">${p.wins}W</div>
                     </div>
                 `).join('')}
@@ -967,7 +964,7 @@ const VictoryCard = { show() {}, hide() {}, share() {} };
 // =============================================================================
 
 const LS_TOKENS   = 'cs_session_tokens';
-const SS_APPROVED = 'cs_approved';
+const LS_APPROVED = 'cs_approved_sessions';
 
 const PlayerMode = {
 
@@ -1012,7 +1009,7 @@ const PlayerMode = {
             clearInterval(this._statePollTimer);
             this._clearJoinRetryTimer();
             localStorage.removeItem('cs_player_room_code');
-            try { sessionStorage.removeItem(SS_APPROVED); } catch {}
+            this._clearApprovedInSession(this._joinCode);
 
             // 3. Reset UI by reloading. Give broadcast a moment to send.
             if (typeof showSessionToast === 'function') showSessionToast('👋 You have left the session.');
@@ -1043,7 +1040,6 @@ const PlayerMode = {
     _onRemovedFromSession() {
         clearInterval(this._statePollTimer);
         localStorage.removeItem('cs_player_room_code');
-        try { sessionStorage.removeItem(SS_APPROVED); } catch {}
         this._clearApprovedInSession(this._joinCode);
 
         if (typeof showSessionToast === 'function') {
@@ -1660,11 +1656,32 @@ const PlayerMode = {
         if (newStatus === 'playing' && this._prevStatus !== 'playing') {
             if (window.Haptic) Haptic.success();
             _showYoureUpBanner(courtInfo?.num, courtInfo?.partner);
+
+            // Background Notification: Alert the player if they are in another tab
+            if (document.visibilityState !== 'visible' && "Notification" in window && Notification.permission === 'granted') {
+                try {
+                    new Notification("🏸 You're Up!", {
+                        body: `Court ${courtInfo?.num || '?'}${courtInfo?.partner ? ' with ' + courtInfo.partner : ''}. Get to the court!`,
+                        tag: 'court-call',
+                        requireInteraction: true
+                    });
+                } catch (e) {}
+            }
         }
 
         // Fire haptic ONLY on transition INTO 'on-deck'
         if (newStatus === 'on-deck' && this._prevStatus !== 'on-deck') {
             if (window.Haptic) Haptic.bump();
+
+            // Background Notification: Soft warning when they are next
+            if (document.visibilityState !== 'visible' && "Notification" in window && Notification.permission === 'granted') {
+                try {
+                    new Notification("🟡 You're On Deck!", {
+                        body: "You are up next. Head towards the courts!",
+                        tag: 'court-call'
+                    });
+                } catch (e) {}
+            }
         }
 
         this._prevStatus = newStatus;
@@ -1896,23 +1913,23 @@ const PlayerMode = {
     },
 
     _isApprovedInSession(roomCode) {
-        try { return !!JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}')[roomCode]; }
+        try { return !!JSON.parse(localStorage.getItem(LS_APPROVED) || '{}')[roomCode]; }
         catch { return false; }
     },
 
     _markApprovedInSession(roomCode) {
         try {
-            const m = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
+            const m = JSON.parse(localStorage.getItem(LS_APPROVED) || '{}');
             m[roomCode] = true;
-            sessionStorage.setItem(SS_APPROVED, JSON.stringify(m));
+            localStorage.setItem(LS_APPROVED, JSON.stringify(m));
         } catch { }
     },
 
     _clearApprovedInSession(roomCode) {
         try {
-            const m = JSON.parse(sessionStorage.getItem(SS_APPROVED) || '{}');
+            const m = JSON.parse(localStorage.getItem(LS_APPROVED) || '{}');
             delete m[roomCode];
-            sessionStorage.setItem(SS_APPROVED, JSON.stringify(m));
+            localStorage.setItem(LS_APPROVED, JSON.stringify(m));
         } catch { }
     },
 
@@ -2163,6 +2180,12 @@ const PlayerMode = {
                         🔋 BATTERY SAVER: ${isSaver ? 'ON' : 'OFF'}
                     </button>
 
+                    ${("Notification" in window && Notification.permission !== 'granted') ? `
+                    <button class="btn-main" style="background:var(--surface2); color:var(--text); height: 50px;" onclick="PlayerMode.requestNotifications()">
+                        🔔 ENABLE NOTIFICATIONS
+                    </button>
+                    ` : ''}
+
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                         <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="window.location.href=window.location.origin + window.location.pathname">🏠 HOME</button>
                         <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="PlayerMode.shareRoomCode()">🔗 SHARE</button>
@@ -2205,6 +2228,21 @@ const PlayerMode = {
         this._subscribeAndPoll(this._joinCode, Passport.get());
         showSessionToast(`🔋 Battery Saver: ${newVal ? 'ON' : 'OFF'}`);
         UIManager.hide();
+    },
+
+    async requestNotifications() {
+        if (!("Notification" in window)) {
+            if (typeof showSessionToast === 'function') showSessionToast("Notifications not supported on this browser.");
+            return;
+        }
+        const perm = await Notification.requestPermission();
+        if (perm === 'granted') {
+            if (typeof showSessionToast === 'function') showSessionToast("🔔 Notifications Enabled!");
+            // Refresh the navigation menu to hide the button
+            this.openNavigation();
+        } else {
+            if (typeof showSessionToast === 'function') showSessionToast("❌ Notifications Blocked");
+        }
     },
 
     openTrophyRoom() {
