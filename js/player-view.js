@@ -2469,6 +2469,30 @@ function _renderPlayCount(playerName) {
 window.SidelineView = SidelineView;
 window.PlayerMode = PlayerMode;
 
+        // --- 2. Status Toggle (Ready / Resting) ---
+        let statusToggle = document.getElementById('slStatusToggleCard');
+        if (!statusToggle) {
+            statusToggle = document.createElement('div');
+            statusToggle.id = 'slStatusToggleCard';
+            // Insert after header
+            if (header.nextSibling) profileView.insertBefore(statusToggle, header.nextSibling);
+            else profileView.appendChild(statusToggle);
+        }
+        
+        const isActive = me ? me.active : true;
+        statusToggle.className = `sl-status-toggle-card ${isActive ? 'active' : 'resting'}`;
+        statusToggle.onclick = () => PlayerMode.toggleStatus(isActive);
+        statusToggle.innerHTML = `
+            <div class="sl-toggle-icon">${isActive ? '🏸' : '☕'}</div>
+            <div class="sl-toggle-info">
+                <div class="sl-toggle-label">${isActive ? 'I\'M READY TO PLAY' : 'I\'M TAKING A BREAK'}</div>
+                <div class="sl-toggle-sub">${isActive ? 'Included in next rotation' : 'Skipping next rounds'}</div>
+            </div>
+            <div class="sl-toggle-switch">
+                <div class="sl-toggle-knob"></div>
+            </div>
+        `;
+
         // Render Stats Deck (Session + Career)
         let deck = document.getElementById('slStatsDeck');
         

@@ -1120,16 +1120,6 @@ function setupQueueDragAndDrop() {
         item.addEventListener('drop', handleDrop);
         item.addEventListener('dragend', handleDragEnd);
     });
-
-    // Re-attach D&D listeners to all current items (new and existing)
-    queueListContainer.querySelectorAll('.queue-item').forEach(item => {
-        item.removeEventListener('dragstart', handleDragStart); // Prevent duplicate listeners
-        item.removeEventListener('drop', handleDrop);
-        item.removeEventListener('dragend', handleDragEnd);
-        item.addEventListener('dragstart', handleDragStart);
-        item.addEventListener('drop', handleDrop);
-        item.addEventListener('dragend', handleDragEnd);
-    });
 }
 
 function handleDragStart(e) {
