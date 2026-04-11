@@ -515,6 +515,7 @@ function pushStateToSupabase(force = false, targetUUIDs = null) {
 function _broadcast(type, payload) {
     if (sbManager) sbManager.broadcast(type, payload);
 }
+window.broadcastEvent = _broadcast;
 
 /**
  * BUG FIX: Feature #5 - Player self-service break
@@ -727,6 +728,14 @@ async function memberUpsert(playerUUID, playerName, explicitRoomCode) {
 
 function _handleBroadcast(payload) {
     const { type } = payload;
+
+    // Immediate play request notification for Host
+    if (type === 'incoming_play_request') {
+        if (isOperator && typeof window.onPlayRequestInsert === 'function') {
+            window.onPlayRequestInsert(payload);
+        }
+        return;
+    }
 
     // BUG 1: Player approved — flip from pending → active
     if (type === 'session_joined') {

@@ -1934,6 +1934,17 @@ const PlayerMode = {
             this._showQueuedState(passport.playerName);
             this._isJoining = false;
 
+            // Immediate notification to host:
+            // This ensures the host sees your request in <100ms, bypassing DB polling latency.
+            if (typeof broadcastEvent === 'function') {
+                broadcastEvent('incoming_play_request', {
+                    id: data.id,
+                    name: passport.playerName,
+                    player_uuid: passport.playerUUID,
+                    spirit_animal: passport.spiritAnimal
+                });
+            }
+
             // Start retry timer: if no host broadcast in 15s, auto-resend
             this._startJoinRetryTimer();
 
@@ -2468,118 +2479,6 @@ function _renderPlayCount(playerName) {
 // Expose globals for other scripts and inline event handlers
 window.SidelineView = SidelineView;
 window.PlayerMode = PlayerMode;
-
-        // --- 2. Status Toggle (Ready / Resting) ---
-        let statusToggle = document.getElementById('slStatusToggleCard');
-        if (!statusToggle) {
-            statusToggle = document.createElement('div');
-            statusToggle.id = 'slStatusToggleCard';
-            // Insert after header
-            if (header.nextSibling) profileView.insertBefore(statusToggle, header.nextSibling);
-            else profileView.appendChild(statusToggle);
-        }
-        
-        const isActive = me ? me.active : true;
-        statusToggle.className = `sl-status-toggle-card ${isActive ? 'active' : 'resting'}`;
-        statusToggle.onclick = () => PlayerMode.toggleStatus(isActive);
-        statusToggle.innerHTML = `
-            <div class="sl-toggle-icon">${isActive ? '🏸' : '☕'}</div>
-            <div class="sl-toggle-info">
-                <div class="sl-toggle-label">${isActive ? 'I\'M READY TO PLAY' : 'I\'M TAKING A BREAK'}</div>
-                <div class="sl-toggle-sub">${isActive ? 'Included in next rotation' : 'Skipping next rounds'}</div>
-            </div>
-            <div class="sl-toggle-switch">
-                <div class="sl-toggle-knob"></div>
-            </div>
-        `;
-
-        // Render Stats Deck (Session + Career)
-        let deck = document.getElementById('slStatsDeck');
-        
-        if (!deck && profileView) {
-            deck = document.createElement('div');
-            deck.id = 'slStatsDeck';
-            // Insert before achievements container
-            const ach = document.getElementById('slProfileAchievements');
-            if (ach) profileView.insertBefore(deck, ach);
-            else profileView.appendChild(deck);
-        }
-
-        let analyticsContainer = document.getElementById('slProfileAnalytics');
-        if (!analyticsContainer && profileView) {
-            analyticsContainer = document.createElement('div');
-            analyticsContainer.id = 'slProfileAnalytics';
-            const chem = document.getElementById('slProfileChemistry');
-            if (chem) profileView.insertBefore(analyticsContainer, chem);
-            else profileView.appendChild(analyticsContainer);
-        }
-
-        let chemContainer = document.getElementById('slProfileChemistry');
-        if (!chemContainer && profileView) {
-            chemContainer = document.createElement('div');
-            chemContainer.id = 'slProfileChemistry';
-            const ach = document.getElementById('slProfileAchievements');
-            if (ach) profileView.insertBefore(chemContainer, ach);
-            else profileView.appendChild(chemContainer);
-        }
-
-        if (deck) {
-            const career = passport.stats || { wins: 0, games: 0 };
-            const cWins  = career.wins || 0;
-            const cGames = career.games || 0;
-            const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-            const rating = me ? Math.round(me.rating || 1200) : 1200;
-            
-            let sWins = 0, sGames = 0, sWr = 0;
-            if (me) {
-                sWins = me.wins;
-                sGames = me.games;
-                sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
-            }
-
-            deck.innerHTML = `
-                <div class="sl-stats-deck">
-                    <div class="sl-stat-card ${!me ? 'inactive' : ''}">
-                        <div class="sl-card-label">CURRENT SESSION</div>
-                        ${me ? `
-                        <div class="sl-card-grid">
-                            <div class="sl-card-item">
-                                <div class="sl-card-val">${sWins}</div>
-                                <div class="sl-card-key">WINS</div>
-                            </div>
-                            <div class="sl-card-item">
-                                <div class="sl-card-val">${sGames}</div>
-                                <div class="sl-card-key">GAMES</div>
-                            </div>
-                            <div class="sl-card-item">
-                                <div class="sl-card-val">${sWr}%</div>
-                                <div class="sl-card-key">SESSION WR</div>
-                                <div class="sl-wr-track">
-                                    <div class="sl-wr-bar" style="width:${sWr}%"></div>
-                                </div>
-                            </div>
-                        </div>` : `<div class="sl-card-empty">Not in a session</div>`}
-                    </div>
-
-                    <div class="sl-stat-card">
-                        <div class="sl-card-label">CAREER RECORD</div>
-                        <div class="sl-card-grid">
-                            <div class="sl-card-item">
-                                <div class="sl-card-val">${cGames}</div>
-                                <div class="sl-card-key">TOTAL GAMES</div>
-                            </div>
-                            <div class="sl-card-item">
-                                <div class="sl-card-val">${cWr}%</div>
-                                <div class="sl-card-key">WIN RATE</div>
-                            </div>
-                            <div class="sl-card-item">
-                                <div class="sl-card-val">${rating}</div>
-                                <div class="sl-card-key">RATING</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>`;
-        }
 
         if (analyticsContainer && me) {
             // Rival Logic
