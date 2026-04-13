@@ -279,7 +279,7 @@ const SidelineView = {
         if (!match) return;
         const squad = window.squad || [];
         const passport = Passport.get();
-        const myName = passport?.playerName;
+        const myUUID = passport?.playerUUID;
 
         // Helpers to get stats
         const getStats = (teamUUIDs) => {
@@ -300,9 +300,11 @@ const SidelineView = {
         const statsB = getStats(tB);
         const odds = match.odds || [50, 50];
 
-        const renderNames = (arr) => arr.map(n => {
-            const isMe = myName && n.toLowerCase() === myName.toLowerCase();
-            return isMe ? `<strong style="color: var(--accent);">${this._esc(n)}</strong>` : this._esc(n);
+        const renderNames = (arr) => arr.map(uuid => {
+            const p = squad.find(x => x.uuid === uuid);
+            const name = p ? p.name : 'Unknown';
+            const isMe = myUUID && uuid === myUUID;
+            return isMe ? `<strong style="color: var(--accent);">${this._esc(name)}</strong>` : this._esc(name);
         }).join('<br>&amp;<br>');
 
         const html = `
@@ -1986,7 +1988,7 @@ const PlayerMode = {
 
             // Immediate notification to host:
             // This ensures the host sees your request in <100ms, bypassing DB polling latency.
-            if (typeof broadcastEvent === 'function') {
+            if (!data.alreadyRequested && typeof broadcastEvent === 'function') {
                 broadcastEvent('incoming_play_request', {
                     id: data.id,
                     name: passport.playerName,

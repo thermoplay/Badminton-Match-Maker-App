@@ -2638,21 +2638,18 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
 
     const winIdx  = m.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
-    const uuidMap = window._sessionUUIDMap || {};
     const label   = `Game ${mIdx + 1}`;
 
-    const resolveUUID = (name) => {
-        const member = StateStore.squad.find(p => p.name === name);
-        return member?.uuid || uuidMap[name] || null;
-    };
+    // Match objects store UUIDs now
+    const winnerUUIDs = m.teams[winIdx]  || [];
+    const loserUUIDs  = m.teams[loseIdx] || [];
 
-    const winnerNames = m.teams[winIdx]  || [];
-    const loserNames  = m.teams[loseIdx] || [];
-    const winnerUUIDs = winnerNames.map(resolveUUID).filter(Boolean);
-    const loserUUIDs  = loserNames .map(resolveUUID).filter(Boolean);
-
-    // 1. Broadcast match result (winner banner + haptic for players in this game)
+    const winnerNames = winnerUUIDs.map(uuid => {
+        const p = StateStore.squad.find(x => x.uuid === uuid);
+        return p ? p.name : 'Unknown';
+    });
     const winnerDisplayNames = winnerNames.join(' & ');
+
     if (typeof _broadcast === 'function' && isOnlineSession) {
         _broadcast('match_resolved', {
             winnerNames:  winnerDisplayNames,
