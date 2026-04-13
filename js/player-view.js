@@ -30,6 +30,7 @@ const SidelineView = {
                 this._initNetworkMonitor();
             this.refresh(); 
             this._startStalenessMonitor();
+            this._startTimerTick();
         }
     },
 
@@ -90,6 +91,26 @@ const SidelineView = {
                 if (container) container.classList.remove('sl-stale-data');
             }
         }, 5000);
+    },
+
+    _startTimerTick() {
+        if (this._tickTimer) clearInterval(this._startTimerTick);
+        this._tickTimer = setInterval(() => {
+            if (!this._visible) return;
+            const matches = window.currentMatches || [];
+            matches.forEach((m, i) => {
+                if (!m.startedAt || m.winnerTeamIndex !== null) return;
+                const el = document.querySelector(`[data-timer-id="${i}"]`);
+                if (!el) return;
+                
+                const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
+                const min = Math.floor(elapsed / 60);
+                const sec = elapsed % 60;
+                el.textContent = `⏱ ${min}:${sec.toString().padStart(2, '0')}`;
+                el.classList.toggle('sl-timer-warn', min >= 10);
+                el.classList.toggle('sl-timer-alert', min >= 15);
+            });
+        }, 1000);
     },
 
     _esc(s) {

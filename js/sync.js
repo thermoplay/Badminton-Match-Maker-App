@@ -462,10 +462,15 @@ const _doPushToSupabase = async () => {
         
         if (res.ok) {
             localStorage.removeItem('cs_pending_sync');
-            showSyncStatus('Saved to cloud', 'success');
+            
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+            window._lastSyncTime = timeStr;
+            
+            showSyncStatus(`Saved to cloud at ${timeStr}`, 'success');
             setTimeout(() => {
                 const el = document.getElementById('syncStatusMsg');
-                if (el && el.textContent === 'Saved to cloud') el.style.display = 'none';
+                if (el && el.textContent.includes('Saved to cloud')) el.style.display = 'none';
             }, 2000);
         }
     } catch (e) { 

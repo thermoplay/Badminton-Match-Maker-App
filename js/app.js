@@ -793,8 +793,9 @@ function showOverlay(type) {
 
     } else {
         title.innerText = 'Session Hub';
+        const syncMsg = window._lastSyncTime ? `Cloud Sync Active (Last: ${window._lastSyncTime})` : 'Syncing with cloud...';
         content.innerHTML = `
-            <div id="syncStatusMsg" class="sync-status" style="display:none;"></div>
+            <div id="syncStatusMsg" class="sync-status">${syncMsg}</div>
 
             ${isOnlineSession ? `
                 <div class="session-live-card">
@@ -2153,9 +2154,13 @@ function showPlayRequests() {
     const list  = document.getElementById('playRequestsList');
     if (!modal || !list) return;
 
+    const approveAllHTML = playRequests.length > 1 
+        ? `<button class="btn-main" style="margin-bottom:12px; background:var(--accent); color:#000; font-size:0.8rem; height:40px;" onclick="approveAllRequests()">✓ Approve All (${playRequests.length})</button>`
+        : '';
+
     list.innerHTML = playRequests.length === 0
         ? '<p style="text-align:center;color:var(--text-muted);padding:20px 0;">No pending requests.</p>'
-        : playRequests.map(r => `
+        : approveAllHTML + playRequests.map(r => `
             <div class="pr-row">
                 ${r.spirit_animal ? `<span style="font-size:1.2rem;margin-right:8px;">${r.spirit_animal}</span>` : ''}
                 <span class="pr-name">${escapeHTML(r.name)}</span>
@@ -2166,6 +2171,17 @@ function showPlayRequests() {
 
     modal.style.display = 'flex';
 }
+
+async function approveAllRequests() {
+    if (!window.playRequests || window.playRequests.length === 0) return;
+    const toApprove = [...window.playRequests];
+    closePlayRequests();
+    showSessionToast(`Processing ${toApprove.length} approvals...`);
+    for (const r of toApprove) {
+        await approvePlayRequest(r.name, r.id, r.player_uuid || null);
+    }
+}
+window.approveAllRequests = approveAllRequests;
 
 function closePlayRequests() {
     document.getElementById('playRequestsModal').style.display = 'none';

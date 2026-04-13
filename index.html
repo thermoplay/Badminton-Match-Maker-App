@@ -517,17 +517,18 @@
                     const statusTextEl = document.getElementById('slStatusText');
                     const statusSubEl  = document.getElementById('slStatusSub');
                     const matchesEl    = document.getElementById('slCurrentMatches');
+                    const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
                     if (passport && passport.playerName) {
-                        if (nameEl)   nameEl.textContent   = passport.playerName;
+                        if (nameEl)   nameEl.textContent   = esc(passport.playerName);
                         if (avatarEl) {
-                            avatarEl.textContent = passport.playerName.charAt(0).toUpperCase();
+                            avatarEl.textContent = (passport.playerName || '?').charAt(0).toUpperCase();
                             // Avatar color applied after polish.js loads (deferred)
                             requestAnimationFrame(() => {
                                 if (window.Avatar) avatarEl.style.background = Avatar.color(passport.playerName);
                             });
                         }
-                        if (statusTextEl) statusTextEl.textContent = 'Welcome back, ' + passport.playerName;
+                        if (statusTextEl) statusTextEl.textContent = 'Welcome back, ' + esc(passport.playerName);
                         if (statusSubEl)  statusSubEl.textContent  = 'Joining court…';
 
                         if (matchesEl && joinCode) {

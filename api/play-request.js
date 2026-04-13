@@ -86,15 +86,25 @@ export default async function handler(req, res) {
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = String(player_uuid).trim();
 
-        // 1. Verify Room Exists
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party&limit=1`);
+        // 1. Verify Room Exists and Fetch Metadata
+        // We fetch the squad array to check if the player is already "in the queue" (host's local state)
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party,squad&limit=1`);
         if (!sessionCheck.ok || !sessionCheck.data?.length) {
             return res.status(404).json({ error: 'Room not found' });
         }
 
-        const isOpenParty = !!sessionCheck.data[0]?.is_open_party;
+        const session = sessionCheck.data[0];
+        const isOpenParty = !!session.is_open_party;
+        const currentSquad = Array.isArray(session.squad) ? session.squad : [];
 
-        // NEW: Check if player is already a member (any status) in session_members
+        // Smart Recognition: Check if player is already in the host's squad list (the "Queue")
+        // This handles cases where the host added them manually (name match) or they rejoined (UUID match).
+        const inSquad = currentSquad.find(p => p.uuid === uuid || (p.name && p.name.toLowerCase() === trimmedName.toLowerCase()));
+        if (inSquad) {
+            return res.status(200).json({ alreadyActive: true, ok: true });
+        }
+
+        // 2. Check if player is already a member (any status) in session_members
         const existingMemberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
         const existingMemberStatus = existingMemberCheck.ok && existingMemberCheck.data?.length > 0 ? existingMemberCheck.data[0].status : null;
 
@@ -131,7 +141,13 @@ export default async function handler(req, res) {
             return res.status(200).json({ ok: true, status: existingMemberStatus, message: 'Player already a member, awaiting status change.' });
         }
 
-        // 4. Fallback: Create the notification request for the Host (Lobby Mode)
+        // 4. Duplicate Guard: Check if a play_request already exists for this player
+        const existingRequest = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&limit=1`);
+        if (existingRequest.ok && existingRequest.data?.length > 0) {
+            return res.status(200).json({ ok: true, status: 'pending', id: existingRequest.data[0].id, alreadyRequested: true });
+        }
+
+        // 5. Fallback: Create the notification request for the Host (Lobby Mode)
         const insertReq = await sbFetch('/play_requests', {
             method: 'POST',
             body: {
