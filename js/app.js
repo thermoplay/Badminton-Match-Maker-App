@@ -2833,6 +2833,9 @@ function showLandingPage() {
             <button class="btn-main" onclick="goToPlayerMode()" style="width:100%; background:var(--surface2); color:var(--text); height:60px; font-size:1.2rem; border:1px solid var(--border);">
                 Join as Player
             </button>
+            <button class="btn-main" onclick="openStandalonePassport()" style="width:100%; background:var(--bg2); color:var(--text); height:60px; font-size:1.2rem; border:1px solid var(--border); margin-top:16px;">
+                🪪 My Passport
+            </button>
         </div>
     `;
     document.body.appendChild(div);
@@ -2869,6 +2872,37 @@ window.closeLandingPage = function() {
     } else {
         // Host already has a name, _autoAddHostToSquad should have already run.
         doClose();
+    }
+};
+
+window.openStandalonePassport = function() {
+    const el = document.getElementById('landingPage');
+    if (el) el.remove();
+    
+    // Enter player mode layout context
+    document.body.classList.add('player-mode');
+    
+    if (typeof SidelineView !== 'undefined') {
+        SidelineView.show();
+        SidelineView.switchTab('profile');
+        
+        // Standalone UI Polish: focus on identity, not session state
+        const courtTab = document.querySelector('.sl-tab:first-child');
+        if (courtTab) courtTab.style.display = 'none';
+        
+        const statusCard = document.getElementById('slStatusCard');
+        if (statusCard) statusCard.style.display = 'none';
+        
+        // Add a Home button to the top bar for easy return to menu
+        const topbar = document.querySelector('.sl-topbar');
+        if (topbar && !document.getElementById('slHomeBtn')) {
+            const homeBtn = document.createElement('button');
+            homeBtn.id = 'slHomeBtn';
+            homeBtn.className = 'sl-icon-btn';
+            homeBtn.innerHTML = '🏠';
+            homeBtn.onclick = () => window.location.reload();
+            topbar.insertBefore(homeBtn, topbar.firstChild);
+        }
     }
 };
 
