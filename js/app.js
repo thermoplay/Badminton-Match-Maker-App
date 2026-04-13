@@ -223,6 +223,18 @@ function toggleOpenParty() {
 }
 window.toggleOpenParty = toggleOpenParty;
 
+function renderOpenPartyToggle() {
+    const el = document.getElementById('slOpenPartyToggle');
+    if (!el) return;
+    const isOpen = StateStore.get('isOpenParty');
+    el.className = `open-party-toggle ${isOpen ? 'is-open' : 'is-closed'}`;
+    el.innerHTML = isOpen 
+        ? `<span>🔓</span> OPEN PARTY` 
+        : `<span>🔒</span> LOBBY MODE`;
+}
+
+window.renderOpenPartyToggle = renderOpenPartyToggle;
+
 /**
  * Forces a reconciliation of the player queue with the active squad.
  * Useful for fixing edge-case ordering issues or missing players.
@@ -2430,16 +2442,6 @@ function ensureHostUI() {
     }
 
     // 1. Join Notification Toast (Popup)
-
-function renderOpenPartyToggle() {
-    const el = document.getElementById('slOpenPartyToggle');
-    if (!el) return;
-    const isOpen = StateStore.get('isOpenParty');
-    el.className = `open-party-toggle ${isOpen ? 'is-open' : 'is-closed'}`;
-    el.innerHTML = isOpen 
-        ? `<span>🔓</span> OPEN PARTY` 
-        : `<span>🔒</span> LOBBY MODE`;
-}
     if (!document.getElementById('joinNotification')) {
         const notif = document.createElement('div');
         notif.id = 'joinNotification';
