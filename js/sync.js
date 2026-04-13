@@ -796,9 +796,12 @@ function _handleBroadcast(payload) {
     // Player acknowledges: Host updates UI
     if (type === 'player_ack') {
         if (isOperator) {
-            const chip = document.querySelector(`.player-chip[data-uuid="${payload.playerUUID}"]`);
-            if (chip) chip.classList.add('player-acknowledged');
-            showSessionToast(`👍 Player acknowledged`);
+            const p = StateStore.squad.find(x => x.uuid === payload.playerUUID);
+            if (p) {
+                p.acknowledged = true;
+                StateStore.set('squad', [...StateStore.squad]);
+                showSessionToast(`👍 ${p.name} is on the way`);
+            }
         }
         return;
     }
@@ -942,7 +945,7 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
     
     // Reactive sync via StateStore ensures DB and spectators stay updated
-    StateStore.set('squad', StateStore.squad);
+    StateStore.set('squad', [...StateStore.squad]);
 
     // Force an immediate broadcast to bypass the 200ms throttle for real-time responsiveness
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
@@ -971,7 +974,7 @@ function _applySpiritAnimalUpdate(playerUUID, emoji) {
     if (player.spiritAnimal !== emoji) {
         player.spiritAnimal = emoji;
         renderSquad();
-        StateStore.set('squad', StateStore.squad);
+        StateStore.set('squad', [...StateStore.squad]);
 
         // Force immediate broadcast so profile updates feel instant for all spectators
         if (typeof broadcastGameState === 'function') broadcastGameState(true);
@@ -989,7 +992,7 @@ function _applyStatusUpdate(playerUUID, isActive) {
     if (oldStatus !== player.active) {
         renderSquad();
         checkNextButtonState();
-        StateStore.set('squad', StateStore.squad);
+        StateStore.set('squad', [...StateStore.squad]);
 
         // Force immediate broadcast so the Ready/Resting status updates instantly for everyone
         if (typeof broadcastGameState === 'function') broadcastGameState(true);
@@ -1136,7 +1139,7 @@ function applyRemoteState(session) {
             ]
         };
     });
-    const loadedQueue = (session.player_queue || []).filter(name => loadedSquad.find(p => p.name === name));
+    const loadedQueue = (session.player_queue || []).filter(uuid => loadedSquad.find(p => p.uuid === uuid));
     const loadedCourtNames = session.court_names || {};
     let loadedCourts = 1;
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
@@ -1670,7 +1673,7 @@ function _updateLatencyDisplay(ms) {
     el.style.color = color;
     
     // Signal icon + value
-    const icon = ms < 150 ? '📶' : (ms < 400 ? '📶' : '📶');
+    const icon = ms < 150 ? '📶' : (ms < 400 ? '⚠️' : '❗');
     const opacity = ms < 150 ? '1' : (ms < 400 ? '0.7' : '0.4');
     el.innerHTML = `<span style="opacity:${opacity}; margin-right:2px;">${icon}</span>${ms}ms`;
 }

@@ -162,12 +162,11 @@ function addPlayer() {
     });
     
     // Update state arrays
-    StateStore.squad.push(newPlayer);
     const newQueue = [...StateStore.playerQueue];
     if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
 
     // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
-    StateStore.set('squad', StateStore.squad);
+    StateStore.set('squad', [...StateStore.squad, newPlayer]);
     StateStore.set('playerQueue', newQueue);
 
     // Connectivity: Force an immediate push to Supabase so spectators see the new player instantly
@@ -321,7 +320,7 @@ function _autoAddHostToSquad() {
     const hostUUID = passport.playerUUID;
 
     // Check if a player with this UUID or name already exists.
-    const hostIsInSquad = StateStore.squad.some(p => (p.uuid && p.uuid === hostUUID) || p.name.toLowerCase() === hostName.toLowerCase());
+    const hostIsInSquad = StateStore.squad.some(p => p.uuid === hostUUID);
 
     if (!hostIsInSquad) {
         const hostAsPlayer = migratePlayer({ // Use migratePlayer to ensure all fields are present
@@ -329,13 +328,11 @@ function _autoAddHostToSquad() {
             uuid: hostUUID,
         });
         
-        StateStore.squad.unshift(hostAsPlayer); // Add to the front of the squad list
-        
-        if (!StateStore.playerQueue.includes(hostName)) {
-            StateStore.playerQueue.unshift(hostName); // Also add to front of queue
+        if (!StateStore.playerQueue.includes(hostUUID)) {
+            StateStore.playerQueue.unshift(hostUUID); // Also add to front of queue
         }
         
-        StateStore.set('squad', StateStore.squad); // Trigger sync
+        StateStore.set('squad', [hostAsPlayer, ...StateStore.squad]); // Trigger sync
         renderSquad(); // Re-render the squad list to show the new player
         showSessionToast(`👋 Welcome, ${hostName}! You've been added to the squad.`);
     }
@@ -355,6 +352,11 @@ function _removePlayerFromLocalState(playerIndex) {
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];
         if (removedName) delete window._approvedPlayers[removedName];
+    }
+
+    if (window._sessionUUIDMap) {
+        if (removedName) delete window._sessionUUIDMap[removedName];
+        if (removedUUID) { /* reversed lookup if needed, but key is name */ }
     }
 
     if (typeof playRequests !== 'undefined' && removedUUID) {
@@ -482,7 +484,7 @@ function renderSquad() {
             ${waitBadge}
         `;
         const isSwapping = p.uuid === swapSourceUUID;
-        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''}`;
+        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''}`;
 
         let chip = existingChips.get(p.uuid);
 
@@ -623,7 +625,7 @@ function togglePlayerActive(uuid) {
     checkNextButtonState();
 
     // Trigger reactive sync and immediate broadcast
-    StateStore.set('squad', StateStore.squad);
+    StateStore.set('squad', [...StateStore.squad]);
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
 }
 
@@ -2015,6 +2017,16 @@ let _lastSeenRequestIds = new Set();
 let _pollingInterval = null;
 let _isPolling = false;
 
+function _isPlayerAlreadyInSession(record) {
+    if (!record) return null;
+    const uuidMap = window._sessionUUIDMap || {};
+    return StateStore.squad.find(p => 
+        (record.player_uuid && p.uuid === record.player_uuid) || 
+        (p.name.toLowerCase() === (record.name || '').toLowerCase()) ||
+        (record.player_uuid && uuidMap[record.name] === record.player_uuid)
+    );
+}
+
 async function pollPlayRequests() {
     if (_isPolling || !isOnlineSession || !isOperator || !currentRoomCode) return;
     _isPolling = true;
@@ -2032,14 +2044,7 @@ async function pollPlayRequests() {
                 // Always mark as seen immediately to prevent race-induced duplicate processing
                 _lastSeenRequestIds.add(r.id);
 
-                // BUG FIX: Check if player is already in the squad before alerting host.
-                const uuidMap = window._sessionUUIDMap || {};
-                const existing = StateStore.squad.find(p => 
-                    (r.player_uuid && p.uuid === r.player_uuid) || 
-                    (p.name.toLowerCase() === r.name.toLowerCase()) ||
-                    (r.player_uuid && uuidMap[r.name] === r.player_uuid) ||
-                    (r.name && StateStore.playerQueue.includes(r.name)) // Proactive queue check
-                );
+                const existing = _isPlayerAlreadyInSession(r);
 
                 if (existing) {
                     console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad)`);
@@ -2226,13 +2231,15 @@ async function handleAutoJoin(name, playerUUID) {
 
     const player = _resolvePlayerForSession(name, playerUUID);
     player.active = true;
+    player.acknowledged = false;
 
-    const existingInSquad = StateStore.squad.find(p => p.uuid === player.uuid);
-    if (!existingInSquad) {
-        StateStore.squad.push(player);
+    let newSquad = [...StateStore.squad];
+    const existingIdx = newSquad.findIndex(p => p.uuid === player.uuid);
+    
+    if (existingIdx === -1) {
+        newSquad.push(player);
     } else {
-        // Update name/spirit animal if we already knew them but they were inactive
-        existingInSquad.name = name;
+        newSquad[existingIdx].name = name;
     }
 
     // Refresh achievements in background
@@ -2246,7 +2253,7 @@ async function handleAutoJoin(name, playerUUID) {
     let newQueue = [...StateStore.playerQueue];
     if (!newQueue.includes(player.uuid)) newQueue.push(player.uuid);
 
-    StateStore.setState({ squad: StateStore.squad, playerQueue: newQueue });
+    StateStore.setState({ squad: newSquad, playerQueue: newQueue });
     renderSquad();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
     
@@ -2369,14 +2376,7 @@ window.onPlayRequestInsert = function(record) {
     if (!_lastSeenRequestIds.has(record.id)) {
         _lastSeenRequestIds.add(record.id);
 
-        // BUG FIX: Same duplicate guard for realtime events
-        const uuidMap = window._sessionUUIDMap || {};
-        const existing = StateStore.squad.find(p => 
-            (record.player_uuid && p.uuid === record.player_uuid) || 
-            (p.name.toLowerCase() === record.name.toLowerCase()) ||
-            (record.player_uuid && uuidMap[record.name] === record.player_uuid) ||
-            (record.name && StateStore.playerQueue.includes(record.name)) // Proactive queue check
-        );
+        const existing = _isPlayerAlreadyInSession(record);
 
         if (existing) {
             // Adopt real UUID for manual additions triggered by realtime events

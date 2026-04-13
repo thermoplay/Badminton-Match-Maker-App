@@ -112,7 +112,9 @@ const SidelineView = {
 
         container.style.display = 'flex';
         const squad = window.squad || [];
-        const findP = (uuid) => squad.find(p => p.uuid === uuid);
+        const squadMap = new Map(squad.map(p => [p.uuid, p]));
+        const findP = (uuid) => squadMap.get(uuid);
+        const myUUID = Passport.get()?.playerUUID;
 
         const fragment = document.createDocumentFragment();
         const existingMiniCourts = new Map();
@@ -126,7 +128,7 @@ const SidelineView = {
             const tB = (m.teams[1] || []).map(u => findP(u)).filter(Boolean);
             
             const renderIcons = (team) => team.map(p => Avatar.html(p.name, p.spiritAnimal)).join('');
-            const isPlaying = (m.teams.flat().includes(Passport.get()?.playerUUID));
+            const isPlaying = myUUID && m.teams.flat().includes(myUUID);
 
             const courtContent = `
                 <div class="sl-mini-team">${renderIcons(tA)}</div>
@@ -179,12 +181,13 @@ const SidelineView = {
             }
             return;
         }
-        const passport = Passport.get();
-        const myUUID   = passport?.playerUUID;
+        const myUUID = Passport.get()?.playerUUID;
 
         const courtNames = window.courtNames || {};
         const squad = window.squad || [];
-        const findP = (uuid) => squad.find(p => p.uuid === uuid);
+        
+        const squadMap = new Map(squad.map(p => [p.uuid, p]));
+        const findP = (uuid) => squadMap.get(uuid);
 
         const fragment = document.createDocumentFragment();
         const existingMatchCards = new Map();
@@ -387,12 +390,11 @@ const SidelineView = {
 
         // Parse names and render with avatars if Avatar is available
         if (window.Avatar) {
-            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
             const names = text.split(/\s*[,&]\s*/).map(n => n.trim()).filter(Boolean);
             const newHTML = names.map(name =>
                 `<span class="sl-next-avatar-chip">
-                    <span class="sl-next-avatar" style="background:${Avatar.color(name)}">${esc(Avatar.initials(name))}</span>
-                    <span class="sl-next-name">${esc(name)}</span>
+                    <span class="sl-next-avatar" style="background:${Avatar.color(name)}">${this._esc(Avatar.initials(name))}</span>
+                    <span class="sl-next-name">${this._esc(name)}</span>
                 </span>`
             ).join('<span class="sl-next-sep">·</span>');
             if (el.innerHTML.trim() !== newHTML.trim()) {
@@ -2454,8 +2456,7 @@ function _showYoureUpBanner(courtNum, partnerName) {
         borderRadius:    '0 0 16px 16px',
     });
     
-    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&#39;'}[c])));
-    const safePartner = partnerName ? esc(partnerName) : '';
+    const safePartner = partnerName ? SidelineView._esc(partnerName) : '';
     banner.innerHTML = `
         <div style="font-size:0.75rem; font-weight:900; letter-spacing:1px; opacity:0.8; margin-bottom:4px;">YOU'RE UP</div>
         <div style="font-size:1.8rem; font-weight:900; line-height:1; margin-bottom:8px; font-style:italic;">COURT ${courtNum || '?'}</div>

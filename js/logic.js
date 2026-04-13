@@ -14,7 +14,7 @@ let _lastSquadForCache = null;
 
 /** Finds a player object by UUID. Returns undefined if not found. */
 function findP(uuid) {
-    if (_lastSquadForCache !== StateStore.squad || _findPCache.size === 0) {
+    if (_lastSquadForCache !== StateStore.squad || _findPCache.size !== StateStore.squad.length) {
         _findPCache = new Map(StateStore.squad.map(p => [p.uuid, p]));
         _lastSquadForCache = StateStore.squad;
     }
@@ -102,6 +102,7 @@ function _recordMatchStats(match, timestamp = Date.now()) {
 
     allPlayers.forEach(p => {
         p.sessionPlayCount++;
+        p.acknowledged = false; // Clear "I'm coming" status once game is recorded
         
         // Performance Lab: Record match for history list using UUIDs
         const isTeamA = tA.includes(p);
@@ -165,6 +166,8 @@ function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     const newMatch = buildMatchFromPlayers(next4);
     StateStore.currentMatches[mIdx] = newMatch;
 
+    next4.forEach(p => p.acknowledged = false);
+
     const tA = newMatch.teams[0].map(u => findP(u)).filter(Boolean);
     const tB = newMatch.teams[1].map(u => findP(u)).filter(Boolean);
     const cardEl = document.getElementById(`match-${mIdx}`);
@@ -189,8 +192,8 @@ function _finalizeCourtResultUpdate(lastResolvedTS = Date.now(), playerUUIDs = n
     updateUndoButton();
     // Trigger sync for both matches and squad since ratings/history updated
     StateStore.setState({
-        currentMatches: StateStore.currentMatches,
-        squad: StateStore.squad
+        currentMatches: [...StateStore.currentMatches],
+        squad: [...StateStore.squad]
     });
 
     // Connectivity Improvement: Force immediate sync to cloud on match resolution.
@@ -225,7 +228,7 @@ async function processCourtResult(mIdx) {
      // Connectivity Durability: Trigger a state save and broadcast immediately.
     // This ensures that if the host reloads or achievement processing is slow,
     // the ELO ratings are already persisted and visible to spectators.
-    StateStore.set('squad', StateStore.squad);
+        StateStore.set('squad', [...StateStore.squad]);
     // 3. Award achievements and capture results for the batch sync
     const newlyUnlocked = await checkAndAwardAchievements(match, StateStore.squad);
 
@@ -351,18 +354,24 @@ function applyELOForMatch(m) {
 // ---------------------------------------------------------------------------
 
 function initQueue() {
-    const activeUUIDs = StateStore.squad.filter(p => p.active).map(p => p.uuid);
+     const activeSquad = StateStore.squad.filter(p => p.active);
+    const activeUUIDs = activeSquad.map(p => p.uuid);
 
-    // Keep existing queue order for names already in it — only append newcomers
-    const inQueue  = new Set(StateStore.playerQueue);
-    const newUUIDs = activeUUIDs.filter(u => !inQueue.has(u));
+    // 1. Process current queue: Resolve names to UUIDs and filter out inactive
+    let currentQueue = (StateStore.playerQueue || []).map(item => {
+        const p = StateStore.squad.find(x => x.uuid === item || x.name === item);
+        return (p && p.active) ? p.uuid : null;
+    }).filter(Boolean);
 
-    // Remove names no longer in the active squad
-    const newQueue = StateStore.playerQueue.filter(u => StateStore.squad.find(p => p.uuid === u && p.active));
+    // Ensure uniqueness
+    currentQueue = [...new Set(currentQueue)];
 
-    // Append newcomers at the back and update the store
-    newQueue.push(...newUUIDs);
-    StateStore.set('playerQueue', newQueue);
+    // 2. Add active players not yet in queue
+    const inQueueSet = new Set(currentQueue);
+    const newcomers = activeUUIDs.filter(u => !inQueueSet.has(u));
+
+    const finalQueue = [...currentQueue, ...newcomers];
+    StateStore.set('playerQueue', finalQueue);
 }
 
 // ---------------------------------------------------------------------------
@@ -659,7 +668,8 @@ function _renderAndFinalizeGeneration(matchData) {
     renderQueueStrip();
     checkNextButtonState();
     renderSquad();
-    StateStore.set('currentMatches', StateStore.currentMatches);
+    StateStore.set('currentMatches', [...StateStore.currentMatches]);
+    if (typeof broadcastGameState === 'function') broadcastGameState(true);
     Haptic.bump();
 }
 
