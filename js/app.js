@@ -836,7 +836,7 @@ function showOverlay(type) {
                 <div class="sh-section">
                     <div class="sync-section-label">Navigation</div>
                     <div class="sh-grid">
-                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="window.location.href=window.location.origin + window.location.pathname">🏠 Home Menu</button>
+                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
                     </div>
                 </div>
 
@@ -849,7 +849,8 @@ function showOverlay(type) {
                     <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
                         Start a live session to sync with players in real-time.
                     </p>
-                    <button class="btn-main" style="width:100%; height:54px;" onclick="createOnlineSession()">🌐 Start Live Session</button>
+                                        <button class="btn-main sh-btn-sub" style="width:100%;" onclick="goToMainMenu()">🏠 Home Menu</button>
+
                 </div>
 
                 <div class="sh-section">
@@ -2814,6 +2815,7 @@ function spectateOnly() {
 
 function showLandingPage() {
     if (document.getElementById('landingPage')) return;
+    if (typeof closeOverlay === 'function') closeOverlay();
     const div = document.createElement('div');
     div.id = 'landingPage';
     div.className = 'actionMenu'; // Reuse modal style
@@ -2840,6 +2842,7 @@ function showLandingPage() {
     `;
     document.body.appendChild(div);
 }
+window.goToMainMenu = showLandingPage;
 
 window.closeLandingPage = function() {
     const el = document.getElementById('landingPage');
@@ -2900,7 +2903,7 @@ window.openStandalonePassport = function() {
             homeBtn.id = 'slHomeBtn';
             homeBtn.className = 'sl-icon-btn';
             homeBtn.innerHTML = '🏠';
-            homeBtn.onclick = () => window.location.reload();
+            homeBtn.onclick = () => goToMainMenu();
             topbar.insertBefore(homeBtn, topbar.firstChild);
         }
     }
