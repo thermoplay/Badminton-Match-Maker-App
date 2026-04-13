@@ -834,8 +834,8 @@ const SidelineView = {
 
             const leaveBtn = document.createElement('button');
             leaveBtn.className = 'sl-leave-btn';
-            leaveBtn.textContent = 'Leave Session';
-            leaveBtn.onclick = () => PlayerMode.leaveSession(); // Direct binding fixes scope issue
+            leaveBtn.textContent = 'End Session';
+            leaveBtn.onclick = () => PlayerMode.confirmEndSession();
 
             const hint = document.createElement('p');
             hint.className = 'sl-leave-hint';
@@ -1095,65 +1095,56 @@ const PlayerMode = {
         this._promptForCode();
     },
 
-    leaveSession() {
-        const doLeave = () => {
-            const passport = Passport.get();
-            
-            // Recover code if missing (e.g. after reload) so we can leave properly
-            if (!this._joinCode) {
-                this._joinCode = localStorage.getItem('cs_player_room_code');
-            }
+    confirmEndSession() {
+        UIManager.confirm({
+            title: 'End Session?',
+            message: 'You will be removed from the rotation and see your session results.',
+            confirmText: 'End Session',
+            isDestructive: true,
+            onConfirm: () => {
+                const passport = Passport.get();
+                const code = this._joinCode || localStorage.getItem('cs_player_room_code') || window.currentRoomCode;
 
-            // 1. Notify host that we are leaving
-            if (passport && this._joinCode) {
-            // The correct pattern is to broadcast our intent to leave. The host
-            // receives this broadcast and performs a secure, authenticated removal
-            // of the player from the session. We no longer make a direct,
-            // unauthenticated API call to delete the session_members row.
-            try {
-                if (typeof window.broadcastPlayerLeaving === 'function') {
-                    window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
+                // 1. Calculate local recap before state is cleared
+                const squad = window.squad || [];
+                const sorted = [...squad].sort((a,b) => b.wins - a.wins || b.rating - a.rating);
+                const mvp = sorted[0] || { name: 'N/A', wins: 0, games: 0 };
+                const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
+                const ironMan = sortedByGames[0] || { name: 'N/A', sessionPlayCount: 0 };
+                const sortedByStreak = [...squad].sort((a,b) => b.streak - a.streak);
+                const hotHand = sortedByStreak[0] || { name: 'N/A', streak: 0 };
+
+                const recapData = {
+                    totalGames: '—',
+                    mvp: { name: mvp.name, wins: mvp.wins, games: mvp.games },
+                    ironMan: { name: ironMan.name, sessionPlayCount: ironMan.sessionPlayCount },
+                    hotHand: { name: hotHand.name, streak: hotHand.streak },
+                    sharpShooter: { name: '—', wr: 0 },
+                    squad: sorted.slice(0, 10)
+                };
+
+                // 2. Notify host that we are leaving
+                if (passport && code) {
+                    try {
+                        if (typeof window.broadcastPlayerLeaving === 'function') {
+                            window.broadcastPlayerLeaving(passport.playerUUID, passport.playerName);
+                        }
+                    } catch (e) {}
                 }
-            } catch (e) {
-                console.error('[CourtSide] Failed to broadcast leaving event. Leaving locally anyway.', e);
-            }
-            }
 
-            // 2. Clean up local state
-            clearInterval(this._statePollTimer);
-            this._clearJoinRetryTimer();
-            localStorage.removeItem('cs_player_room_code');
-            this._clearApprovedInSession(this._joinCode);
-
-            // Clear local session data so the landing page (menu) appears on reload
-            if (typeof StateStore !== 'undefined') {
-                StateStore.setState({ squad: [], currentMatches: [], playerQueue: [], roundHistory: [] });
-            }
-
-            // 3. Reset UI by reloading. Give broadcast a moment to send.
-            if (typeof showSessionToast === 'function') showSessionToast('👋 You have left the session.');
-            setTimeout(() => { window.location.href = window.location.origin + window.location.pathname; }, 500);
-        };
-
-        try {
-            if (typeof window.UIManager !== 'undefined') {
-                UIManager.confirm({
-                    title: 'Leave Session?',
-                    message: 'You will be removed from the rotation. You can rejoin later.',
-                    confirmText: 'Yes, Leave',
-                    isDestructive: true,
-                    onConfirm: doLeave
-                });
-            } else {
-                if (confirm('Are you sure you want to leave this session? You will be removed from the rotation.')) {
-                    doLeave();
+                // 3. Clean up local state
+                clearInterval(this._statePollTimer);
+                this._clearJoinRetryTimer();
+                localStorage.removeItem('cs_player_room_code');
+                this._clearApprovedInSession(code);
+                if (typeof StateStore !== 'undefined') {
+                    StateStore.setState({ squad: [], currentMatches: [], playerQueue: [], roundHistory: [] });
                 }
+
+                // 4. Show Recap
+                SidelineView.showRecap(recapData);
             }
-        } catch (e) {
-            if (confirm('Are you sure you want to leave this session? You will be removed from the rotation.')) {
-                doLeave();
-            }
-        }
+        });
     },
 
     _onRemovedFromSession() {
@@ -2363,14 +2354,11 @@ const PlayerMode = {
                     </button>
                     ` : ''}
 
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-                        <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="window.location.href=window.location.origin + window.location.pathname">🏠 HOME</button>
-                        <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="PlayerMode.shareRoomCode()">🔗 SHARE</button>
-                    </div>
+                    <button class="btn-main" style="background:var(--surface2); color:var(--text); font-size:0.8rem; height: 50px;" onclick="PlayerMode.shareRoomCode()">🔗 SHARE</button>
 
                     <div style="height:1px; background:var(--border); margin:8px 0;"></div>
                     
-                    <button class="btn-main btn-danger" style="height: 50px;" onclick="UIManager.hide(); PlayerMode.leaveSession();">🏃 LEAVE SESSION</button>
+                    <button class="btn-main btn-danger" style="height: 50px;" onclick="UIManager.hide(); PlayerMode.confirmEndSession();">🏃 END SESSION</button>
                 </div>
                 <button class="btn-cancel" onclick="UIManager.hide()">Close</button>
             </div>

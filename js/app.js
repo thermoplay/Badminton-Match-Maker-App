@@ -232,7 +232,7 @@ function renderOpenPartyToggle() {
         ? `<span>🔓</span> OPEN PARTY` 
         : `<span>🔒</span> LOBBY MODE`;
 }
-
+    
 window.renderOpenPartyToggle = renderOpenPartyToggle;
 
 /**
@@ -836,8 +836,7 @@ function showOverlay(type) {
                 <div class="sh-section">
                     <div class="sync-section-label">Navigation</div>
                     <div class="sh-grid">
-                        <button class="btn-main sh-btn-sub" onclick="window.location.href='?role=player&join='+(window.currentRoomCode||'')">🏃 Player View</button>
-                        <button class="btn-main sh-btn-sub" onclick="window.location.href=window.location.origin + window.location.pathname">🏠 Home Menu</button>
+                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="window.location.href=window.location.origin + window.location.pathname">🏠 Home Menu</button>
                     </div>
                 </div>
 
@@ -877,11 +876,6 @@ function showOverlay(type) {
                 <div class="sh-section" style="text-align:center; padding-top:10px;">
                     <button class="btn-main btn-danger" style="width:auto; display:inline-flex; padding:8px 16px; font-size:0.7rem; height:auto; min-height:auto;"
                         onclick="confirmEraseAllData()">WIPE ALL LOCAL DATA</button>
-                </div>
-
-                <div class="sh-section">
-                    <div class="sync-section-label">Navigation</div>
-                    <button class="btn-main sh-btn-sub" style="width:100%;" onclick="goToPlayerMode()">Switch to Player Mode</button>
                 </div>
 
                 ${_supportSectionHTML()}
