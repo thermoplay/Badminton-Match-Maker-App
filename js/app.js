@@ -347,7 +347,7 @@ function _removePlayerFromLocalState(playerIndex) {
     const newSquad = [...StateStore.squad];
     newSquad.splice(playerIndex, 1);
     const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedUUID));
-    const newQueue = StateStore.playerQueue.filter(u => u !== removedUUID);
+    const newQueue = StateStore.playerQueue.filter(u => u !== removedUUID && u !== removedName);
 
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];

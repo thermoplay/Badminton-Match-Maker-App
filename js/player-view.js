@@ -1102,6 +1102,11 @@ const PlayerMode = {
             localStorage.removeItem('cs_player_room_code');
             this._clearApprovedInSession(this._joinCode);
 
+            // Clear local session data so the landing page (menu) appears on reload
+            if (typeof StateStore !== 'undefined') {
+                StateStore.setState({ squad: [], currentMatches: [], playerQueue: [], roundHistory: [] });
+            }
+
             // 3. Reset UI by reloading. Give broadcast a moment to send.
             if (typeof showSessionToast === 'function') showSessionToast('👋 You have left the session.');
             setTimeout(() => { window.location.href = window.location.origin + window.location.pathname; }, 500);
@@ -1132,6 +1137,11 @@ const PlayerMode = {
         clearInterval(this._statePollTimer);
         localStorage.removeItem('cs_player_room_code');
         this._clearApprovedInSession(this._joinCode);
+
+        // Clear local session data so the landing page (menu) appears on reload
+        if (typeof StateStore !== 'undefined') {
+            StateStore.setState({ squad: [], currentMatches: [], playerQueue: [], roundHistory: [] });
+        }
 
         if (typeof showSessionToast === 'function') {
             showSessionToast('You have been removed from the session.');
