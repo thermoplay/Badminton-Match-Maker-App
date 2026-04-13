@@ -505,6 +505,17 @@ input:focus {
     border-color: rgba(0,255,163,0.45);
 }
 
+.player-chip.player-acknowledged {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    animation: ackGlow 2s infinite;
+}
+
+@keyframes ackGlow {
+    0%, 100% { box-shadow: 0 0 5px var(--accent); }
+    50% { box-shadow: 0 0 15px var(--accent); }
+}
+
 .player-chip.resting {
     opacity: 0.28;
     border: 1.5px dashed #333345;

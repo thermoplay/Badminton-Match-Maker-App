@@ -7,18 +7,27 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function sbFetch(path, options = {}) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
-        headers: {
-            'apikey':        SUPABASE_KEY,
-            'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Content-Type':  'application/json',
-            'Prefer':        options.prefer || 'return=minimal',
-        },
-        method: options.method || 'GET',
-        body:   options.body ? JSON.stringify(options.body) : undefined,
-    });
-    const text = await res.text();
-    return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 9000);
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+            headers: {
+                'apikey':        SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`,
+                'Content-Type':  'application/json',
+                'Prefer':        options.prefer || 'return=minimal',
+            },
+            method: options.method || 'GET',
+            body:   options.body ? JSON.stringify(options.body) : undefined,
+            signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        const text = await res.text();
+        return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null };
+    } catch (e) {
+        clearTimeout(timeout);
+        throw e;
+    }
 }
 
 export default async function handler(req, res) {
@@ -89,9 +98,9 @@ export default async function handler(req, res) {
     // ── NORMALIZE: Sync career stats to global 'players' table ──────────────
     // Update the master registry with latest career ratings and achievements.
     // This ensures stats are preserved even after a session is deleted.
-    for (const p of incomingSquad) {
-        if (!p.uuid) continue;
-        await sbFetch(`/players?uuid=eq.${encodeURIComponent(p.uuid)}`, {
+    const playerRegistryTasks = incomingSquad
+        .filter(p => p.uuid)
+        .map(p => sbFetch(`/players?uuid=eq.${encodeURIComponent(p.uuid)}`, {
             method: 'PATCH',
             body: {
                 rating:       p.rating,
@@ -101,8 +110,9 @@ export default async function handler(req, res) {
                 spirit_animal: p.spiritAnimal || null,
                 last_active:  new Date().toISOString()
             }
-        });
-    }
+        }));
+    
+    if (playerRegistryTasks.length > 0) await Promise.all(playerRegistryTasks);
 
     // Key matches — apply the update
     const updateResult = await sbFetch(

@@ -95,7 +95,7 @@ export default async function handler(req, res) {
         // persistent type mismatch errors. Standard calls handle strings better.
         
         // 1. Verify Room Exists
-        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code&limit=1`);
+                const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party&limit=1`);
         if (!sessionCheck.ok || !sessionCheck.data?.length) {
             return res.status(404).json({ error: 'Room not found' });
         }
@@ -106,7 +106,28 @@ export default async function handler(req, res) {
             return res.status(200).json({ alreadyActive: true, ok: true });
         }
 
-        // 3. Create the notification request for the Host
+        const isOpenParty = !!sessionCheck.data[0]?.is_open_party;
+
+        // 3. If Open Party is ON, bypass play_requests and go straight to session_members as active
+        if (isOpenParty) {
+            const autoApprove = await sbFetch('/session_members', {
+                method: 'POST',
+                prefer: 'resolution=merge-duplicates',
+                body: {
+                    room_code: code,
+                    player_uuid: uuid,
+                    player_name: trimmedName,
+                    spirit_animal: spirit_animal || null,
+                    status: 'active',
+                    approved_at: new Date().toISOString()
+                }
+            });
+            if (autoApprove.ok) {
+                return res.status(200).json({ ok: true, status: 'active', autoApproved: true });
+            }
+        }
+
+        // 4. Fallback: Create the notification request for the Host (Lobby Mode)
         const insertReq = await sbFetch('/play_requests', {
             method: 'POST',
             body: {
@@ -119,7 +140,10 @@ export default async function handler(req, res) {
 
         if (!insertReq.ok) return res.status(500).json({ error: 'Failed to send join request' });
 
-        return res.status(200).json({ ok: true, status: 'pending' });
+        // Return the created ID so the broadcast event can include it for the host
+        const newRequest = insertReq.data?.[0];
+
+        return res.status(200).json({ ok: true, status: 'pending', id: newRequest?.id });
     }
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {

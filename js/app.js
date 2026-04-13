@@ -429,6 +429,13 @@ window.removePlayerFromSession = removePlayerFromSession;
 // RENDERING
 // ---------------------------------------------------------------------------
 
+const _debouncedSquadRender = debounce(() => renderSquad(), 150);
+
+window.handleSquadSearch = (val) => {
+    window.squadSearchQuery = val;
+    _debouncedSquadRender();
+};
+
 function renderSquad() {
     const container = document.getElementById('squadList');
     if (!container) return;
@@ -441,7 +448,7 @@ function renderSquad() {
         searchWrap.style.marginBottom = '12px';
         searchWrap.innerHTML = ` 
             <input type="text" id="squadSearchInput" placeholder="Search players..." 
-                   style="flex:1;" oninput="window.squadSearchQuery = this.value; renderSquad();">
+                   style="flex:1;" oninput="window.handleSquadSearch(this.value)">
         `;
         container.parentNode.insertBefore(searchWrap, container);
         searchInput = document.getElementById('squadSearchInput');
@@ -463,11 +470,11 @@ function renderSquad() {
     const fragment = document.createDocumentFragment();
 
     StateStore.squad.forEach((p, idx) => {
-        // Apply search filter
-        if (query && !p.name.toLowerCase().includes(query)) return;
-
         const isNew = p.games === 0 && p.wins === 0;
         currentSquadUUIDs.add(p.uuid); // Add to set of UUIDs that should be present
+
+        const isMatch = !query || p.name.toLowerCase().includes(query);
+
         const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
@@ -488,6 +495,7 @@ function renderSquad() {
             if (chip.innerHTML.trim() !== chipContent.trim()) { // Trim to ignore whitespace differences
                 chip.innerHTML = chipContent;
             }
+            chip.style.display = isMatch ? '' : 'none';
             existingChips.delete(p.uuid);
         } else {
             // Chip does not exist, create it
@@ -495,6 +503,7 @@ function renderSquad() {
             newChip.className = chipClasses;
             newChip.dataset.uuid = p.uuid;
             newChip.innerHTML = chipContent;
+            newChip.style.display = isMatch ? '' : 'none';
             newChip.addEventListener('mousedown', () => startPress(p.uuid));
             newChip.addEventListener('mouseup', () => endPress(p.uuid));
             newChip.addEventListener('touchstart', () => startPress(p.uuid));
@@ -511,17 +520,9 @@ function renderSquad() {
 
     // Handle removal of chips that are no longer in the squad or are filtered out
     existingChips.forEach(chip => { // These are chips that were in the DOM but not in the current render pass
-        if (!currentSquadUUIDs.has(chip.dataset.uuid)) { // Truly removed from squad
-            chip.classList.add('player-chip-removing');
-            chip.addEventListener('animationend', () => chip.remove(), { once: true });
-        } else { // Still in squad but filtered out by search
-            chip.style.display = 'none';
-        }
-    });
-    container.querySelectorAll('.player-chip').forEach(chip => { // Ensure visible chips are displayed
-        if (currentSquadUUIDs.has(chip.dataset.uuid) && (!query || chip.textContent.toLowerCase().includes(query))) {
-            chip.style.display = ''; // Show it
-        }
+        // These are chips for players NO LONGER in the StateStore.squad
+        chip.classList.add('player-chip-removing');
+        chip.addEventListener('animationend', () => chip.remove(), { once: true });
     });
 }
 
@@ -663,12 +664,22 @@ function openMenu(uuid) {
         swapActionHTML = `<button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="initiateSwap('${p.uuid}')">⇄ Swap Position</button>`;
     }
 
+    let pokeActionHTML = '';
+    if (isPlaying && !swapSourceUUID) {
+        pokeActionHTML = `
+            <button class="btn-main menu-btn" style="background:var(--bg2); color:var(--warning); border:1px solid var(--warning);" onclick="broadcastPoke('${p.uuid}'); closeMenu();">
+                ⚡ Poke Player
+            </button>`;
+    }
+
     menu.innerHTML = `
         <div class="menu-card">
             <h2>${escapeHTML(p.name)}</h2>
             <p>${p.active ? (isPlaying ? 'Currently Playing 🏸' : 'Ready for Rotation') : 'Taking a Break ☕'}</p>
             
             ${swapActionHTML}
+
+            ${pokeActionHTML}
 
             <button class="btn-main menu-btn" onclick="toggleRestingState()">
                 ${p.active ? 'Take a Break ☕' : 'Return to Play'}
@@ -1097,36 +1108,6 @@ function copySyncToken() {
     }
 }
 
-async function copyInviteLink() {
-    if (!currentRoomCode) return;
-    const url = window.location.origin + window.location.pathname + '?join=' + currentRoomCode + '&role=player';
-    
-    const shareData = {
-        title: 'CourtSide Pro Session',
-        text: `Check-in to our badminton session early! Room Code: ${currentRoomCode}`,
-        url: url
-    };
-
-    // Use native share sheet if available (easier for FB/Messenger)
-    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
-        try {
-            await navigator.share(shareData);
-            return;
-        } catch (e) {
-            if (e.name !== 'AbortError') console.error('Share failed', e);
-        }
-    }
-
-    // Fallback to clipboard
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(url)
-            .then(() => showSessionToast('🔗 Invite link copied!'))
-            .catch(() => fallbackCopy(url, '🔗 Invite link copied!'));
-    } else {
-        fallbackCopy(url, '🔗 Invite link copied!');
-    }
-}
-
 function fallbackCopy(text, msg = '📋 Token copied!') {
     const ta = document.createElement('textarea');
     ta.value = text;
@@ -1296,6 +1277,23 @@ function confirmEraseAllData() {
 // ---------------------------------------------------------------------------
 // UTILITIES
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns a function that, as long as it continues to be invoked, will not
+ * be triggered. The function will be called after it stops being called for
+ * N milliseconds.
+ */
+function debounce(fn, delay) {
+    let timeoutId = null;
+    const debounced = (...args) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn(...args), delay);
+    };
+    debounced.cancel = () => { if (timeoutId) clearTimeout(timeoutId); timeoutId = null; };
+    return debounced;
+}
+
+window.debounce = debounce;
 
 function escapeHTML(str) {
     return String(str)
@@ -2214,6 +2212,48 @@ function _resolvePlayerForSession(name, incomingUUID) {
 
     return player;
 }
+window._resolvePlayerForSession = _resolvePlayerForSession;
+
+/**
+ * Handles a player joining via Open Party (no approval required).
+ * Reuses logic from approvePlayRequest without the deletion step.
+ */
+async function handleAutoJoin(name, playerUUID) {
+    if (!window.isOperator) return;
+    
+    // Avoid duplicates if already processed via broadcast or Postgres change
+    if (StateStore.squad.some(p => p.uuid === playerUUID)) return;
+
+    const player = _resolvePlayerForSession(name, playerUUID);
+    player.active = true;
+
+    const existingInSquad = StateStore.squad.find(p => p.uuid === player.uuid);
+    if (!existingInSquad) {
+        StateStore.squad.push(player);
+    } else {
+        // Update name/spirit animal if we already knew them but they were inactive
+        existingInSquad.name = name;
+    }
+
+    // Refresh achievements in background
+    if (player.uuid && window.fetchPlayerAchievements) {
+        window.fetchPlayerAchievements(player.uuid).then(achs => {
+            player.achievements = [...new Set([...(player.achievements || []), ...achs.map(a => a.achievement_id)])];
+            renderSquad();
+        }).catch(() => {});
+    }
+
+    let newQueue = [...StateStore.playerQueue];
+    if (!newQueue.includes(player.uuid)) newQueue.push(player.uuid);
+
+    StateStore.setState({ squad: StateStore.squad, playerQueue: newQueue });
+    renderSquad();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    
+    if (window.Haptic) Haptic.success();
+    console.log(`[CourtSide] Auto-joined player: ${name}`);
+}
+window.handleAutoJoin = handleAutoJoin;
 
 async function approvePlayRequest(name, id, playerUUID = null) {
     console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
@@ -2300,6 +2340,10 @@ function _makeApprovalToken() {
 function _generateUUID() {
     if (window.Passport && typeof window.Passport._uuid === 'function') {
         return window.Passport._uuid();
+    }
+    // Use native crypto API as primary fallback if Passport is missing
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
     }
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
         var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);

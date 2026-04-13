@@ -9,9 +9,16 @@
 // LOOKUP HELPER
 // ---------------------------------------------------------------------------
 
+let _findPCache = new Map();
+let _lastSquadForCache = null;
+
 /** Finds a player object by UUID. Returns undefined if not found. */
 function findP(uuid) {
-    return StateStore.squad.find(p => p.uuid === uuid);
+    if (_lastSquadForCache !== StateStore.squad || _findPCache.size === 0) {
+        _findPCache = new Map(StateStore.squad.map(p => [p.uuid, p]));
+        _lastSquadForCache = StateStore.squad;
+    }
+    return _findPCache.get(uuid);
 }
 
 // ---------------------------------------------------------------------------
@@ -491,8 +498,8 @@ function getCandidatePool(onCourt) {
         if (pool.length >= poolSize) break;
         if (onCourt.has(uuid)) continue;
         if (poolSet.has(uuid))  continue;
-        const p = StateStore.squad.find(s => s.uuid === uuid && s.active);
-        if (!p) continue;
+        const p = findP(uuid);
+        if (!p || !p.active) continue;
         pool.push(p);
         poolSet.add(uuid);
     }

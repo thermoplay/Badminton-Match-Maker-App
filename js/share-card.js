@@ -383,16 +383,27 @@ function _drawTeamBlock(ctx, cx, y, names, color, W) {
 }
 
 function _drawGrain(ctx, W, H, density) {
-    // Lightweight procedural grain — sparse random dots
-    const count = Math.floor(W * H * density);
-    ctx.save();
+    // Optimized grain: Create a small 256x256 pattern and tile it.
+    // Drawing 30,000+ individual pixels on every render is CPU-intensive.
+    const grainCanvas = document.createElement('canvas');
+    const gW = 256, gH = 256;
+    grainCanvas.width = gW;
+    grainCanvas.height = gH;
+    const gCtx = grainCanvas.getContext('2d');
+    
+    const count = Math.floor(gW * gH * density);
     for (let i = 0; i < count; i++) {
-        const x = Math.random() * W;
-        const y = Math.random() * H;
+        const x = Math.random() * gW;
+        const y = Math.random() * gH;
         const a = Math.random() * 0.06 + 0.01;
-        ctx.fillStyle = `rgba(255,255,255,${a})`;
-        ctx.fillRect(x, y, 1, 1);
+        gCtx.fillStyle = `rgba(255,255,255,${a})`;
+        gCtx.fillRect(x, y, 1, 1);
     }
+    
+    const pattern = ctx.createPattern(grainCanvas, 'repeat');
+    ctx.save();
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, W, H);
     ctx.restore();
 }
 

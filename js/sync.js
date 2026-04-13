@@ -24,7 +24,6 @@ let currentRoomCode   = null;
 let operatorKey       = null;
 let operatorKeyHash   = null;
 let sbManager         = null; // Instance of SupabaseRealtimeManager
-let syncDebounceTimer = null;
 let _isBootingSession = false; // true only during initial rejoin hydration
 let _pendingActions   = [];    // Queue for actions attempted while offline
 let _dirtyUUIDs       = new Set();
@@ -434,6 +433,50 @@ async function joinOnlineSession(roomCode) {
 // PUSH STATE — heavy sync, debounced
 // ---------------------------------------------------------------------------
 
+const _doPushToSupabase = async () => {
+    // Differential Sync: Only send the full squad if requested, otherwise send 
+    // only the players marked as dirty (e.g., the 4 players from the last match).
+    const squadToSend = _fullSyncPending 
+        ? StateStore.squad 
+        : StateStore.squad.filter(p => _dirtyUUIDs.has(p.uuid));
+
+    _fullSyncPending = false;
+    _dirtyUUIDs = new Set();
+
+    try {
+        const res = await apiCall('session-update', {
+            method: 'PATCH',
+            body: {
+                room_code:        currentRoomCode,
+                operator_key:     operatorKey,
+                squad:            squadToSend,
+                current_matches:  StateStore.currentMatches,
+                player_queue:     StateStore.playerQueue,
+                uuid_map:         window._sessionUUIDMap  || {},
+                court_names:      StateStore.get('courtNames'),
+                is_open_party:    StateStore.get('isOpenParty') || false,
+                guest_list:       StateStore.get('guestList') || [],
+                approved_players: window._approvedPlayers || {},
+            },
+        });
+        
+        if (res.ok) {
+            localStorage.removeItem('cs_pending_sync');
+            showSyncStatus('Saved to cloud', 'success');
+            setTimeout(() => {
+                const el = document.getElementById('syncStatusMsg');
+                if (el && el.textContent === 'Saved to cloud') el.style.display = 'none';
+            }, 2000);
+        }
+    } catch (e) { 
+        console.error('CourtSide: push failed', e); 
+        localStorage.setItem('cs_pending_sync', 'true');
+        showSyncStatus('Sync failed. Retrying...', 'error');
+    }
+};
+
+const _debouncedPush = window.debounce(_doPushToSupabase, 800);
+
 /**
  * Pushes session state to the cloud. 
  * @param {boolean} force - If true, bypasses the 800ms debounce.
@@ -456,54 +499,11 @@ function pushStateToSupabase(force = false, targetUUIDs = null) {
         return;
     }
 
-    clearTimeout(syncDebounceTimer);
-
-    const doPush = async () => {
-        // Differential Sync: Only send the full squad if requested, otherwise send 
-        // only the players marked as dirty (e.g., the 4 players from the last match).
-        const squadToSend = _fullSyncPending 
-            ? StateStore.squad 
-            : StateStore.squad.filter(p => _dirtyUUIDs.has(p.uuid));
-
-        _fullSyncPending = false;
-        _dirtyUUIDs = new Set();
-
-        try {
-            const res = await apiCall('session-update', {
-                method: 'PATCH',
-                body: {
-                    room_code:        currentRoomCode,
-                    operator_key:     operatorKey,
-                    squad:            squadToSend,
-                    current_matches:  StateStore.currentMatches,
-                    player_queue:     StateStore.playerQueue,
-                    uuid_map:         window._sessionUUIDMap  || {},
-                    court_names:      StateStore.get('courtNames'),
-                    is_open_party:    StateStore.get('isOpenParty') || false,
-                    guest_list:       StateStore.get('guestList') || [],
-                    approved_players: window._approvedPlayers || {},
-                },
-            });
-            
-            if (res.ok) {
-                localStorage.removeItem('cs_pending_sync');
-                showSyncStatus('Saved to cloud', 'success');
-                setTimeout(() => {
-                    const el = document.getElementById('syncStatusMsg');
-                    if (el && el.textContent === 'Saved to cloud') el.style.display = 'none';
-                }, 2000);
-            }
-        } catch (e) { 
-            console.error('CourtSide: push failed', e); 
-            localStorage.setItem('cs_pending_sync', 'true');
-            showSyncStatus('Sync failed. Retrying...', 'error');
-        }
-    };
-
     if (force) {
-        doPush();
+        _debouncedPush.cancel();
+        _doPushToSupabase();
     } else {
-        syncDebounceTimer = setTimeout(doPush, 800);
+        _debouncedPush();
     }
 }
 
@@ -562,6 +562,14 @@ function broadcastApproval(playerUUID, playerName, token) {
         current_matches: StateStore.currentMatches,
     });
 }
+
+/**
+ * Informs the host that a player has auto-joined via Open Party.
+ */
+function broadcastAutoJoin(playerUUID, playerName) {
+    _broadcast('player_auto_joined', { playerUUID, playerName });
+}
+window.broadcastAutoJoin = broadcastAutoJoin;
 
 /**
  * BUG 2 FIX — broadcast live game state whenever matches change.
@@ -625,6 +633,22 @@ function broadcastMatchResult(winnerUUIDs, loserUUIDs, gameLabel) {
  */
 function broadcastNameUpdate(playerUUID, oldName, newName) {
     if (sbManager) sbManager.broadcast('name_update', { playerUUID, oldName, newName });
+}
+
+/**
+ * Host pokes a player to get their attention.
+ */
+function broadcastPoke(playerUUID) {
+    if (!isOperator) return;
+    _broadcast('player_poke', { playerUUID });
+}
+window.broadcastPoke = broadcastPoke;
+
+/**
+ * Player acknowledges they are heading to the court.
+ */
+function broadcastAcknowledge(playerUUID) {
+    _broadcast('player_ack', { playerUUID });
 }
 
 function broadcastPlayerLeaving(playerUUID, playerName) {
@@ -741,6 +765,40 @@ function _handleBroadcast(payload) {
     if (type === 'session_joined') {
         if (!isOperator && typeof PlayerMode !== 'undefined') {
             PlayerMode._onApprovalReceived(payload);
+        }
+        return;
+    }
+
+    // Player auto-joined (Open Party): Host reconciles them immediately
+    if (type === 'player_auto_joined') {
+        if (isOperator && typeof window.handleAutoJoin === 'function') {
+            window.handleAutoJoin(payload.playerName, payload.playerUUID);
+            showSessionToast(`🔓 ${payload.playerName} joined instantly`);
+        }
+        return;
+    }
+
+    // Host pokes player: Player triggers haptics and alert
+    if (type === 'player_poke') {
+        const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
+        if (!isOperator && p && payload.playerUUID === p.playerUUID) {
+            if (window.Haptic) {
+                Haptic.success(); // Stronger vibration pattern
+                setTimeout(() => Haptic.success(), 300);
+            }
+            showSessionToast('⚡ THE HOST IS CALLING YOU!');
+            const banner = document.getElementById('_csYoureUpBanner');
+            if (banner) banner.style.background = 'linear-gradient(135deg, #ff3b5c, #ef4444)';
+        }
+        return;
+    }
+
+    // Player acknowledges: Host updates UI
+    if (type === 'player_ack') {
+        if (isOperator) {
+            const chip = document.querySelector(`.player-chip[data-uuid="${payload.playerUUID}"]`);
+            if (chip) chip.classList.add('player-acknowledged');
+            showSessionToast(`👍 Player acknowledged`);
         }
         return;
     }
@@ -1163,8 +1221,11 @@ function _handleMemberChange(record, oldRecord, eventType) {
         if (eventType === 'INSERT') {
             // New pending member — add to cache
             window._sessionMembers[uuid] = record;
-            // No immediate squad change — host approves via the notification
-            // (play_requests table still drives the approval UI)
+            
+            // If status is active (Auto-join), resolve them into the squad immediately
+            if (record.status === 'active' && typeof window.handleAutoJoin === 'function') {
+                window.handleAutoJoin(name, uuid);
+            }
 
         } else if (eventType === 'UPDATE') {
             const prev = window._sessionMembers[uuid] || {};
@@ -1613,3 +1674,52 @@ function _updateLatencyDisplay(ms) {
     const opacity = ms < 150 ? '1' : (ms < 400 ? '0.7' : '0.4');
     el.innerHTML = `<span style="opacity:${opacity}; margin-right:2px;">${icon}</span>${ms}ms`;
 }
+
+/**
+ * Constructs and shares/copies the player invite link.
+ * @param {string} explicitCode - Optional room code to use.
+ */
+async function copyInviteLink(explicitCode = null) {
+    const roomCode = explicitCode || currentRoomCode || window.currentRoomCode;
+    if (!roomCode) return;
+    const url = window.location.origin + window.location.pathname + '?join=' + roomCode + '&role=player';
+    
+    const shareData = {
+        title: 'CourtSide Pro Session',
+        text: `Check-in to our badminton session early! Room Code: ${roomCode}`,
+        url: url
+    };
+
+    // Use native share sheet if available
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+        try {
+            await navigator.share(shareData);
+            return;
+        } catch (e) {
+            if (e.name !== 'AbortError') console.error('Share failed', e);
+        }
+    }
+
+    // Fallback to clipboard
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url)
+            .then(() => showSessionToast('🔗 Invite link copied!'))
+            .catch(() => typeof fallbackCopy === 'function' && fallbackCopy(url, '🔗 Invite link copied!'));
+    } else {
+        if (typeof fallbackCopy === 'function') fallbackCopy(url, '🔗 Invite link copied!');
+    }
+}
+window.copyInviteLink = copyInviteLink;
+
+/**
+ * Helper for the player-view "Invite to Court" button.
+ * Maintains compatibility with existing onclick handlers.
+ */
+const InviteQR = {
+    show(code) {
+        if (typeof copyInviteLink === 'function') {
+            copyInviteLink(code);
+        }
+    }
+};
+window.InviteQR = InviteQR;
