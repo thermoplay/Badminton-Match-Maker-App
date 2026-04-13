@@ -1207,6 +1207,7 @@ function applyRemoteState(session) {
         checkNextButtonState();
         updateUndoButton();
         if (typeof checkIWTPSmartRecognition === 'function') checkIWTPSmartRecognition();
+        if (typeof renderOpenPartyToggle === 'function') renderOpenPartyToggle();
     }
     if (StateStore.currentMatches.length > 0 && StateStore.currentMatches.length !== prevCount) Haptic.bump();
     _updatePlayerCount();

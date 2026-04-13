@@ -2949,13 +2949,34 @@ header {
    ============================================================================= */
 
 .host-dashboard {
-    display: none;
+    display: flex;
     flex-direction: column;
     gap: 10px;
     margin-bottom: 12px;
     width: 100%;
     animation: panelFadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+.open-party-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1.5px solid var(--border);
+    margin-bottom: 4px;
+}
+.open-party-toggle span { font-size: 1.1rem; }
+.open-party-toggle.is-open { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.open-party-toggle.is-closed { background: var(--bg2); color: var(--text-muted); }
 
 .play-requests-badge {
     background: var(--surface2);

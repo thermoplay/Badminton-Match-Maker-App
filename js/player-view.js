@@ -807,8 +807,8 @@ const SidelineView = {
                 
                 return `
                     <div class="sl-achievement-badge ${statusClass}" onclick="${tapAction}" style="${unlocked ? `border-color:${data.color}; box-shadow: 0 0 10px ${data.color}44;` : ''}"
-                         onmousedown="startAchPress('${key}', '${me.uuid}')" onmouseup="endAchPress()"
-                         ontouchstart="startAchPress('${key}', '${me.uuid}')" ontouchend="endAchPress()"
+                         onmousedown="startAchPress('${key}', '${passport.playerUUID}')" onmouseup="endAchPress()"
+                         ontouchstart="startAchPress('${key}', '${passport.playerUUID}')" ontouchend="endAchPress()"
                          oncontextmenu="event.preventDefault(); return false;">
                         <div class="sl-ach-icon-large">${data.icon}</div>
                         <div class="sl-ach-label">${safeName}</div>

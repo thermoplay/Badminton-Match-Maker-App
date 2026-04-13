@@ -209,15 +209,6 @@ function editPlayerName() {
     });
 }
 
-function toggleBatterySaver() {
-    const current = StateStore.get('batterySaver') || false;
-    StateStore.set('batterySaver', !current);
-    showSessionToast(`🔋 Battery Saver: ${!current ? 'ON' : 'OFF'}`);
-    // Refresh overlay to update button text
-    showOverlay('sync');
-}
-window.toggleBatterySaver = toggleBatterySaver;
-
 function toggleOpenParty() {
     const current = StateStore.get('isOpenParty') || false;
     const next = !current;
@@ -228,7 +219,7 @@ function toggleOpenParty() {
             approvePlayRequest(r.name, r.id, r.player_uuid || null);
         });
     }
-    showOverlay('sync');
+    renderOpenPartyToggle();
 }
 window.toggleOpenParty = toggleOpenParty;
 
@@ -814,14 +805,6 @@ function showOverlay(type) {
                     <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
                         onclick="copyInviteLink()">Copy Invite Link</button>
                     ${isOperator ? `
-                        <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
-                            onclick="toggleBatterySaver()">
-                            🔋 Battery Saver: ${StateStore.get('batterySaver') ? 'ON' : 'OFF'}
-                        </button>
-                        <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
-                            onclick="toggleOpenParty()">
-                            🔓 Open Party: ${StateStore.get('isOpenParty') ? 'ON' : 'OFF'}
-                        </button>
                         <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
                             onclick="resyncQueue()">🔄 Re-sync Queue</button>
                         <button class="btn-main btn-danger" style="width:100%; margin-top:10px;"
@@ -2083,8 +2066,6 @@ async function pollPlayRequests() {
             badge.style.display = hasReqs ? 'flex' : 'none';
             count.textContent   = playRequests.length;
             
-            const dashboard = document.getElementById('hostDashboard');
-            if (dashboard) dashboard.style.display = hasReqs ? 'flex' : 'none';
         }
     } catch { /* silent */ } finally {
         _isPolling = false;
@@ -2430,6 +2411,7 @@ function ensureHostUI() {
         dashboard = document.createElement('div');
         dashboard.id = 'hostDashboard';
         dashboard.className = 'host-dashboard';
+        dashboard.style.display = 'flex';
         const container = document.querySelector('.app-container');
         if (container) {
             const header = container.querySelector('header');
@@ -2437,7 +2419,27 @@ function ensureHostUI() {
         }
     }
 
+    // Add Open Party Toggle
+    if (!document.getElementById('slOpenPartyToggle')) {
+        const toggle = document.createElement('div');
+        toggle.id = 'slOpenPartyToggle';
+        toggle.className = 'open-party-toggle';
+        toggle.onclick = () => toggleOpenParty();
+        dashboard.appendChild(toggle);
+        renderOpenPartyToggle();
+    }
+
     // 1. Join Notification Toast (Popup)
+
+function renderOpenPartyToggle() {
+    const el = document.getElementById('slOpenPartyToggle');
+    if (!el) return;
+    const isOpen = StateStore.get('isOpenParty');
+    el.className = `open-party-toggle ${isOpen ? 'is-open' : 'is-closed'}`;
+    el.innerHTML = isOpen 
+        ? `<span>🔓</span> OPEN PARTY` 
+        : `<span>🔒</span> LOBBY MODE`;
+}
     if (!document.getElementById('joinNotification')) {
         const notif = document.createElement('div');
         notif.id = 'joinNotification';
