@@ -86,27 +86,22 @@ export default async function handler(req, res) {
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = String(player_uuid).trim();
 
-        // Input Validation
-        if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) return res.status(400).json({ error: 'Invalid room code format' });
-        if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) return res.status(400).json({ error: 'Invalid player UUID format' });
-
-        // ── REVERTED: Standard Table Operations ──────────────────────────────
-        // Reverting to standard PostgREST calls because the RPC is hitting 
-        // persistent type mismatch errors. Standard calls handle strings better.
-        
         // 1. Verify Room Exists
-                const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party&limit=1`);
+        const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party&limit=1`);
         if (!sessionCheck.ok || !sessionCheck.data?.length) {
             return res.status(404).json({ error: 'Room not found' });
         }
 
-        // 2. Check if player is already active in this session
-        const memberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
-        if (memberCheck.ok && memberCheck.data?.[0]?.status === 'active' && !force) {
+        const isOpenParty = !!sessionCheck.data[0]?.is_open_party;
+
+        // NEW: Check if player is already a member (any status) in session_members
+        const existingMemberCheck = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=eq.${encodeURIComponent(uuid)}&select=status&limit=1`);
+        const existingMemberStatus = existingMemberCheck.ok && existingMemberCheck.data?.length > 0 ? existingMemberCheck.data[0].status : null;
+
+        if (existingMemberStatus === 'active') {
+            // Player is already active. No need for a new request.
             return res.status(200).json({ alreadyActive: true, ok: true });
         }
-
-        const isOpenParty = !!sessionCheck.data[0]?.is_open_party;
 
         // 3. If Open Party is ON, bypass play_requests and go straight to session_members as active
         if (isOpenParty) {
@@ -123,8 +118,17 @@ export default async function handler(req, res) {
                 }
             });
             if (autoApprove.ok) {
+                // If auto-approved, we're done. No play_request needed.
                 return res.status(200).json({ ok: true, status: 'active', autoApproved: true });
             }
+            // If auto-approval failed, fall through to pending request logic.
+            console.error(`[play-request] Auto-approval failed for ${uuid} in ${code}:`, autoApprove.data);
+        }
+
+        // If we reach here, the player is not active, and not auto-approved.
+        // Now, check if they are already in `session_members` with a non-active status (e.g., 'pending', 'inactive').
+        if (existingMemberStatus) { // This means a record exists, but it's not 'active'
+            return res.status(200).json({ ok: true, status: existingMemberStatus, message: 'Player already a member, awaiting status change.' });
         }
 
         // 4. Fallback: Create the notification request for the Host (Lobby Mode)

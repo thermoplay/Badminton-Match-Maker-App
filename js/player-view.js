@@ -1166,12 +1166,14 @@ const PlayerMode = {
         this._joinCode = joinCode;
 
         // Fetch session metadata first to check for Open Party
+        let session = null;
         if (joinCode) {
             try {
                 const res = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
                 if (res.ok) {
                     const data = await res.json();
-                    this._isOpenParty = !!data.session?.is_open_party;
+                    session = data.session || {};
+                    this._isOpenParty = !!session.is_open_party;
                 }
             } catch (e) {}
         }
@@ -1188,13 +1190,17 @@ const PlayerMode = {
             return;
         }
 
+        // Check if player is already in the squad or approved to bypass manual check-in
+        const inSquad = session && (session.squad || []).some(p => p.uuid === passport.playerUUID);
+        const isApproved = this._isApprovedInSession(joinCode);
+
         // 4. Handle name entry if the player is new
         const hasName = !!(passport.playerName && passport.playerName.trim());
         if (!hasName) {
             const name = await this._handleNewPlayerName();
             if (!name) return; // Player cancelled name entry
             passport = Passport.get(); // Re-fetch passport with new name
-        } else {
+        } else if (!inSquad && !isApproved) {
             const action = await this._promptCheckIn(passport, joinCode);
             if (action === 'rename') {
                 const name = await this._handleNewPlayerName();
@@ -1202,6 +1208,8 @@ const PlayerMode = {
                 passport = Passport.get();
             }
             this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
+        } else {
+            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Reconnecting…');
         }
 
         // 5. Core join and sync logic
