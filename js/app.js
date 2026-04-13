@@ -797,101 +797,97 @@ function showOverlay(type) {
     } else {
         title.innerText = 'Session Hub';
         const syncMsg = window._lastSyncTime ? `Cloud Sync Active (Last: ${window._lastSyncTime})` : 'Syncing with cloud...';
-        content.innerHTML = `
-            <div id="syncStatusMsg" class="sync-status">${syncMsg}</div>
+        
+        let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
 
-            ${isOnlineSession ? `
-                <div class="session-live-card">
-                    <div class="session-live-top">
-                        <span class="session-live-dot"></span>
-                        <span class="session-live-label">LIVE SESSION</span>
+        if (isOnlineSession) {
+            shContent += `
+                <div class="sh-section">
+                    <div class="session-live-card">
+                        <div class="session-live-top">
+                            <span class="session-live-dot"></span>
+                            <span class="session-live-label">LIVE SESSION</span>
+                        </div>
+                        <div class="session-room-code">${currentRoomCode}</div>
+                        <p style="font-size:0.7rem; color:var(--text-muted); margin-bottom:20px;">
+                            ${isOperator ? 'Share code or invite link to join' : 'Viewing as spectator'}
+                        </p>
+                        
+                        <div class="sh-qr-wrap">
+                            <div id="qrcode" style="display:flex;justify-content:center;margin:0 auto;"></div>
+                        </div>
                     </div>
-                    <div class="session-room-code">${currentRoomCode}</div>
-                    <p style="font-size:0.7rem; color:var(--text-muted); margin:0 0 20px;">
-                        ${isOperator ? 'Share this code — anyone can join as spectator' : 'You are viewing as spectator'}
-                    </p>
-                    <div id="qrcode" style="display:flex;justify-content:center;margin:0 auto 8px;"></div>
+                </div>
 
-                    <button class="btn-main" style="width:100%; margin-top:16px; background:var(--accent); color:#000;"
-                        onclick="copySyncToken()">Copy Room Code</button>
-                    <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
-                        onclick="copyInviteLink()">Copy Invite Link</button>
-                    ${isOperator ? `
-                        <button class="btn-main" style="width:100%; margin-top:10px; background:var(--surface2); color:var(--text);"
-                            onclick="resyncQueue()">🔄 Re-sync Queue</button>
-                        <button class="btn-main btn-danger" style="width:100%; margin-top:10px;"
-                            onclick="confirmEndSession()">End Session</button>
-                    ` : `
-                        <button class="btn-main" style="width:100%; margin-top:10px; background:#334155; color:#fff;"
-                            onclick="leaveSession(); closeOverlay();">Leave Session</button>
-                    `}
+                <div class="sh-section">
+                    <div class="sync-section-label">Broadcast Controls</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" onclick="copyInviteLink()">🔗 Invite Link</button>
+                        <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📋 Room Code</button>
+                        ${isOperator ? `
+                            <button class="btn-main sh-btn-sub" onclick="resyncQueue()">🔄 Resync Queue</button>
+                            <button class="btn-main btn-danger" style="font-size:0.8rem;" onclick="confirmEndSession()">🛑 End Session</button>
+                        ` : `
+                            <button class="btn-main btn-danger" style="grid-column: span 2;" onclick="leaveSession(); closeOverlay();">Leave Session</button>
+                        `}
+                    </div>
+                </div>
 
-                    <div class="sync-divider"></div>
+                <div class="sh-section">
                     <div class="sync-section-label">Navigation</div>
-                    <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); margin-bottom:10px;" onclick="window.location.href='?role=player&join='+(window.currentRoomCode||'')">Switch to Player View</button>
-                    <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text);" onclick="window.location.href=window.location.origin + window.location.pathname">Back to Menu</button>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" onclick="window.location.href='?role=player&join='+(window.currentRoomCode||'')">🏃 Player View</button>
+                        <button class="btn-main sh-btn-sub" onclick="window.location.href=window.location.origin + window.location.pathname">🏠 Home Menu</button>
+                    </div>
                 </div>
 
                 ${_supportSectionHTML()}
-            ` : `
-                <div style="margin-bottom:24px;">
-                    <div class="sync-section-label">Host a New Session</div>
-                    <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
-                        Start a live session. Anyone with your room code can watch in real time.
+            `;
+        } else {
+            shContent += `
+                <div class="sh-section">
+                    <div class="sync-section-label">Go Live</div>
+                    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
+                        Start a live session to sync with players in real-time.
                     </p>
-                    <button class="btn-main" style="width:100%; background:var(--accent); color:#000;"
-                        onclick="createOnlineSession()">
-                        🌐 Go Live
-                    </button>
+                    <button class="btn-main" style="width:100%; height:54px;" onclick="createOnlineSession()">🌐 Start Live Session</button>
                 </div>
 
-                <div class="sync-divider"></div>
-
-                <div style="margin-bottom:24px;">
-                    <div class="sync-section-label">Join a Session</div>
-                    <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
+                <div class="sh-section">
+                    <div class="sync-section-label">Join Session</div>
+                    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
                         Enter a room code to watch a live session.
                     </p>
                     <input type="text" id="manualRoomCodeInput" placeholder="ENTER CODE"
-                        style="width:100%; background:var(--bg2); border:1.5px solid var(--border);
-                               color:#fff; padding:14px; border-radius:12px; margin-top:1.5rem;
-                               outline:none; font-size:1.2rem; font-family:var(--font-display); text-align:center;
-                               text-transform:uppercase; letter-spacing: 4px;"
+                        class="sl-code-input" style="margin-bottom:10px;"
                         autocomplete="off" autocorrect="off" maxlength="9">
-                    <button id="joinManualCodeBtn" class="btn-main" style="width:100%; margin-top:10px; background: var(--surface2); color: var(--text);">
-                        Join with Code
-                    </button>
+                    <button id="joinManualCodeBtn" class="btn-main sh-btn-sub" style="width:100%;">Connect to Room</button>
                 </div>
 
-                <div class="sync-divider"></div>
-
-                <div>
-                    <div class="sync-section-label">Local Backup</div>
-                    <button class="btn-main" style="width:100%; background:var(--surface2); color:#fff; margin-bottom:10px;"
-                        onclick="copySyncToken()">Copy Sync Token</button>
-                    <input type="text" id="syncInput" placeholder="Paste token to import…"
-                        style="width:100%; background:var(--bg2); border:1px solid var(--border);
-                               color:#fff; padding:14px; border-radius:12px; margin-bottom:10px;
-                               outline:none; font-size:16px; font-family:inherit;"
-                        autocomplete="off" autocorrect="off">
-                    <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
-                        onclick="importSyncToken()">Import Token</button>
+                <div class="sh-section">
+                    <div class="sync-section-label">Backup & Migration</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📦 Export Data</button>
+                        <button class="btn-main sh-btn-sub" onclick="importSyncToken()">📥 Import Data</button>
+                    </div>
+                    <input type="text" id="syncInput" placeholder="Paste token here..."
+                        style="width:100%; margin-top:10px; font-size:0.8rem; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:10px;">
                 </div>
 
-                <hr style="margin:28px 0; border:none; border-top:1px solid var(--border);">
-                <div style="text-align: center;">
-                    <button class="btn-main" style="width: auto; display: inline-flex; background:rgba(239,68,68,0.1); color:#ef4444; flex: initial;"
-                        onclick="confirmEraseAllData()">WIPE ALL DATA</button>
+                <div class="sh-section" style="text-align:center; padding-top:10px;">
+                    <button class="btn-main btn-danger" style="width:auto; display:inline-flex; padding:8px 16px; font-size:0.7rem; height:auto; min-height:auto;"
+                        onclick="confirmEraseAllData()">WIPE ALL LOCAL DATA</button>
                 </div>
-                
-                <div class="sync-divider"></div>
-                <div class="sync-section-label">Navigation</div>
-                <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text); margin-bottom:10px;" onclick="goToPlayerMode()">Switch to Player Mode</button>
-                <button class="btn-main" style="width:100%; background:var(--surface2); color:var(--text);" onclick="window.location.href=window.location.origin + window.location.pathname">Back to Menu</button>
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Navigation</div>
+                    <button class="btn-main sh-btn-sub" style="width:100%;" onclick="goToPlayerMode()">Switch to Player Mode</button>
+                </div>
 
                 ${_supportSectionHTML()}
-            `}
-        `;
+            `;
+        }
+        content.innerHTML = shContent;
 
         if (isOnlineSession) {
             if (!currentRoomCode) {
