@@ -223,16 +223,7 @@ function toggleOpenParty() {
 }
 window.toggleOpenParty = toggleOpenParty;
 
-function renderOpenPartyToggle() {
-    const el = document.getElementById('slOpenPartyToggle');
-    if (!el) return;
-    const isOpen = StateStore.get('isOpenParty');
-    el.className = `open-party-toggle ${isOpen ? 'is-open' : 'is-closed'}`;
-    el.innerHTML = isOpen 
-        ? `<span>🔓</span> OPEN PARTY` 
-        : `<span>🔒</span> LOBBY MODE`;
-}
-    
+
 window.renderOpenPartyToggle = renderOpenPartyToggle;
 
 /**
@@ -849,8 +840,7 @@ function showOverlay(type) {
                     <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
                         Start a live session to sync with players in real-time.
                     </p>
-                                        <button class="btn-main sh-btn-sub" style="width:100%;" onclick="goToMainMenu()">🏠 Home Menu</button>
-
+                    <button class="btn-main" style="width:100%; height:54px;" onclick="createOnlineSession()">🌐 Start Live Session</button>
                 </div>
 
                 <div class="sh-section">
