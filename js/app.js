@@ -2433,7 +2433,7 @@ function ensureHostUI() {
     }
 
     // 1. Join Notification Toast (Popup)
-    if (!document.getElementById('joinNotification')) {
+   if (!document.getElementById('joinNotification')) {
         const notif = document.createElement('div');
         notif.id = 'joinNotification';
         notif.className = 'join-notif';
@@ -2560,7 +2560,7 @@ function passportRename() {
                     if (typeof broadcastNameUpdate === 'function') {
                         broadcastNameUpdate(passport.playerUUID, oldName, trimmed);
                     }
-                    if (typeof SidelineView !== 'undefined') {
+                    if (typeof SidelineView !== 'undefined' && SidelineView._visible) {
                         SidelineView.refresh();
                     }
                 }
@@ -2595,6 +2595,12 @@ function passportRename() {
                     if (typeof renderQueueStrip === 'function') renderQueueStrip();
                 }
             }
+
+            // Global Refresh: Ensure standalone passport updates if open (Online or Offline)
+            if (document.getElementById('passportStandalone')?.style.display === 'flex') {
+                window.renderPassportStandalone(Passport.get());
+            }
+
             showSessionToast(`✅ Name updated to ${trimmed}`);
         }
     });
@@ -2815,6 +2821,14 @@ function spectateOnly() {
 
 function showLandingPage() {
     if (document.getElementById('landingPage')) return;
+
+    // Hide other standalone views if returning to menu
+    const ps = document.getElementById('passportStandalone');
+    if (ps) ps.style.display = 'none';
+    const sl = document.getElementById('sidelinePanel');
+    if (sl) sl.style.display = 'none';
+    document.body.classList.remove('player-mode');
+
     if (typeof closeOverlay === 'function') closeOverlay();
     const div = document.createElement('div');
     div.id = 'landingPage';
@@ -2882,30 +2896,85 @@ window.openStandalonePassport = function() {
     const el = document.getElementById('landingPage');
     if (el) el.remove();
     
-    // Enter player mode layout context
-    document.body.classList.add('player-mode');
+    const ps = document.getElementById('passportStandalone');
+    const sl = document.getElementById('sidelinePanel');
     
-    if (typeof SidelineView !== 'undefined') {
-        SidelineView.show();
-        SidelineView.switchTab('profile');
-        
-        // Standalone UI Polish: focus on identity, not session state
-        const courtTab = document.querySelector('.sl-tab:first-child');
-        if (courtTab) courtTab.style.display = 'none';
-        
-        const statusCard = document.getElementById('slStatusCard');
-        if (statusCard) statusCard.style.display = 'none';
-        
-        // Add a Home button to the top bar for easy return to menu
-        const topbar = document.querySelector('.sl-topbar');
-        if (topbar && !document.getElementById('slHomeBtn')) {
-            const homeBtn = document.createElement('button');
-            homeBtn.id = 'slHomeBtn';
-            homeBtn.className = 'sl-icon-btn';
-            homeBtn.innerHTML = '🏠';
-            homeBtn.onclick = () => goToMainMenu();
-            topbar.insertBefore(homeBtn, topbar.firstChild);
-        }
+    // Ensure SidelineView is hidden so they don't overlap
+    if (sl) sl.style.display = 'none';
+
+    if (ps) {
+        ps.style.display = 'flex';
+        document.body.classList.add('player-mode'); // Use context to hide host UI
+        window.renderPassportStandalone(Passport.get());
+    }
+};
+
+window.renderPassportStandalone = function(p) {
+    const content = document.getElementById('passportStandaloneContent');
+    if (!content || !p) return;
+
+    const stats = p.stats || { wins: 0, games: 0 };
+    const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+    const avatarColor = Avatar.color(p.playerName);
+    const emoji = p.spiritAnimal || '🐾';
+
+    content.innerHTML = `
+        <div class="ps-header">
+            <div class="ps-avatar-ring">
+                <div class="ps-avatar" style="background:${avatarColor}">${p.spiritAnimal || (p.playerName || '?').charAt(0).toUpperCase()}</div>
+            </div>
+            <h1 class="ps-name">${escapeHTML(p.playerName)}</h1>
+            <div class="ps-badge">${emoji} ATHLETE</div>
+        </div>
+
+        <div class="ps-stats-grid">
+            <div class="ps-stat-card">
+                <div class="ps-stat-val">${stats.games}</div>
+                <div class="ps-stat-label">TOTAL GAMES</div>
+            </div>
+            <div class="ps-stat-card">
+                <div class="ps-stat-val">${stats.wins}</div>
+                <div class="ps-stat-label">TOTAL WINS</div>
+            </div>
+            <div class="ps-stat-card">
+                <div class="ps-stat-val">${wr}%</div>
+                <div class="ps-stat-label">WIN RATE</div>
+            </div>
+        </div>
+
+        <div class="ps-section">
+            <div class="ps-section-header">🏆 TROPHY ROOM</div>
+            <div id="psAchievements" class="ps-achievements-list">
+                <div class="sl-searching"><div class="sl-searching-spinner"></div></div>
+            </div>
+        </div>
+
+        <div class="ps-actions">
+            <button class="btn-main ps-btn-sub" onclick="passportRename()">✏️ Edit Name</button>
+            <button class="btn-main ps-btn-sub" onclick="PlayerMode.pickSpiritAnimal()">🐾 Spirit Animal</button>
+        </div>
+    `;
+
+    // Fetch achievements
+    if (typeof fetchPlayerAchievements === 'function' && p.playerUUID) {
+        fetchPlayerAchievements(p.playerUUID).then(achs => {
+            const listEl = document.getElementById('psAchievements');
+            if (!listEl) return;
+            
+            const ids = (achs || []).map(a => a.achievement_id);
+            
+            const html = Object.keys(window.Achievements || {}).map(key => {
+                const data = window.getAchievementDisplay(key, ids);
+                if (!data.unlocked) return '';
+                return `
+                    <div class="ps-trophy" title="${data.name}: ${data.description}">
+                        <div class="ps-trophy-icon">${data.icon}</div>
+                        <div class="ps-trophy-name">${data.name}</div>
+                    </div>
+                `;
+            }).join('');
+            listEl.innerHTML = html || '<div class="ps-empty-ach">No trophies earned yet.</div>';
+        });
     }
 };
 

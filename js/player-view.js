@@ -68,11 +68,15 @@ const SidelineView = {
         const nameEl = document.getElementById('slPassportName');
         if (nameEl) nameEl.textContent = passport.playerName;
 
-        this._renderCourtMap();
-        this._renderMatches();
+        const squad = window.squad || [];
+        const squadMap = new Map(squad.map(p => [p.uuid, p]));
+        const myUUID = passport.playerUUID;
+
+        this._renderCourtMap(squadMap, myUUID);
+        this._renderMatches(squadMap, myUUID);
         this._renderNextUp();
         this._renderLastWinner();
-        if (this._currentTab === 'profile') this._renderProfile();
+        if (this._currentTab === 'profile') this._renderProfile(squadMap, myUUID);
     },
 
     _startStalenessMonitor() {
@@ -121,7 +125,7 @@ const SidelineView = {
      * Visual Court Map: Renders a high-level grid of active courts
      * using player profile icons for instant recognition.
      */
-    _renderCourtMap() {
+    _renderCourtMap(squadMap, myUUID) {
         const container = document.getElementById('slCourtMap');
         if (!container) return;
 
@@ -132,10 +136,7 @@ const SidelineView = {
         }
 
         container.style.display = 'flex';
-        const squad = window.squad || [];
-        const squadMap = new Map(squad.map(p => [p.uuid, p]));
         const findP = (uuid) => squadMap.get(uuid);
-        const myUUID = Passport.get()?.playerUUID;
 
         const fragment = document.createDocumentFragment();
         const existingMiniCourts = new Map();
@@ -185,7 +186,7 @@ const SidelineView = {
         }
     },
 
-    _renderMatches() {
+    _renderMatches(squadMap, myUUID) {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
 
@@ -202,12 +203,8 @@ const SidelineView = {
             }
             return;
         }
-        const myUUID = Passport.get()?.playerUUID;
 
         const courtNames = window.courtNames || {};
-        const squad = window.squad || [];
-        
-        const squadMap = new Map(squad.map(p => [p.uuid, p]));
         const findP = (uuid) => squadMap.get(uuid);
 
         const fragment = document.createDocumentFragment();
@@ -445,14 +442,12 @@ const SidelineView = {
         }
     },
 
-    _renderProfile() {
+    _renderProfile(squadMap, myUUID) {
         const passport = Passport.get();
         if (!passport) return;
-        const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
+        const me = squadMap.get(myUUID);
         const profileView = document.getElementById('slViewProfile');
         if (!profileView) return;
-
-        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&#39;'}[c]));
 
         // --- 1. Enhanced Identity Header ---
         let header = document.getElementById('slProfileHeaderEnhanced');
@@ -521,7 +516,7 @@ const SidelineView = {
                     ${emoji || avatarInitial}
                     ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
                 </div>
-                <div class="sl-profile-name-large">${esc(passport.playerName)}</div>
+                <div class="sl-profile-name-large">${this._esc(passport.playerName)}</div>
                 <div class="sl-profile-title-badge">
                     <span>${titleData.icon}</span>
                     <span>${titleData.title}</span>
@@ -672,12 +667,11 @@ const SidelineView = {
             if (me.opponentHistory) {
                 const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
                 if (rivals.length > 0) {
-                    const rivalP = (window.squad || []).find(p => p.uuid === rivals[0][0]);
+                    const rivalP = squadMap.get(rivals[0][0]);
                     rivalName = rivalP ? rivalP.name : 'Unknown';
                     rivalCount = rivals[0][1];
                 }
             }
-            const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&#39;'}[c]));
 
             // Form Logic
             const formHTML = (me.form || []).map(r => 
@@ -691,15 +685,15 @@ const SidelineView = {
                     <div class="sl-lab-history" style="margin-top:12px;">
                         ${me.matchHistory.map(h => {
                             const oppNames = (h.oppUUIDs || []).map(id => {
-                                const p = (window.squad || []).find(s => s.uuid === id || s.name === id);
-                                return p ? esc(p.name) : 'Former Player';
+                                const p = squadMap.get(id);
+                                return p ? this._esc(p.name) : 'Former Player';
                             }).join(' &amp; ');
                             
                             let partnerDisplay = '';
                             if (h.partnerUUID) {
-                                const partnerP = (window.squad || []).find(s => s.uuid === h.partnerUUID);
+                                const partnerP = squadMap.get(h.partnerUUID);
                                 if (partnerP) {
-                                    partnerDisplay = ` with ${esc(partnerP.name)}`;
+                                    partnerDisplay = ` with ${this._esc(partnerP.name)}`;
                                 }
                             }
                             const timeAgo = Math.floor((Date.now() - h.time) / 60000);
@@ -730,7 +724,7 @@ const SidelineView = {
                     <div style="width:1px; height:30px; background:var(--border);"></div>
                     <div style="text-align:center; flex:1;">
                         <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
-                        <div style="font-size:0.9rem; font-weight:700;">${esc(rivalName)}</div>
+                        <div style="font-size:0.9rem; font-weight:700;">${this._esc(rivalName)}</div>
                         <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
                     </div>
                 </div>
@@ -740,11 +734,9 @@ const SidelineView = {
             }
         }
 
-        this._renderH2H(profileView, me);
+        this._renderH2H(profileView, me, squadMap);
 
         if (chemContainer) {
-            const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&#39;'}[c])));
-            
             let newChemHTML = '';
             if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
                 const partners = Object.entries(me.partnerStats);
@@ -755,13 +747,13 @@ const SidelineView = {
                 const best = partners[0];
                 if (best) {
                     const [uuid, stats] = best;
-                    const partnerP = (window.squad || []).find(p => p.uuid === uuid);
+                    const partnerP = squadMap.get(uuid);
                     const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
                     newChemHTML = `
                         <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
                         <div class="sl-chem-card">
                             <div class="sl-chem-details">
-                                <div class="sl-chem-name">Best with: <strong>${esc(partnerP ? partnerP.name : 'Unknown')}</strong></div>
+                                <div class="sl-chem-name">Best with: <strong>${this._esc(partnerP ? partnerP.name : 'Unknown')}</strong></div>
                                 <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
                             </div>
                         </div>`;
@@ -800,8 +792,8 @@ const SidelineView = {
             const html = Object.keys(window.Achievements).map(key => {
                 const data = window.getAchievementDisplay(key, myAch);
                 const unlocked = data.unlocked;
-                const safeName = esc(data.name);
-                const safeDesc = esc(data.description);
+                const safeName = this._esc(data.name);
+                const safeDesc = this._esc(data.description);
                 const statusClass = unlocked ? 'unlocked' : 'locked';
                 const tapAction = `showSessionToast('${unlocked ? '🏆' : '🔒'} ${safeName}: ${safeDesc}')`;
                 
@@ -848,7 +840,7 @@ const SidelineView = {
         }
     },
 
-    _renderH2H(profileView, me) {
+    _renderH2H(profileView, me, squadMap) {
         if (!me) return;
         let container = document.getElementById('slProfileH2H');
         if (!container) {
@@ -872,16 +864,14 @@ const SidelineView = {
         const select = document.getElementById('slH2HSelect');
         const selectedVal = select ? select.value : '';
 
-        const squad = window.squad || [];
-        const others = squad.filter(p => p.uuid !== me.uuid).sort((a,b) => a.name.localeCompare(b.name));
-        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&#39;'}[c]));
+        const others = Array.from(squadMap.values()).filter(p => p.uuid !== me.uuid).sort((a,b) => a.name.localeCompare(b.name));
 
         const newH2HHTML = `
             <div class="sl-section-label">⚔️ HEAD TO HEAD</div>
             <div class="sl-h2h-select-wrap">
                 <select id="slH2HSelect" class="sl-h2h-select" onchange="SidelineView._renderH2HStats()">
                     <option value="" disabled ${selectedVal ? '' : 'selected'}>Compare with...</option>
-                    ${others.map(p => `<option value="${p.uuid}" ${p.uuid === selectedVal ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                    ${others.map(p => `<option value="${p.uuid}" ${p.uuid === selectedVal ? 'selected' : ''}>${this._esc(p.name)}</option>`).join('')}
                 </select>
                 <div class="sl-h2h-arrow">▼</div>
             </div>
@@ -2189,6 +2179,10 @@ const PlayerMode = {
         SidelineView.refresh();
         if (typeof broadcastSpiritAnimalUpdate === 'function') {
             broadcastSpiritAnimalUpdate(passport.playerUUID, emoji);
+        }
+        // Refresh standalone passport if open
+        if (document.getElementById('passportStandalone')?.style.display === 'flex' && typeof window.renderPassportStandalone === 'function') {
+            window.renderPassportStandalone(passport);
         }
         // Persist to database so the update is visible if host reloads while we are pending
         if (typeof memberRename === 'function') {
