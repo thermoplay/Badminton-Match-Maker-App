@@ -88,8 +88,13 @@ async function checkAndAwardAchievements(match, squad) {
                 }
             });
             // Check for 'underdog'
-            const winnerTeamRating = match.teams[winIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
-            const loserTeamRating = match.teams[loseIdx].map(findP).reduce((sum, p) => sum + p.rating, 0) / 2;
+            const getAvgRating = (uuids) => {
+                const team = uuids.map(findP).filter(Boolean);
+                if (team.length === 0) return 1200;
+                return team.reduce((sum, p) => sum + (p.rating || 1200), 0) / team.length;
+            };
+            const winnerTeamRating = getAvgRating(match.teams[winIdx]);
+            const loserTeamRating = getAvgRating(match.teams[loseIdx]);
             if (!unlocked.has('underdog') && winnerTeamRating < loserTeamRating) {
                 player.achievements.push('underdog');
                 unlocked.add('underdog');
