@@ -195,6 +195,7 @@ function _finalizeCourtResultUpdate(lastResolvedTS = Date.now(), playerUUIDs = n
     renderQueueStrip();
     checkNextButtonState();
     updateUndoButton();
+    if (typeof renderSquad === 'function') renderSquad();
     // Trigger sync for both matches and squad since ratings/history updated
     StateStore.setState({
         currentMatches: [...StateStore.currentMatches],

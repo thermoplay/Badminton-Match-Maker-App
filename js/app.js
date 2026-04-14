@@ -468,6 +468,8 @@ function renderSquad() {
     const container = document.getElementById('squadList');
     if (!container) return;
 
+    ensureHostUI();
+
     // Ensure search bar exists
     let searchInput = document.getElementById('squadSearchInput');
     if (!searchInput) {
@@ -552,6 +554,8 @@ function renderSquad() {
         chip.classList.add('player-chip-removing');
         chip.addEventListener('animationend', () => chip.remove(), { once: true });
     });
+
+    renderDirectorHub();
 }
 
 function checkNextButtonState() {
@@ -824,7 +828,6 @@ function showOverlay(type) {
         let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
 
         if (isOnlineSession) {
-            const insights = _getDirectorInsightsHTML();
             shContent += `
                 <div class="sh-section">
                     <div class="session-live-card">
@@ -842,12 +845,6 @@ function showOverlay(type) {
                         </div>
                     </div>
                 </div>
-
-                ${isOperator ? `
-                <div class="sh-section" style="background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:16px; margin-bottom:24px;">
-                    <div class="sync-section-label" style="margin-bottom:12px;">Director Insights</div>
-                    <div class="sh-insights-grid">${insights}</div>
-                </div>` : ''}
 
                 <div class="sh-section">
                     <div class="sync-section-label">Broadcast Controls</div>
@@ -958,17 +955,18 @@ function showOverlay(type) {
 }
 
 /** Computes production-level insights for the host dashboard. */
-function _getDirectorInsightsHTML() {
+function renderDirectorHub() {
+    const grid = document.getElementById('directorHubGrid');
+    if (!grid) return;
+
     const squad = StateStore.squad;
     const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
     const waiting = squad.filter(p => p.active && !onCourt.has(p.uuid));
 
     // 1. Longest Wait
     const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
-    
     // 2. King of the Hill (Current high streak)
     const king = squad.length ? [...squad].sort((a,b) => b.streak - a.streak)[0] : null;
-
     // 3. Iron Man (Most games in session)
     const ironMan = squad.length ? [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] : null;
 
@@ -980,12 +978,13 @@ function _getDirectorInsightsHTML() {
         </div>
     `;
 
-    return `
+    grid.innerHTML = `
         ${renderItem('Waiting Longest', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'), '⏳')}
         ${renderItem('King of Hill', king, (king?.streak > 0 ? `${king.streak} streak` : 'No wins'), '🔥')}
         ${renderItem('Iron Man', ironMan, (ironMan?.sessionPlayCount > 0 ? `${ironMan.sessionPlayCount} games` : '0 games'), '💪')}
     `;
 }
+window.renderDirectorHub = renderDirectorHub;
 
 function closeOverlay() {
     document.getElementById('overlay').classList.remove('open');
@@ -2472,8 +2471,9 @@ window.onPlayRequestInsert = function(record) {
 };
 
 function ensureHostUI() {
-    // Only the host needs these elements
-    if (!window.isOperator) return;
+    // Only show host UI if not in player/spectator view
+    const isPlayerView = document.body.classList.contains('player-mode');
+    if (isPlayerView) return;
 
     // Create a host dashboard area if it doesn't exist
     let dashboard = document.getElementById('hostDashboard');
@@ -2488,6 +2488,21 @@ function ensureHostUI() {
             if (header) header.insertAdjacentElement('afterend', dashboard);
         }
     }
+
+    // Add Director Hub container
+    if (!document.getElementById('directorHub')) {
+        const hub = document.createElement('div');
+        hub.id = 'directorHub';
+        hub.className = 'panel'; 
+        hub.style.padding = '16px';
+        hub.style.marginBottom = '12px';
+        hub.innerHTML = `
+            <div class="sync-section-label" style="margin-bottom:12px; font-size:0.6rem;">Director Insights</div>
+            <div id="directorHubGrid" class="sh-insights-grid"></div>
+        `;
+        dashboard.insertBefore(hub, dashboard.firstChild);
+    }
+    renderDirectorHub();
 
     // Add Open Party Toggle
     if (!document.getElementById('slOpenPartyToggle')) {
