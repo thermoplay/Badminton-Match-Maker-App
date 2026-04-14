@@ -223,6 +223,15 @@ function toggleOpenParty() {
 }
 window.toggleOpenParty = toggleOpenParty;
 
+function renderOpenPartyToggle() {
+    const el = document.getElementById('slOpenPartyToggle');
+    if (!el) return;
+    const isOpen = StateStore.get('isOpenParty') || false;
+    el.className = `open-party-toggle ${isOpen ? 'is-open' : 'is-closed'}`;
+    el.innerHTML = isOpen 
+        ? '<span>🔓</span> Open Party: ON' 
+        : '<span>🔒</span> Open Party: OFF';
+}
 
 window.renderOpenPartyToggle = renderOpenPartyToggle;
 
@@ -821,13 +830,6 @@ function showOverlay(type) {
                         ` : `
                             <button class="btn-main btn-danger" style="grid-column: span 2;" onclick="leaveSession(); closeOverlay();">Leave Session</button>
                         `}
-                    </div>
-                </div>
-
-                <div class="sh-section">
-                    <div class="sync-section-label">Navigation</div>
-                    <div class="sh-grid">
-                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
                     </div>
                 </div>
 
@@ -2581,7 +2583,7 @@ function passportRename() {
                     }
 
                     renderSquad();
-                    if (matchUpdated && typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+                    if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
                     if (typeof renderQueueStrip === 'function') renderQueueStrip();
                 }
             }
