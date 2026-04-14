@@ -833,6 +833,13 @@ function showOverlay(type) {
                     </div>
                 </div>
 
+                <div class="sh-section">
+                    <div class="sync-section-label">Navigation</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
+                    </div>
+                </div>
+
                 ${_supportSectionHTML()}
             `;
         } else {
@@ -869,6 +876,13 @@ function showOverlay(type) {
                 <div class="sh-section" style="text-align:center; padding-top:10px;">
                     <button class="btn-main btn-danger" style="width:auto; display:inline-flex; padding:8px 16px; font-size:0.7rem; height:auto; min-height:auto;"
                         onclick="confirmEraseAllData()">WIPE ALL LOCAL DATA</button>
+                </div>
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Navigation</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
+                    </div>
                 </div>
 
                 ${_supportSectionHTML()}
