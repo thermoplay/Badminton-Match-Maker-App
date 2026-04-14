@@ -6111,3 +6111,42 @@ body.session-ended #nextUpTicker {
     height: 50px !important;
     box-shadow: none !important;
 }
+
+/* ── Director's Hub Insights ────────────────────────── */
+.sh-insights-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.sh-insight-item {
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+}
+
+.sh-insight-label {
+    font-size: 0.5rem;
+    font-weight: 800;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.sh-insight-val {
+    font-family: var(--font-display);
+    font-size: 0.85rem;
+    font-weight: 800;
+    color: var(--text);
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sh-insight-meta {
+    font-size: 0.6rem;
+    color: var(--accent);
+    font-weight: 700;
+}

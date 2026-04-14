@@ -824,6 +824,7 @@ function showOverlay(type) {
         let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
 
         if (isOnlineSession) {
+            const insights = _getDirectorInsightsHTML();
             shContent += `
                 <div class="sh-section">
                     <div class="session-live-card">
@@ -841,6 +842,12 @@ function showOverlay(type) {
                         </div>
                     </div>
                 </div>
+
+                ${isOperator ? `
+                <div class="sh-section" style="background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:16px; margin-bottom:24px;">
+                    <div class="sync-section-label" style="margin-bottom:12px;">Director Insights</div>
+                    <div class="sh-insights-grid">${insights}</div>
+                </div>` : ''}
 
                 <div class="sh-section">
                     <div class="sync-section-label">Broadcast Controls</div>
@@ -948,6 +955,36 @@ function showOverlay(type) {
             });
         }
     }
+}
+
+/** Computes production-level insights for the host dashboard. */
+function _getDirectorInsightsHTML() {
+    const squad = StateStore.squad;
+    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
+    const waiting = squad.filter(p => p.active && !onCourt.has(p.uuid));
+
+    // 1. Longest Wait
+    const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
+    
+    // 2. King of the Hill (Current high streak)
+    const king = squad.length ? [...squad].sort((a,b) => b.streak - a.streak)[0] : null;
+
+    // 3. Iron Man (Most games in session)
+    const ironMan = squad.length ? [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] : null;
+
+    const renderItem = (label, player, val, icon) => `
+        <div class="sh-insight-item">
+            <div class="sh-insight-label">${icon} ${label}</div>
+            <div class="sh-insight-val">${player ? escapeHTML(player.name) : '—'}</div>
+            <div class="sh-insight-meta">${val || ''}</div>
+        </div>
+    `;
+
+    return `
+        ${renderItem('Waiting Longest', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'), '⏳')}
+        ${renderItem('King of Hill', king, (king?.streak > 0 ? `${king.streak} streak` : 'No wins'), '🔥')}
+        ${renderItem('Iron Man', ironMan, (ironMan?.sessionPlayCount > 0 ? `${ironMan.sessionPlayCount} games` : '0 games'), '💪')}
+    `;
 }
 
 function closeOverlay() {
