@@ -72,7 +72,7 @@ function _createRoundSnapshot(finishedMatch, achievements = [], preSquad, preQue
         timestamp:     Date.now(),
         achievements:  achievements,
     };
-    StateStore.roundHistory.push(snapshot);
+    StateStore.set('roundHistory', [...StateStore.roundHistory, snapshot]);
     if (typeof archiveRoundToSupabase === 'function') archiveRoundToSupabase(snapshot);
 }
 
@@ -152,7 +152,10 @@ function _recordMatchStats(match, timestamp = Date.now()) {
  * @param {number} mIdx - The index of the court/match being removed.
  */
 function _handleInsufficientPlayersForNextMatch(mIdx) {
-    StateStore.currentMatches.splice(mIdx, 1);
+    const updatedMatches = [...StateStore.currentMatches];
+    updatedMatches.splice(mIdx, 1);
+    StateStore.set('currentMatches', updatedMatches);
+    
     rebuildMatchCardIndices();
     _finalizeCourtResultUpdate();
 }
@@ -164,7 +167,9 @@ function _handleInsufficientPlayersForNextMatch(mIdx) {
  */
 function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     const newMatch = buildMatchFromPlayers(next4);
-    StateStore.currentMatches[mIdx] = newMatch;
+    const updatedMatches = [...StateStore.currentMatches];
+    updatedMatches[mIdx] = newMatch;
+    StateStore.set('currentMatches', updatedMatches);
 
     next4.forEach(p => p.acknowledged = false);
 
@@ -1214,8 +1219,11 @@ function swapActivePlayers(uuidA, uuidB) {
     if (!locA || !locB) return false;
 
     // 2. Perform Swap in State
-    StateStore.currentMatches[locA.mIdx].teams[locA.tIdx][locA.pIdx] = uuidB;
-    StateStore.currentMatches[locB.mIdx].teams[locB.tIdx][locB.pIdx] = uuidA;
+    const updatedMatches = [...StateStore.currentMatches];
+    updatedMatches[locA.mIdx].teams[locA.tIdx][locA.pIdx] = uuidB;
+    updatedMatches[locB.mIdx].teams[locB.tIdx][locB.pIdx] = uuidA;
+    
+    StateStore.set('currentMatches', updatedMatches);
 
     // 3. Update affected matches (recalc odds, reset winner, re-render)
     const updateMatch = (idx) => {

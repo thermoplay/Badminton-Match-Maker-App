@@ -323,21 +323,44 @@ function _autoAddHostToSquad() {
     const hostUUID = passport.playerUUID;
 
     // Check if a player with this UUID or name already exists.
-    const hostIsInSquad = StateStore.squad.some(p => p.uuid === hostUUID);
+    const hostInSquad = StateStore.squad.find(p => p.uuid === hostUUID);
+    const newQueue = [...StateStore.playerQueue];
+    let changed = false;
 
-    if (!hostIsInSquad) {
+    if (!hostInSquad) {
         const hostAsPlayer = migratePlayer({ // Use migratePlayer to ensure all fields are present
             name: hostName,
             uuid: hostUUID,
+            active: true
         });
         
-        if (!StateStore.playerQueue.includes(hostUUID)) {
-            StateStore.playerQueue.unshift(hostUUID); // Also add to front of queue
+        if (!newQueue.includes(hostUUID)) {
+            newQueue.unshift(hostUUID); // Also add to front of queue
         }
         
-        StateStore.set('squad', [hostAsPlayer, ...StateStore.squad]); // Trigger sync
-        renderSquad(); // Re-render the squad list to show the new player
-        showSessionToast(`👋 Welcome, ${hostName}! You've been added to the squad.`);
+        StateStore.setState({
+            squad: [hostAsPlayer, ...StateStore.squad],
+            playerQueue: newQueue
+        });
+        changed = true;
+        showSessionToast(`👋 Welcome, ${hostName}! You've been added to the rotation.`);
+    } else {
+        // If already in squad, ensure they are in the queue and active
+        if (!newQueue.includes(hostUUID)) {
+            newQueue.unshift(hostUUID);
+            StateStore.set('playerQueue', newQueue);
+            changed = true;
+        }
+        if (hostInSquad.active === false) {
+            hostInSquad.active = true;
+            StateStore.set('squad', [...StateStore.squad]);
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        renderSquad();
+        if (typeof renderQueueStrip === 'function') renderQueueStrip();
     }
 }
 
@@ -2284,9 +2307,10 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     const finalName = player.name;
     const validUUID = player.uuid;
 
-    // Identity Integrity: Ensure the player is added to the squad array if new
-    if (!StateStore.squad.find(p => p.uuid === validUUID)) {
-        StateStore.squad.push(player);
+    let newSquad = [...StateStore.squad];
+    // Identity Integrity: Ensure the player is in the squad array
+    if (!newSquad.find(p => p.uuid === validUUID)) {
+        newSquad.push(player);
     }
 
     if (initialEmoji) player.spiritAnimal = initialEmoji;
@@ -2330,7 +2354,7 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
 
     // Grouped Sync: Update both keys formally to ensure consistency and trigger cloud broadcast
-    StateStore.setState({ squad: StateStore.squad, playerQueue: newQueue });
+    StateStore.setState({ squad: newSquad, playerQueue: newQueue });
 
     showSessionToast(`✅ ${player.name} added`);
     Haptic.success();
@@ -2595,6 +2619,9 @@ function passportRename() {
                             }
                         }
                     }
+
+                    // Force StateStore to acknowledge the change and persist to disk
+                    StateStore.set('squad', [...StateStore.squad]);
 
                     renderSquad();
                     if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();

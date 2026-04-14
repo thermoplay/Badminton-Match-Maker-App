@@ -1115,7 +1115,7 @@ function applyRemoteState(session) {
                 }
             });
             if (hasChanges) {
-                StateStore.set('squad', StateStore.squad);
+                StateStore.set('squad', [...StateStore.squad]);
                 renderSquad();
             }
         }
