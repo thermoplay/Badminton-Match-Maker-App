@@ -1145,7 +1145,10 @@ function applyRemoteState(session) {
             ]
         };
     });
-    const loadedQueue = (session.player_queue || []).filter(uuid => loadedSquad.find(p => p.uuid === uuid));
+    const loadedQueue = (session.player_queue || []).filter(id => 
+        // Allow lookup by UUID or Name during hydration to prevent queue loss
+        loadedSquad.find(p => p.uuid === id || p.name.toLowerCase() === String(id).toLowerCase())
+    );
     const loadedCourtNames = session.court_names || {};
     let loadedCourts = 1;
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {

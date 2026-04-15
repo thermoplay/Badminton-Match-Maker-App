@@ -123,6 +123,7 @@ function loadFromDisk() {
                 activeCourts: loadedCourts,
                 courtNames: data.courtNames || {},
                 isOpenParty: data.isOpenParty || false,
+            fairnessMultiplier: data.fairnessMultiplier ?? 5, // Default mid-point
                 guestList: data.guestList || [],
                 lastUpdated: data.lastUpdated || Date.now(),
             });
@@ -368,14 +369,17 @@ function _autoAddHostToSquad() {
     let changed = false;
 
     if (!hostInSquad) {
-        const hostAsPlayer = migratePlayer({ // Use migratePlayer to ensure all fields are present
+        const hostAsPlayer = migratePlayer({
             name: hostName,
             uuid: hostUUID,
             active: true
         });
         
-        if (!newQueue.includes(hostUUID)) {
-            newQueue.unshift(hostUUID); // Also add to front of queue
+        const existingIdx = newQueue.findIndex(u => u === hostUUID || u === hostName);
+        if (existingIdx === -1) {
+            newQueue.unshift(hostUUID);
+        } else {
+            newQueue[existingIdx] = hostUUID; // Transition name to UUID
         }
         
         StateStore.setState({
@@ -385,9 +389,13 @@ function _autoAddHostToSquad() {
         changed = true;
         showSessionToast(`👋 Welcome, ${hostName}! You've been added to the rotation.`);
     } else {
-        // If already in squad, ensure they are in the queue and active
-        if (!newQueue.includes(hostUUID)) {
-            newQueue.unshift(hostUUID);
+        const existingIdx = newQueue.findIndex(u => u === hostUUID || u === hostName);
+        if (existingIdx === -1) {
+            newQueue.unshift(hostUUID); // Also add to front of queue
+            StateStore.set('playerQueue', newQueue);
+            changed = true;
+        } else if (newQueue[existingIdx] === hostName) {
+            newQueue[existingIdx] = hostUUID; // Standardize ID
             StateStore.set('playerQueue', newQueue);
             changed = true;
         }
@@ -870,6 +878,20 @@ function showOverlay(type) {
 
         if (isOnlineSession) {
             shContent += `
+                <div class="sh-section">
+                    <div class="sync-section-label">Matchmaking Logic</div>
+                    <div style="padding: 10px 0;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.6rem; color:var(--text-muted); margin-bottom:8px;">
+                            <span>VARIETY</span>
+                            <span style="color:var(--accent); font-weight:800;">${StateStore.get('fairnessMultiplier') > 7 ? 'STRICT BALANCE' : StateStore.get('fairnessMultiplier') < 3 ? 'MAX VARIETY' : 'BALANCED'}</span>
+                            <span>FAIRNESS</span>
+                        </div>
+                        <input type="range" min="0" max="10" step="1" value="${StateStore.get('fairnessMultiplier') ?? 5}" 
+                               style="width:100%; accent-color:var(--accent);" 
+                               onchange="StateStore.set('fairnessMultiplier', parseInt(this.value)); showSessionToast('Algorithm Updated 🧠');">
+                    </div>
+                </div>
+
                 <div class="sh-section">
                     <div class="session-live-card">
                         <div class="session-live-top">
@@ -1996,13 +2018,25 @@ async function generateRecoveryCard() {
             logging: false,
         });
 
-        canvas.toBlob((blob) => {
+        canvas.toBlob(async (blob) => {
             const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `Courtside-Recovery-${p.playerName.replace(/\s+/g, '-')}.png`;
-            a.click();
-            if (typeof showSessionToast === 'function') showSessionToast('✅ Card Saved to Library');
+            const fileName = `Courtside-Recovery-${p.playerName.replace(/\s+/g, '-')}.png`;
+            
+            // Use Native Share if available (Mobile optimization)
+            const file = new File([blob], fileName, { type: 'image/png' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({ files: [file], title: 'Courtside Pro Recovery Key' });
+                } catch (e) { if (e.name !== 'AbortError') console.error(e); }
+            } else {
+                // Fallback to traditional download
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                a.click();
+                if (typeof showSessionToast === 'function') showSessionToast('✅ Card Downloaded');
+            }
+
             if (window.Haptic) Haptic.success();
         }, 'image/png');
     } catch (e) { console.error(e); }

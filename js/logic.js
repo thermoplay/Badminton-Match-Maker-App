@@ -353,7 +353,7 @@ function initQueue() {
 
     // 1. Process current queue: Resolve names to UUIDs and filter out inactive
     let currentQueue = (StateStore.playerQueue || []).map(item => {
-        const p = StateStore.squad.find(x => x.uuid === item || x.name === item);
+        const p = StateStore.squad.find(x => x.uuid === item || x.name.toLowerCase() === String(item).toLowerCase());
         return (p && p.active) ? p.uuid : null;
     }).filter(Boolean);
 
@@ -550,12 +550,16 @@ function buildMatchFromPlayers(p4) {
 
     // Balance-First Sort: Prioritize splits where the weight difference is smallest.
     // Tie-break with Variety (freshest matchup).
+    const fMult = StateStore.get('fairnessMultiplier') ?? 5;
+
     splits.sort((a, b) => {
         const balanceA = Math.abs(calculateOdds(a.tA, a.tB)[0] - 50);
         const balanceB = Math.abs(calculateOdds(b.tA, b.tB)[0] - 50);
+
+        const scoreA = (balanceA * fMult) + scoreSplit(a.tA, a.tB);
+        const scoreB = (balanceB * fMult) + scoreSplit(b.tA, b.tB);
         
-        if (balanceA !== balanceB) return balanceA - balanceB;
-        return scoreSplit(a.tA, a.tB) - scoreSplit(b.tA, b.tB);
+        return scoreA - scoreB;
     });
 
     const { tA, tB } = splits[0];
@@ -701,9 +705,13 @@ function renderQueueStrip() {
     // Players currently on a court
     const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
 
+    // Normalize queue IDs before rendering to ensure host/legacy names resolve to UUIDs
+    initQueue();
+
     // Queue: active players not on court, in queue order
     const waiting = StateStore.playerQueue
-        .map(uuid => StateStore.squad.find(p => p.uuid === uuid))
+        // Lookup by UUID or Name to prevent "disappearing" players during ID transitions
+        .map(id => StateStore.squad.find(p => p.uuid === id || p.name.toLowerCase() === String(id).toLowerCase()))
         .filter(p => p && p.active && !onCourt.has(p.uuid));
 
     if (waiting.length === 0) {
