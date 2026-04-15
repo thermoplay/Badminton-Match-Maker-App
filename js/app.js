@@ -34,7 +34,7 @@ function startAchPress(key, pUUID = null) {
         if (typeof showAchievementDescription === 'function') {
             let p = null;
             const squad = (typeof StateStore !== 'undefined' ? StateStore.squad : null) || window.squad || [];
-            if (pUUID) p = squad.find(x => x.uuid === pUUID);
+            if (pUUID) p = squad.find(x => (x.uuid || x.name) === pUUID);
             else if (typeof selectedPlayerIndex !== 'undefined' && selectedPlayerIndex !== null) p = StateStore.squad[selectedPlayerIndex];
             
             showAchievementDescription(key, p ? (p.achievements || []) : []);
@@ -106,12 +106,12 @@ function loadFromDisk() {
             const loadedSquad = data.squad || [];
             loadedSquad.forEach(migratePlayer);
 
-            const squadUUIDs = new Set(loadedSquad.map(p => p.uuid));
+            const squadIds = new Set(loadedSquad.map(p => p.uuid || p.name));
             const loadedMatches = (data.currentMatches || []).filter(m =>
-                m.teams.flat().every(uuid => squadUUIDs.has(uuid))
+                m.teams.flat().every(id => squadIds.has(id))
             );
 
-            const loadedQueue = (data.playerQueue || []).filter(uuid => loadedSquad.find(p => p.uuid === uuid));
+            const loadedQueue = (data.playerQueue || []).filter(id => loadedSquad.find(p => (p.uuid || p.name) === id));
             const loadedCourts = (Number.isInteger(data.activeCourts) && data.activeCourts >= 1)
                 ? data.activeCourts : 1;
 
@@ -448,8 +448,9 @@ function _removePlayerFromLocalState(playerIndex) {
 
     const newSquad = [...StateStore.squad];
     newSquad.splice(playerIndex, 1);
-    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedUUID));
-    const newQueue = StateStore.playerQueue.filter(u => u !== removedUUID && u !== removedName);
+    const removedId = removedUUID || removedName;
+    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedId));
+    const newQueue = StateStore.playerQueue.filter(u => u !== removedId);
 
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];
@@ -572,12 +573,13 @@ function renderSquad() {
         if (uuid) existingChips.set(uuid, chip);
     });
 
-    const currentSquadUUIDs = new Set(); // Keep track of UUIDs in the current render pass
+    const existingIds = new Set();
     const fragment = document.createDocumentFragment();
 
     StateStore.squad.forEach((p, idx) => {
+        const pId = p.uuid || p.name;
         const isNew = p.games === 0 && p.wins === 0;
-        currentSquadUUIDs.add(p.uuid); // Add to set of UUIDs that should be present
+        existingIds.add(pId);
 
         const isMatch = !query || p.name.toLowerCase().includes(query);
 
@@ -588,10 +590,10 @@ function renderSquad() {
             <span class="chip-name">${skillBadge}${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
             ${waitBadge}
         `;
-        const isSwapping = p.uuid === swapSourceUUID;
+        const isSwapping = pId === swapSourceUUID;
         const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''}`;
 
-        let chip = existingChips.get(p.uuid);
+        let chip = existingChips.get(pId);
 
         if (chip) {
             // Chip exists, update it if necessary
@@ -603,18 +605,18 @@ function renderSquad() {
                 chip.innerHTML = chipContent;
             }
             chip.style.display = isMatch ? '' : 'none';
-            existingChips.delete(p.uuid);
+            existingChips.delete(pId);
         } else {
             // Chip does not exist, create it
             const newChip = document.createElement('div');
             newChip.className = chipClasses;
-            newChip.dataset.uuid = p.uuid;
+            newChip.dataset.uuid = pId;
             newChip.innerHTML = chipContent;
             newChip.style.display = isMatch ? '' : 'none';
-            newChip.addEventListener('mousedown', () => startPress(p.uuid));
-            newChip.addEventListener('mouseup', () => endPress(p.uuid));
-            newChip.addEventListener('touchstart', () => startPress(p.uuid));
-            newChip.addEventListener('touchend', () => endPress(p.uuid));
+            newChip.addEventListener('mousedown', () => startPress(pId));
+            newChip.addEventListener('mouseup', () => endPress(pId));
+            newChip.addEventListener('touchstart', () => startPress(pId));
+            newChip.addEventListener('touchend', () => endPress(pId));
             newChip.addEventListener('contextmenu', (e) => e.preventDefault());
             fragment.appendChild(newChip);
         }
@@ -737,7 +739,7 @@ function togglePlayerActive(uuid) {
 }
 
 function openMenu(uuid) {
-    const playerIndex = StateStore.squad.findIndex(p => p.uuid === uuid);
+    const playerIndex = StateStore.squad.findIndex(p => (p.uuid || p.name) === uuid);
     if (playerIndex === -1) return;
     selectedPlayerIndex = playerIndex;
     const p = StateStore.squad[playerIndex];
@@ -747,14 +749,14 @@ function openMenu(uuid) {
     if (!menu) return;
 
     const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
-    const isPlaying = onCourt.has(p.uuid);
+    const isPlaying = onCourt.has(p.uuid || p.name);
 
     let swapActionHTML = '';
 
     // Logic for Swap Button visibility
     if (swapSourceUUID) {
         // We are in the middle of a swap
-        if (isPlaying && p.uuid !== swapSourceUUID) {
+        if (isPlaying && (p.uuid || p.name) !== swapSourceUUID) {
             // This is a valid target
             const sourceP = StateStore.squad.find(s => s.uuid === swapSourceUUID);
             const sourceName = sourceP ? sourceP.name : 'Player';
@@ -772,11 +774,11 @@ function openMenu(uuid) {
         }
     } else if (isPlaying) {
         // Not swapping yet, show initiate button
-        swapActionHTML = `<button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="initiateSwap('${p.uuid}')">⇄ Swap Position</button>`;
+        swapActionHTML = `<button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="initiateSwap('${p.uuid || p.name}')">⇄ Swap Position</button>`;
     }
 
     let pokeActionHTML = '';
-    if (isPlaying && !swapSourceUUID) {
+    if (isPlaying && !swapSourceUUID && !p.isGuest) {
         pokeActionHTML = `
             <button class="btn-main menu-btn" style="background:var(--bg2); color:var(--warning); border:1px solid var(--warning);" onclick="broadcastPoke('${p.uuid}'); closeMenu();">
                 ⚡ Poke Player
@@ -825,9 +827,10 @@ function movePlayerToFront() {
     const p = StateStore.squad[selectedPlayerIndex];
     if (!p) return;
     
-    // Remove from current spot in queue and add to front
-    const newQueue = StateStore.playerQueue.filter(u => u !== p.uuid);
-    newQueue.unshift(p.uuid);
+    // Remove from current spot in queue and add to front using unified ID
+    const pId = p.uuid || p.name;
+    const newQueue = StateStore.playerQueue.filter(u => u !== pId);
+    newQueue.unshift(pId);
     StateStore.set('playerQueue', newQueue);
     
     closeMenu();
@@ -1054,7 +1057,7 @@ function renderDirectorHub() {
 
     const squad = StateStore.squad;
     const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
-    const waiting = squad.filter(p => p.active && !onCourt.has(p.uuid));
+    const waiting = squad.filter(p => p.active && !onCourt.has(p.uuid || p.name));
 
     // 1. Longest Wait
     const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
@@ -1568,6 +1571,7 @@ function renderStatsTab(tab) {
         const cWins  = career.wins || 0;
         const cGames = career.games || 0;
         const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+        const skillLevel = (me ? me.skillLevel : passport.skillLevel) || 'Intermediate';
         
         let sWins = 0, sGames = 0, sWr = 0;
         if (me) {
@@ -1632,7 +1636,7 @@ function renderStatsTab(tab) {
             if (me.opponentHistory) {
                 const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
                 if (rivals.length > 0) {
-                    const rivalP = StateStore.squad.find(s => s.uuid === rivals[0][0]);
+                    const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
                     rivalName = rivalP ? rivalP.name : 'Unknown';
                     rivalCount = rivals[0][1];
                 }
@@ -1670,7 +1674,7 @@ function renderStatsTab(tab) {
             const best = partners[0];
             if (best) {
                 const [uuid, stats] = best;
-                const partnerP = StateStore.squad.find(s => s.uuid === uuid);
+                const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
                 const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
                 chemHTML = `
                     <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
@@ -1886,7 +1890,7 @@ async function openPlayerCard(idx) {
     if (p.opponentHistory) {
         const rivals = Object.entries(p.opponentHistory).sort(([,a], [,b]) => b - a);
         if (rivals.length) {
-            const rivalP = StateStore.squad.find(s => s.uuid === rivals[0][0]);
+            const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
             rival = `${rivalP ? rivalP.name : 'Unknown'} (${rivals[0][1]}g)`;
         }
     }
@@ -1903,7 +1907,7 @@ async function openPlayerCard(idx) {
         const best = partners[0];
         if (best) {
             const [uuid, stats] = best;
-            const partnerP = StateStore.squad.find(s => s.uuid === uuid);
+            const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
             const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
             chemistryHTML = `
                 <div class="pc-section-title" style="margin-top:24px;">Partner Chemistry</div>
@@ -1982,8 +1986,8 @@ async function openPlayerCard(idx) {
                     <div class="pc-achievement-badge ${isUnlocked ? 'unlocked' : 'locked'}" 
                          style="${isUnlocked ? `border-color:${data.color}; box-shadow: 0 0 10px ${data.color}44; color:${data.color}` : ''}"
                          title="${data.name}: ${data.description}"
-                         onmousedown="startAchPress('${key}', '${p.uuid}')" onmouseup="endAchPress()"
-                         ontouchstart="startAchPress('${key}', '${p.uuid}')" ontouchend="endAchPress()"
+                         onmousedown="startAchPress('${key}', '${p.uuid || p.name}')" onmouseup="endAchPress()"
+                         ontouchstart="startAchPress('${key}', '${p.uuid || p.name}')" ontouchend="endAchPress()"
                          oncontextmenu="event.preventDefault(); return false;">
                         ${data.icon}
                     </div>
@@ -2930,7 +2934,7 @@ async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.
     const loserUUIDs  = m.teams[loseIdx] || [];
 
     const winnerNames = winnerUUIDs.map(uuid => {
-        const p = StateStore.squad.find(x => x.uuid === uuid);
+        const p = StateStore.squad.find(x => (x.uuid || x.name) === uuid);
         return p ? p.name : 'Unknown';
     });
     const winnerDisplayNames = winnerNames.join(' & ');
