@@ -358,13 +358,13 @@ function applyStatsForMatch(m) { // Renamed from applyELOForMatch
 // ---------------------------------------------------------------------------
 
 function initQueue() {
-     const activeSquad = StateStore.squad.filter(p => p.active);
-    const activeUUIDs = activeSquad.map(p => p.uuid);
+    const activeSquad = StateStore.squad.filter(p => p.active);
+    const activeIds = activeSquad.map(p => p.uuid || p.name);
 
     // 1. Process current queue: Resolve names to UUIDs and filter out inactive
     let currentQueue = (StateStore.playerQueue || []).map(item => {
         const p = StateStore.squad.find(x => x.uuid === item || x.name.toLowerCase() === String(item).toLowerCase());
-        return (p && p.active) ? p.uuid : null;
+        return (p && p.active) ? (p.uuid || p.name) : null;
     }).filter(Boolean);
 
     // Ensure uniqueness
@@ -372,7 +372,7 @@ function initQueue() {
 
     // 2. Add active players not yet in queue
     const inQueueSet = new Set(currentQueue);
-    const newcomers = activeUUIDs.filter(u => !inQueueSet.has(u));
+    const newcomers = activeIds.filter(u => !inQueueSet.has(u));
 
     const finalQueue = [...currentQueue, ...newcomers];
     StateStore.set('playerQueue', finalQueue);
@@ -713,7 +713,7 @@ function renderQueueStrip() {
     }
 
     // Players currently on a court
-    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
+    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat().map(id => String(id))));
 
     // Normalize queue IDs before rendering to ensure host/legacy names resolve to UUIDs
     initQueue();
@@ -722,7 +722,7 @@ function renderQueueStrip() {
     const waiting = StateStore.playerQueue
         // Lookup by UUID or Name to prevent "disappearing" players during ID transitions
         .map(id => StateStore.squad.find(p => p.uuid === id || p.name.toLowerCase() === String(id).toLowerCase()))
-        .filter(p => p && p.active && !onCourt.has(p.uuid));
+        .filter(p => p && p.active && !onCourt.has(String(p.uuid || p.name)));
 
     if (waiting.length === 0) {
         strip.style.display = 'none';

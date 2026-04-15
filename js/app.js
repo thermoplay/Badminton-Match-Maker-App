@@ -94,7 +94,6 @@ function migratePlayer(p) {
     if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
     if (p.matchHistory     == null) p.matchHistory     = [];
-    if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
     if (p.spiritAnimal     == null) p.spiritAnimal     = null;
     return p;
 }
@@ -168,13 +167,14 @@ function addPlayer() {
     // Use migratePlayer to ensure all required logic fields (skillLevel, stats) are initialized
     const newPlayer = migratePlayer({
         name: name,
-        uuid: _generateUUID(),
-        active: true
+        uuid: null,
+        active: true,
+        isGuest: true
     });
     
     // Update state arrays
     const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
+    if (!newQueue.includes(newPlayer.name)) newQueue.push(newPlayer.name);
 
     // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
     StateStore.set('squad', [...StateStore.squad, newPlayer]);
@@ -1599,8 +1599,8 @@ function renderStatsTab(tab) {
                 <div class="sl-stat-card" style="margin-top:12px; cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
                     <div class="sl-card-label">SKILL LEVEL</div>
                     <div style="margin-top: 4px;">
-                        <span class="skill-badge skill-${skillLevel.toLowerCase()}" style="font-size:1rem; padding:4px 12px; border-radius:6px;">
-                            ${skillLevel === 'Novice' ? '🌱 NOVICE' : skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER'}
+                        <span class="skill-badge skill-${(skillLevel || 'Intermediate').toLowerCase()}" style="font-size:1rem; padding:4px 12px; border-radius:6px;">
+                            ${(skillLevel === 'Novice' ? '🌱 NOVICE' : skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
                         </span>
                     </div>
                 </div>
