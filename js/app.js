@@ -13,6 +13,7 @@ let supabase  = null;
 // ---------------------------------------------------------------------------
 window.TIER_WEIGHTS = { 'Novice': 1, 'Intermediate': 2, 'Advanced': 3 };
 window.SKILL_LEVELS = ['Novice', 'Intermediate', 'Advanced'];
+window.SPORT_ICONS  = { 'Badminton': '🏸', 'Tennis': '🎾', 'Pickleball': '🏓' };
 
 window.getSkillWeight = p => window.TIER_WEIGHTS[p?.skillLevel] || window.TIER_WEIGHTS['Intermediate'];
 window.getSkillIndex = p => window.SKILL_LEVELS.indexOf(p?.skillLevel || 'Intermediate');
@@ -93,7 +94,7 @@ function migratePlayer(p) {
     if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
     if (p.matchHistory     == null) p.matchHistory     = [];
-    if (p.isGuest          == null) p.isGuest          = !p.uuid;
+    if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
     if (p.spiritAnimal     == null) p.spiritAnimal     = null;
     return p;
 }
@@ -124,6 +125,7 @@ function loadFromDisk() {
                 courtNames: data.courtNames || {},
                 isOpenParty: data.isOpenParty || false,
             fairnessMultiplier: data.fairnessMultiplier ?? 5, // Default mid-point
+            sport: data.sport || 'Badminton',
                 guestList: data.guestList || [],
                 lastUpdated: data.lastUpdated || Date.now(),
             });
@@ -163,17 +165,16 @@ function addPlayer() {
         return;
     }
 
-    // Manually added players are GUESTS and do not have UUIDs
+    // Use migratePlayer to ensure all required logic fields (skillLevel, stats) are initialized
     const newPlayer = migratePlayer({
         name: name,
-        uuid: null,
-        active: true,
-        isGuest: true
+        uuid: _generateUUID(),
+        active: true
     });
     
     // Update state arrays
     const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(newPlayer.name)) newQueue.push(newPlayer.name);
+    if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
 
     // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
     StateStore.set('squad', [...StateStore.squad, newPlayer]);
@@ -326,13 +327,14 @@ function openSetSkillLevel() {
     const p = StateStore.squad[selectedPlayerIndex];
     if (!p) return;
     closeMenu();
+    const pId = p.uuid || p.name;
     UIManager.confirm({
         title: `Set Skill Level for ${p.name}`,
         message: `
             <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${p.uuid}', 'Novice'); UIManager.hide();">Novice</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${p.uuid}', 'Intermediate'); UIManager.hide();">Intermediate</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${p.uuid}', 'Advanced'); UIManager.hide();">Advanced</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Novice'); UIManager.hide();">Novice</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Intermediate'); UIManager.hide();">Intermediate</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Advanced'); UIManager.hide();">Advanced</button>
             </div>
         `,
         confirmText: 'Cancel', // Renamed to cancel as buttons handle action
@@ -343,8 +345,33 @@ function openSetSkillLevel() {
 }
 window.openSetSkillLevel = openSetSkillLevel;
 
-function setPlayerSkillLevel(uuid, level) {
-    const p = StateStore.squad.find(x => x.uuid === uuid);
+/** Opens the skill level picker specifically from the Player Card context. */
+function openSetSkillLevelForCard(idx) {
+    const p = StateStore.squad[idx];
+    if (!p) return;
+    
+    const pId = p.uuid || p.name;
+    UIManager.confirm({
+        title: `Set Skill Level for ${p.name}`,
+        message: `
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
+                        onclick="setPlayerSkillLevel('${pId}', 'Novice'); UIManager.hide(); openPlayerCard(${idx});">Novice</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
+                        onclick="setPlayerSkillLevel('${pId}', 'Intermediate'); UIManager.hide(); openPlayerCard(${idx});">Intermediate</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
+                        onclick="setPlayerSkillLevel('${pId}', 'Advanced'); UIManager.hide(); openPlayerCard(${idx});">Advanced</button>
+            </div>
+        `,
+        confirmText: 'Cancel',
+        showCancel: false,
+    });
+}
+window.openSetSkillLevelForCard = openSetSkillLevelForCard;
+
+function setPlayerSkillLevel(id, level) {
+    // Find by UUID or Name (to support both Passport holders and Guests)
+    const p = StateStore.squad.find(x => x.uuid === id || x.name === id);
     if (!p) return;
     p.skillLevel = level;
     StateStore.set('squad', [...StateStore.squad]);
@@ -421,10 +448,8 @@ function _removePlayerFromLocalState(playerIndex) {
 
     const newSquad = [...StateStore.squad];
     newSquad.splice(playerIndex, 1);
-    
-    const removedId = removedUUID || removedName;
-    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedId));
-    const newQueue = StateStore.playerQueue.filter(id => id !== removedUUID && id !== removedName);
+    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedUUID));
+    const newQueue = StateStore.playerQueue.filter(u => u !== removedUUID && u !== removedName);
 
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];
@@ -558,16 +583,15 @@ function renderSquad() {
 
         const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
         const skillBadge = `<span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" title="${p.skillLevel || 'Intermediate'}">${(p.skillLevel || 'Intermediate').charAt(0)}</span>`;
-        const guestBadge = p.isGuest ? '<span class="new-badge" style="background:var(--text-muted); color:var(--bg);">GUEST</span>' : '';
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
-            <span class="chip-name">${skillBadge}${guestBadge}${escapeHTML(p.name)}${isNew && !p.isGuest ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${skillBadge}${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
             ${waitBadge}
         `;
-        const isSwapping = (p.uuid && p.uuid === swapSourceUUID) || (!p.uuid && p.name === swapSourceUUID);
+        const isSwapping = p.uuid === swapSourceUUID;
         const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''}`;
 
-        let chip = existingChips.get(p.uuid || p.name);
+        let chip = existingChips.get(p.uuid);
 
         if (chip) {
             // Chip exists, update it if necessary
@@ -717,6 +741,8 @@ function openMenu(uuid) {
     if (playerIndex === -1) return;
     selectedPlayerIndex = playerIndex;
     const p = StateStore.squad[playerIndex];
+    const sport = StateStore.get('sport') || 'Badminton';
+    const sIcon = window.SPORT_ICONS[sport] || '🏸';
     const menu = document.getElementById('actionMenu');
     if (!menu) return;
 
@@ -760,7 +786,7 @@ function openMenu(uuid) {
     menu.innerHTML = `
         <div class="menu-card">
             <h2>${escapeHTML(p.name)}</h2>
-            <p>${p.active ? (isPlaying ? 'Currently Playing 🏸' : 'Ready for Rotation') : 'Taking a Break ☕'}</p>
+            <p>${p.active ? (isPlaying ? `Currently Playing ${sIcon}` : 'Ready for Rotation') : 'Taking a Break ☕'}</p>
             
             ${swapActionHTML}
 
@@ -1097,6 +1123,7 @@ function _calculateFinalRecapData() {
     const squad = StateStore.squad || [];
     const history = StateStore.roundHistory || [];
     const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
+    const sport = StateStore.get('sport') || 'Badminton';
     
     const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins || getSkillIndex(b) - getSkillIndex(a));
     const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
@@ -1112,6 +1139,7 @@ function _calculateFinalRecapData() {
     const sharpShooter = sortedByWR[0] || { name: 'N/A', wins: 0, games: 0 };
 
     return { 
+        sport,
         totalGames, 
         mvp: { name: mvp.name, wins: mvp.wins, games: mvp.games }, 
         ironMan: { name: ironMan.name, sessionPlayCount: ironMan.sessionPlayCount },
@@ -1439,7 +1467,7 @@ function undoLastRound() {
     if (StateStore.roundHistory.length === 0) return;
     UIManager.confirm({
         title: 'Undo Round?',
-        message: 'Undo the last round? This will reverse all ELO changes.',
+        message: 'Undo the last round? This will reverse all stat changes.',
         confirmText: 'Yes, Undo',
         onConfirm: () => {
             const snapshot = StateStore.roundHistory.pop();
@@ -1540,7 +1568,6 @@ function renderStatsTab(tab) {
         const cWins  = career.wins || 0;
         const cGames = career.games || 0;
         const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-        const skillLevel = (me ? me.skillLevel : passport.skillLevel) || 'Intermediate';
         
         let sWins = 0, sGames = 0, sWr = 0;
         if (me) {
@@ -1569,10 +1596,14 @@ function renderStatsTab(tab) {
                         </div>
                     </div>` : `<div class="sl-card-empty">Not in squad</div>`}
                 </div>
-                 <div class="sl-stat-card" style="margin-top:12px;">
+                <div class="sl-stat-card" style="margin-top:12px; cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
                     <div class="sl-card-label">SKILL LEVEL</div>
-                    <div style="font-family:var(--font-display); font-size:1.8rem; font-weight:900; color:var(--accent);">${skillLevel.toUpperCase()}</div>
-                </div>       
+                    <div style="margin-top: 4px;">
+                        <span class="skill-badge skill-${skillLevel.toLowerCase()}" style="font-size:1rem; padding:4px 12px; border-radius:6px;">
+                            ${skillLevel === 'Novice' ? '🌱 NOVICE' : skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER'}
+                        </span>
+                    </div>
+                </div>
                 <div class="sl-stat-card">
                     <div class="sl-card-label">CAREER RECORD</div>
                     <div class="sl-card-grid">
@@ -1911,6 +1942,15 @@ async function openPlayerCard(idx) {
             <div class="pc-stat">
                 <div class="pc-stat-val">${wr}%</div>
                 <div class="pc-stat-label">Win Rate</div>
+            </div>
+            <div class="pc-stat-divider"></div>
+            <div class="pc-stat" style="cursor:pointer;" onclick="openSetSkillLevelForCard(${idx})">
+                <div class="pc-stat-val" style="font-size:0.75rem; margin-top:4px;">
+                    <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}">
+                        ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
+                    </span>
+                </div>
+                <div class="pc-stat-label">Skill</div>
             </div>
         </div>
         <div style="display:flex; justify-content:space-between; margin-bottom:16px; padding:0 10px;">
@@ -3073,20 +3113,41 @@ function showLandingPage() {
     if (sl) sl.style.display = 'none';
     document.body.classList.remove('player-mode');
 
+    const sport = StateStore.get('sport') || 'Badminton';
+
     if (typeof closeOverlay === 'function') closeOverlay();
-    const div = document.createElement('div');
-    div.id = 'landingPage';
+    let div = document.getElementById('landingPage');
+    if (!div) {
+        div = document.createElement('div');
+        div.id = 'landingPage';
+        document.body.appendChild(div);
+    }
     div.className = 'actionMenu'; // Reuse modal style
     div.style.zIndex = '9000';
     div.style.background = 'var(--bg)'; // Opaque background
+
+    const sports = ['Badminton', 'Tennis', 'Pickleball'];
+    const sportBtns = sports.map(s => `
+        <button class="btn-main ${sport === s ? '' : 'ps-btn-sub'}" 
+                style="flex:1; height:40px; font-size:0.7rem; ${sport === s ? 'background:var(--accent); color:#000;' : 'background:var(--surface2); color:var(--text); opacity:0.6;'}" 
+                onclick="window.setGlobalSport('${s}')">
+            ${window.SPORT_ICONS[s]} ${s.toUpperCase()}
+        </button>
+    `).join('');
+
     div.innerHTML = `
         <div class="menu-card" style="padding:40px 24px; max-width:360px; border:none; box-shadow:none; background:transparent;">
             <div style="font-family:var(--font-display); font-size:3.5rem; font-weight:900; font-style:italic; line-height:0.9; margin-bottom:10px; color:var(--text);">
                 COURTSIDE<span style="color:var(--accent);">PRO</span>
             </div>
             <p style="color:var(--text-muted); margin-bottom:40px; font-size:0.9rem; letter-spacing:1px; text-transform:uppercase; font-weight:600;">
-                Badminton Match Maker
+                ${sport} Match Maker
             </p>
+
+            <div style="display:flex; gap:8px; margin-bottom:24px; background:var(--bg2); padding:4px; border-radius:12px; border:1px solid var(--border);">
+                ${sportBtns}
+            </div>
+
             <button class="btn-main" onclick="closeLandingPage()" style="width:100%; margin-bottom:16px; height:60px; font-size:1.2rem; box-shadow:0 0 30px var(--accent-dim);">
                 Host Session
             </button>
@@ -3101,8 +3162,13 @@ function showLandingPage() {
             </button>
         </div>
     `;
-    document.body.appendChild(div);
 }
+
+window.setGlobalSport = function(s) {
+    StateStore.set('sport', s);
+    showLandingPage();
+    Haptic.tap();
+};
 window.goToMainMenu = showLandingPage;
 
 window.closeLandingPage = function() {
@@ -3200,7 +3266,10 @@ window.openStandalonePassport = function() {
                                 player_uuid: updatedP.playerUUID,
                                 total_wins: updatedP.stats.wins,
                                 total_games: updatedP.stats.games,
-                                achievements: updatedP.achievements
+                                achievements: updatedP.achievements,
+                                teammate_history: updatedP.teammateHistory,
+                                opponent_history: updatedP.opponentHistory,
+                                partner_stats: updatedP.partnerStats
                             })
                         }).catch(e => console.warn('[Passport] Reconciliation failed', e));
                     }
@@ -3236,6 +3305,35 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
         listEl.innerHTML = html || '<div class="ps-empty-ach">No trophies earned yet.</div>';
     };
 
+    // Legacy Calculations
+    const squad = (typeof StateStore !== 'undefined' ? StateStore.squad : null) || window.squad || [];
+    
+    let rivalDisplay = '—';
+    if (p.opponentHistory && Object.keys(p.opponentHistory).length > 0) {
+        const rivals = Object.entries(p.opponentHistory).sort(([, a], [, b]) => b - a);
+        const [rUUID, rCount] = rivals[0];
+        const rivalName = squad.find(s => s.uuid === rUUID)?.name 
+                       || p.partnerStats?.[rUUID]?.name 
+                       || 'Veteran Rival';
+        rivalDisplay = `${rivalName} (${rCount}g)`;
+    }
+
+    let partnerDisplay = '—';
+    if (p.partnerStats && Object.keys(p.partnerStats).length > 0) {
+        const partners = Object.entries(p.partnerStats)
+            .filter(([, s]) => s.games >= 3)
+            .sort(([, a], [, b]) => (b.wins / b.games) - (a.wins / a.games) || b.games - a.games);
+        
+        if (partners.length > 0) {
+            const [pUUID, pStats] = partners[0];
+            const wr = Math.round((pStats.wins / pStats.games) * 100);
+            const pName = squad.find(s => s.uuid === pUUID)?.name 
+                       || pStats.name 
+                       || 'Elite Partner';
+            partnerDisplay = `${pName} (${wr}% WR)`;
+        }
+    }
+
     content.innerHTML = `
         <div class="ps-header">
             <div class="ps-avatar-ring">
@@ -3267,9 +3365,27 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
                 <div class="ps-stat-val">${wr}%</div>
                 <div class="ps-stat-label">WIN RATE</div>
             </div>
-            <div class="ps-stat-card">
-                <div class="ps-stat-val" style="font-size:1.2rem;">${p.skillLevel || 'Intermediate'}</div>
+            <div class="ps-stat-card" style="cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
+                <div class="ps-stat-val" style="font-size:0.85rem; margin-top:4px;">
+                    <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" style="font-size:0.75rem; padding:4px 10px; border-radius:6px;">
+                        ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
+                    </span>
+                </div>
                 <div class="ps-stat-label">SKILL LEVEL</div>
+            </div>
+        </div>
+
+        <div class="ps-section">
+            <div class="ps-section-header">📜 LEGACY</div>
+            <div class="ps-stats-grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div class="ps-stat-card">
+                    <div class="ps-stat-val" style="font-size: 0.85rem; color: var(--text);">${partnerDisplay}</div>
+                    <div class="ps-stat-label">BEST PARTNER</div>
+                </div>
+                <div class="ps-stat-card">
+                    <div class="ps-stat-val" style="font-size: 0.85rem; color: var(--text);">${rivalDisplay}</div>
+                    <div class="ps-stat-label">CAREER RIVAL</div>
+                </div>
             </div>
         </div>
 

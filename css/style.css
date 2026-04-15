@@ -493,15 +493,17 @@ input:focus {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 14px;
-    height: 14px;
-    border-radius: 3px;
+    padding: 2px 6px;
+    border-radius: 4px;
     font-family: var(--font-display);
-    font-size: 0.55rem;
+    font-size: 0.5rem;
     font-weight: 900;
-    margin-right: 6px;
+    margin-right: 8px;
     color: #fff;
     vertical-align: middle;
+    letter-spacing: 0.5px;
+    line-height: 1;
+    white-space: nowrap;
 }
 .skill-novice { background: var(--info); }
 .skill-intermediate { background: var(--warning); color: #000 !important; }

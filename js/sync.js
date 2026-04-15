@@ -23,6 +23,7 @@ let isOperator        = false;
 let currentRoomCode   = null;
 let operatorKey       = null;
 let operatorKeyHash   = null;
+let sport             = 'Badminton';
 let sbManager         = null; // Instance of SupabaseRealtimeManager
 let _isBootingSession = false; // true only during initial rejoin hydration
 let _pendingActions   = [];    // Queue for actions attempted while offline
@@ -40,6 +41,7 @@ function _syncState() {
     window.isOperator      = isOperator;
     window.currentRoomCode = currentRoomCode;
     window.operatorKey     = operatorKey;
+    window.sport           = sport;
 }
 
 // session_members realtime state
@@ -327,6 +329,7 @@ async function createOnlineSession() {
             body: {
                 room_code: roomCode,
                 operator_key: opKey,
+                sport: StateStore.get('sport') || 'Badminton',
                 court_names: StateStore.get('courtNames'),
                 squad: StateStore.squad,
                 current_matches: StateStore.currentMatches,
@@ -351,6 +354,7 @@ async function createOnlineSession() {
         operatorKeyHash = opKeyHash;
         isOperator      = true;
         isOnlineSession = true;
+        sport           = StateStore.get('sport') || 'Badminton';
         _syncState();
         localStorage.setItem('cs_room_code',    roomCode);
         localStorage.setItem('cs_operator_key', opKey);
@@ -400,6 +404,7 @@ async function joinOnlineSession(roomCode) {
         const savedHash  = localStorage.getItem('cs_op_key_hash');
         currentRoomCode = code;
         isOnlineSession = true;
+        sport           = session.sport || 'Badminton';
         if (savedCode === code && savedHash && savedHash === session.operator_key) {
             isOperator      = true;
             operatorKey     = savedOpKey;
@@ -449,6 +454,7 @@ const _doPushToSupabase = async () => {
             body: {
                 room_code:        currentRoomCode,
                 operator_key:     operatorKey,
+                sport:            StateStore.get('sport') || 'Badminton',
                 squad:            squadToSend,
                 current_matches:  StateStore.currentMatches,
                 player_queue:     StateStore.playerQueue,
@@ -548,6 +554,18 @@ function broadcastSpiritAnimalUpdate(playerUUID, emoji) {
         // Queue for later if offline
         _pendingActions.push({ type: 'spirit_animal_update', payload });
         if (typeof showSessionToast === 'function') showSessionToast('📡 Offline. Emoji will sync on reconnect.');
+    }
+}
+
+/**
+ * Player broadcasts their skill level update to the host.
+ */
+function broadcastSkillLevelUpdate(playerUUID, level) {
+    const payload = { playerUUID, level };
+    if (sbManager && sbManager.socket?.readyState === WebSocket.OPEN) {
+        sbManager.broadcast('skill_level_update', payload);
+    } else {
+        _pendingActions.push({ type: 'skill_level_update', payload });
     }
 }
 
@@ -892,6 +910,14 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // Player skill level update — host applies the change
+    if (type === 'skill_level_update') {
+        if (isOperator) {
+            _applySkillLevelUpdate(payload.playerUUID, payload.level);
+        }
+        return;
+    }
+
     // Feature #5: Status update — host applies the change
     if (type === 'player_status_update') {
         if (isOperator) {
@@ -958,6 +984,23 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
 
     showSessionToast(`✏️ ${prevName} → ${trimmed}`);
 }
+
+function _applySkillLevelUpdate(playerUUID, level) {
+    const player = StateStore.squad.find(p => p.uuid === playerUUID);
+    if (!player) return;
+
+    if (player.skillLevel !== level) {
+        player.skillLevel = level;
+        renderSquad();
+        checkNextButtonState();
+        StateStore.set('squad', [...StateStore.squad]);
+
+        // Force immediate broadcast so the skill tier updates instantly for everyone
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
+
+        showSessionToast(`${player.name} is now ${level}`);
+    }
+}
 window._applyNameUpdate = _applyNameUpdate;
 window._generateStateHash = _generateStateHash;
 
@@ -1003,7 +1046,8 @@ function _applyStatusUpdate(playerUUID, isActive) {
         // Force immediate broadcast so the Ready/Resting status updates instantly for everyone
         if (typeof broadcastGameState === 'function') broadcastGameState(true);
 
-        showSessionToast(`${player.name} is now ${player.active ? 'Ready 🏸' : 'Resting ☕'}`);
+        const sIcon = (window.SPORT_ICONS ? window.SPORT_ICONS[window.sport || 'Badminton'] : null) || '🏸';
+        showSessionToast(`${player.name} is now ${player.active ? `Ready ${sIcon}` : 'Resting ☕'}`);
     }
 }
 
@@ -1166,6 +1210,7 @@ function applyRemoteState(session) {
         activeCourts: loadedCourts, 
         courtNames: loadedCourtNames,
         isOpenParty: session.is_open_party || false,
+        sport: session.sport || 'Badminton',
         guestList: session.guest_list || []
     });
     // Also update window globals for player view, which doesn't use StateStore
@@ -1173,15 +1218,16 @@ function applyRemoteState(session) {
         window.squad = loadedSquad;
         window.currentMatches = loadedMatches;
         window.courtNames = loadedCourtNames;
+        window.sport = session.sport || 'Badminton';
     }
 
     // round_history is no longer synced to DB — keep local undo history intact
     // roundHistory stays as-is on rejoin
 
     // Migrate: remote squad rows may come from an older client that didn't
-    // save rating / consecutiveGames / forcedRest. migratePlayer() is defined
+    // save skillLevel / consecutiveGames / forcedRest. migratePlayer() is defined
     // in app.js and backfills any missing fields so calculateOdds never sees
-    // undefined.rating regardless of where the data came from.
+    // undefined.skillLevel regardless of where the data came from.
     if (typeof migratePlayer === 'function') StateStore.squad.forEach(migratePlayer);
     window._sessionUUIDMap  = session.uuid_map         || {};
     window._approvedPlayers = session.approved_players || {};
@@ -1508,8 +1554,10 @@ async function tryAutoRejoin() {
             isOperator      = true;
             operatorKey     = localStorage.getItem('cs_operator_key');
             operatorKeyHash = savedHash;
+            sport           = session.sport || 'Badminton';
         } else {
             isOperator = false;
+            sport      = session.sport || 'Badminton';
         }
         _syncState();
 

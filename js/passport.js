@@ -132,7 +132,10 @@ const Passport = {
             p.spiritAnimal = remoteData.spirit_animal;
             changed = true;
         }
-        
+         // 4. Legacy History Sync
+        if (remoteData.teammate_history) p.teammateHistory = { ...(p.teammateHistory || {}), ...remoteData.teammate_history };
+        if (remoteData.opponent_history) p.opponentHistory = { ...(p.opponentHistory || {}), ...remoteData.opponent_history };
+        if (remoteData.partner_stats)    p.partnerStats    = { ...(p.partnerStats || {}), ...remoteData.partner_stats };
         if (changed) this.save(p);
         return { passport: p, needsUpload };
     },

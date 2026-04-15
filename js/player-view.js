@@ -538,8 +538,9 @@ const SidelineView = {
 
         const newHeaderHTML = `
             <div class="sl-profile-card">
-                <div class="sl-profile-top-left">
+                <div class="sl-profile-top-left" style="display:flex; gap:8px;">
                     <button class="sl-icon-btn" onclick="PlayerMode.pickSpiritAnimal()" title="Set Spirit Animal">${emoji || '🐾'}</button>
+                    <button class="sl-icon-btn" onclick="PlayerMode.openSkillLevelPicker()" title="Set Skill Level">⚖️</button>
                 </div>
                 <div class="sl-profile-top-right">
                     <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
@@ -680,8 +681,12 @@ const SidelineView = {
                                 <div class="sl-card-val">${cWr}%</div>
                                 <div class="sl-card-key">WIN RATE</div>
                             </div>
-                            <div class="sl-card-item">
-                                <div class="sl-card-val" style="font-size:1.2rem;">${skillLevel}</div>
+                            <div class="sl-card-item" onclick="PlayerMode.openSkillLevelPicker()" style="cursor:pointer;">
+                                <div class="sl-card-val" style="font-size:0.75rem; margin-top:2px;">
+                                    <span class="skill-badge skill-${skillLevel.toLowerCase()}">
+                                        ${skillLevel === 'Novice' ? '🌱 NOVICE' : skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER'}
+                                    </span>
+                                </div>
                                 <div class="sl-card-key">SKILL LEVEL</div>
                             </div>
                         </div>
@@ -1132,7 +1137,7 @@ const PlayerMode = {
 
                 // 1. Calculate local recap before state is cleared
                 const squad = window.squad || [];
-                const sorted = [...squad].sort((a,b) => b.wins - a.wins || b.rating - a.rating);
+                const sorted = [...squad].sort((a,b) => b.wins - a.wins || (window.getSkillIndex?.(b) - window.getSkillIndex?.(a)));
                 const mvp = sorted[0] || { name: 'N/A', wins: 0, games: 0 };
                 const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
                 const ironMan = sortedByGames[0] || { name: 'N/A', sessionPlayCount: 0 };
@@ -1839,8 +1844,9 @@ const PlayerMode = {
             
             // Audio Announcement
             if (localStorage.getItem('cs_audio_announce') === 'true') {
+                const sport = window.sport || 'Badminton';
                 const msg = new SpeechSynthesisUtterance();
-                msg.text = `${passport.playerName}, you are up on court ${courtInfo?.num || 'one'}`;
+                msg.text = `${passport.playerName}, you are up on court ${courtInfo?.num || 'one'} for ${sport}`;
                 msg.rate = 0.9;
                 window.speechSynthesis.speak(msg);
             }
@@ -1848,7 +1854,8 @@ const PlayerMode = {
             // Background Notification: Alert the player if they are in another tab
             if (document.visibilityState !== 'visible' && "Notification" in window && Notification.permission === 'granted') {
                 try {
-                    new Notification("🏸 You're Up!", {
+                    const sIcon = (window.SPORT_ICONS ? window.SPORT_ICONS[window.sport || 'Badminton'] : null) || '🏸';
+                    new Notification(`${sIcon} You're Up!`, {
                         body: `Court ${courtInfo?.num || '?'}${courtInfo?.partner ? ' with ' + courtInfo.partner : ''}. Get to the court!`,
                         tag: 'court-call',
                         requireInteraction: true
@@ -1878,9 +1885,10 @@ const PlayerMode = {
         _renderPlayCount(passport.playerName);
 
         if (playing) {
+            const sIcon = (window.SPORT_ICONS ? window.SPORT_ICONS[window.sport || 'Badminton'] : null) || '🏸';
             const subText = courtInfo 
                 ? `Court ${courtInfo.num} ${courtInfo.partner ? '• w/ ' + courtInfo.partner : ''}`
-                : 'Give it everything 🏀';
+                : `Give it everything ${sIcon}`;
             this.setStatus('playing', "You're on court!", subText);
         } else if (isNextUp) {
             this.setStatus('on-deck', "You're on deck!", "Get ready — you're up next 🟡");
@@ -2187,7 +2195,9 @@ const PlayerMode = {
         const icon   = document.getElementById('slStatusIcon');
         const textEl = document.getElementById('slStatusText');
         const subEl  = document.getElementById('slStatusSub');
-        const icons  = { pending:'⏳', 'on-deck':'🟡', playing:'🟢', resting:'🔵', approved:'✅' };
+        const sport = window.sport || 'Badminton';
+        const sIcon = (window.SPORT_ICONS ? window.SPORT_ICONS[sport] : null) || '🏸';
+        const icons  = { pending:'⏳', 'on-deck':'🟡', playing: sIcon, resting:'🔵', approved:'✅' };
         if (card)   card.dataset.state = state;
         if (icon)   icon.textContent   = icons[state] || '⏳';
         if (textEl) textEl.textContent = text;
@@ -2214,7 +2224,9 @@ const PlayerMode = {
     },
 
     async pickSpiritAnimal() {
-        const emojis = ['🏸', '👟', '🏸', '🔥', '🦁', '🐯', '🦅', '🦈', '🦍', '🐺', '🐉', '⚡', '🌟', '🎯', '👑', '🦾'];
+        const sport = window.sport || 'Badminton';
+        const sIcon = (window.SPORT_ICONS ? window.SPORT_ICONS[sport] : null) || '🏸';
+        const emojis = [sIcon, '👟', '🔥', '🦁', '🐯', '🦅', '🦈', '🦍', '🐺', '🐉', '⚡', '🌟', '🎯', '👑', '🦾'];
         const content = `
             <div class="menu-card">
                 <h2>Spirit Animal</h2>
@@ -2547,7 +2559,24 @@ const PlayerMode = {
     updateSkillLevel(level) {
         const passport = Passport.setSkillLevel(level);
         UIManager.hide();
-        SidelineView.refresh(); // Re-render profile with new skill level
+        
+        // Update UI based on current view context
+        if (typeof SidelineView !== 'undefined' && SidelineView._visible) {
+            SidelineView.refresh();
+        }
+        
+        const ps = document.getElementById('passportStandalone');
+        if (ps && ps.style.display === 'flex') {
+            window.renderPassportStandalone(passport);
+        }
+
+        // Broadcast to host if in session
+        if (window.isOnlineSession) {
+            if (typeof broadcastSkillLevelUpdate === 'function') {
+                broadcastSkillLevelUpdate(passport.playerUUID, level);
+            }
+        }
+
         if (window.Haptic) Haptic.success();
     },
 

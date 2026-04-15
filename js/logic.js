@@ -27,7 +27,7 @@ function findP(id) {
 }
 
 // ---------------------------------------------------------------------------
-// ELO ENGINE
+// SKILL ENGINE
 // ---------------------------------------------------------------------------
 
 // Calculates match odds based on sum of skill weights
@@ -78,7 +78,7 @@ function _createRoundSnapshot(finishedMatch, achievements = [], preSquad, preQue
 }
 
 /**
- * Applies ELO, checks achievements, signals results, and rotates players for a finished match.
+ * Applies stats, checks achievements, signals results, and rotates players for a finished match.
  * @param {object} match - The completed match object.
  * @param {number} mIdx - The index of the match.
  * @param {number} timestamp - The unique resolution timestamp.
@@ -226,7 +226,7 @@ async function processCourtResult(mIdx) {
 
     const resolutionTS = Date.now();
 
-    // 2. Apply ELO and record stats
+    // 2. Process finished match and record stats
     _processFinishedMatch(match, mIdx, resolutionTS); // This now calls applyStatsForMatch
 
     // Performance: Capture UUIDs of the players involved for differential sync
@@ -234,7 +234,7 @@ async function processCourtResult(mIdx) {
 
      // Connectivity Durability: Trigger a state save and broadcast immediately.
     // This ensures that if the host reloads or achievement processing is slow,
-    // the ELO ratings are already persisted and visible to spectators.
+    // the player stats are already persisted and visible to spectators.
         StateStore.set('squad', [...StateStore.squad]);
     // 3. Award achievements and capture results for the batch sync
     const newlyUnlocked = await checkAndAwardAchievements(match, StateStore.squad);
@@ -300,8 +300,9 @@ function applyStatsForMatch(m) { // Renamed from applyELOForMatch
         p2.partnerStats = p2.partnerStats || {};
         
         const updateStat = (p, partner) => {
-             const s = p.partnerStats[partner.uuid] || { wins: 0, games: 0 };
+             const s = p.partnerStats[partner.uuid] || { wins: 0, games: 0, name: partner.name };
              s.games++; s.wins++;
+             s.name = partner.name; // Keep name fresh
              p.partnerStats[partner.uuid] = s;
         };
         updateStat(p1, p2);
@@ -318,10 +319,14 @@ function applyStatsForMatch(m) { // Renamed from applyELOForMatch
         p1.partnerStats = p1.partnerStats || {};
         p2.partnerStats = p2.partnerStats || {};
         // Only increment games for losers
-        p1.partnerStats[p2.uuid] = p1.partnerStats[p2.uuid] || { wins: 0, games: 0 };
-        p1.partnerStats[p2.uuid].games++;
-        p2.partnerStats[p1.uuid] = p2.partnerStats[p1.uuid] || { wins: 0, games: 0 };
-        p2.partnerStats[p1.uuid].games++;
+        const updateLoser = (p, partner) => {
+            const s = p.partnerStats[partner.uuid] || { wins: 0, games: 0, name: partner.name };
+            s.games++;
+            s.name = partner.name;
+            p.partnerStats[partner.uuid] = s;
+        };
+        updateLoser(p1, p2);
+        updateLoser(p2, p1);
     }
     losers.forEach(p => {
         // No ELO update: only update games, reset streak, update form
