@@ -1790,6 +1790,14 @@ const PlayerMode = {
         if (newStatus === 'playing' && this._prevStatus !== 'playing') {
             if (window.Haptic) Haptic.success();
             _showYoureUpBanner(courtInfo?.num, courtInfo?.partner);
+            
+            // Audio Announcement
+            if (localStorage.getItem('cs_audio_announce') === 'true') {
+                const msg = new SpeechSynthesisUtterance();
+                msg.text = `${passport.playerName}, you are up on court ${courtInfo?.num || 'one'}`;
+                msg.rate = 0.9;
+                window.speechSynthesis.speak(msg);
+            }
 
             // Background Notification: Alert the player if they are in another tab
             if (document.visibilityState !== 'visible' && "Notification" in window && Notification.permission === 'granted') {

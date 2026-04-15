@@ -25,6 +25,11 @@ const Achievements = {
         description: 'Win a match against a higher-rated team.',
         icon: '🐶'
     },
+    'giant_slayer': {
+        name: 'Giant Slayer',
+        description: 'Defeat a player with 200+ more ELO than you.',
+        icon: '⚔️'
+    },
     'endurance': {
         name: 'Iron Man',
         icon: '💪',
@@ -100,6 +105,16 @@ async function checkAndAwardAchievements(match, squad) {
                 unlocked.add('underdog');
                 newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'underdog' });
                 showAchievementToast(player.name, Achievements.underdog);
+            }
+            
+            // Check for 'giant_slayer'
+            const losers = match.teams[loseIdx].map(findP).filter(Boolean);
+            const maxLoserRating = Math.max(...losers.map(l => l.rating || 1200));
+            if (!unlocked.has('giant_slayer') && (maxLoserRating - player.rating) >= 200) {
+                player.achievements.push('giant_slayer');
+                unlocked.add('giant_slayer');
+                newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'giant_slayer' });
+                showAchievementToast(player.name, Achievements.giant_slayer);
             }
         }
 
