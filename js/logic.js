@@ -12,13 +12,18 @@
 let _findPCache = new Map();
 let _lastSquadForCache = null;
 
-/** Finds a player object by UUID. Returns undefined if not found. */
-function findP(uuid) {
-    if (_lastSquadForCache !== StateStore.squad || _findPCache.size !== StateStore.squad.length) {
-        _findPCache = new Map(StateStore.squad.map(p => [p.uuid, p]));
+/** Finds a player object by UUID or Name. Returns undefined if not found. */
+function findP(id) {
+    if (!id) return undefined;
+    if (_lastSquadForCache !== StateStore.squad) {
+        _findPCache = new Map();
+        StateStore.squad.forEach(p => {
+            if (p.uuid) _findPCache.set(p.uuid, p);
+            _findPCache.set(p.name, p); // Always map name for Guest lookups
+        });
         _lastSquadForCache = StateStore.squad;
     }
-    return _findPCache.get(uuid);
+    return _findPCache.get(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -109,13 +114,13 @@ function _recordMatchStats(match, timestamp = Date.now()) {
         let partnerUUID = null;
         // Determine partner UUID if it's a doubles match
         if (isTeamA && tA.length === 2) { // Doubles on Team A
-            partnerUUID = tA.find(tp => tp.uuid !== p.uuid)?.uuid;
+            partnerUUID = tA.find(tp => tp !== p)?.uuid || tA.find(tp => tp !== p)?.name;
         } else if (!isTeamA && tB.length === 2) { // Doubles on Team B
-            partnerUUID = tB.find(tp => tp.uuid !== p.uuid)?.uuid;
+            partnerUUID = tB.find(tp => tp !== p)?.uuid || tB.find(tp => tp !== p)?.name;
         }
 
         p.matchHistory = p.matchHistory || [];
-        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid).filter(Boolean), partnerUUID: partnerUUID, time: timestamp });
+        p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid || o.name), partnerUUID: partnerUUID, time: timestamp });
         if (p.matchHistory.length > 5) p.matchHistory.pop();
     });
 
@@ -568,7 +573,7 @@ function buildMatchFromPlayers(p4) {
     const storyBadges = determineStoryBadges(tA, tB);
 
     return {
-        teams:           [tA.map(p => p.uuid), tB.map(p => p.uuid)],
+        teams:           [tA.map(p => p.uuid || p.name), tB.map(p => p.uuid || p.name)],
         winnerTeamIndex: null,
         storyBadges,
         odds,

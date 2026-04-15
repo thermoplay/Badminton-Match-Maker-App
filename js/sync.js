@@ -26,7 +26,7 @@ let operatorKeyHash   = null;
 let sbManager         = null; // Instance of SupabaseRealtimeManager
 let _isBootingSession = false; // true only during initial rejoin hydration
 let _pendingActions   = [];    // Queue for actions attempted while offline
-let _dirtyUUIDs       = new Set();
+let _dirtyIds         = new Set();
 let _fullSyncPending  = false;
 
 // ---------------------------------------------------------------------------
@@ -438,10 +438,10 @@ const _doPushToSupabase = async () => {
     // only the players marked as dirty (e.g., the 4 players from the last match).
     const squadToSend = _fullSyncPending 
         ? StateStore.squad 
-        : StateStore.squad.filter(p => _dirtyUUIDs.has(p.uuid));
+        : StateStore.squad.filter(p => _dirtyIds.has(p.uuid || p.name));
 
     _fullSyncPending = false;
-    _dirtyUUIDs = new Set();
+    _dirtyIds = new Set();
 
     try {
         const res = await apiCall('session-update', {
@@ -485,14 +485,14 @@ const _debouncedPush = window.debounce(_doPushToSupabase, 800);
 /**
  * Pushes session state to the cloud. 
  * @param {boolean} force - If true, bypasses the 800ms debounce.
- * @param {Array<string>} targetUUIDs - Optional list of UUIDs for differential sync.
+ * @param {Array<string>} targetIds - Optional list of UUIDs or Names for differential sync.
  * If omitted, a full squad sync is performed.
  */
-function pushStateToSupabase(force = false, targetUUIDs = null) {
+function pushStateToSupabase(force = false, targetIds = null) {
     if (!isOnlineSession || !isOperator) return;
 
-    if (targetUUIDs && Array.isArray(targetUUIDs)) {
-        targetUUIDs.forEach(id => _dirtyUUIDs.add(id));
+    if (targetIds && Array.isArray(targetIds)) {
+        targetIds.forEach(id => _dirtyIds.add(id));
     } else {
         _fullSyncPending = true;
     }

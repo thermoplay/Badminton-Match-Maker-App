@@ -93,7 +93,7 @@ function migratePlayer(p) {
     if (p.form             == null) p.form             = [];
     if (p.achievements     == null) p.achievements     = [];
     if (p.matchHistory     == null) p.matchHistory     = [];
-    if (!p.uuid) p.uuid = _generateUUID(); // Ensure everyone has an ID for achievements
+    if (p.isGuest          == null) p.isGuest          = !p.uuid;
     if (p.spiritAnimal     == null) p.spiritAnimal     = null;
     return p;
 }
@@ -163,16 +163,17 @@ function addPlayer() {
         return;
     }
 
-    // Use migratePlayer to ensure all required logic fields (ELO, stats) are initialized
+    // Manually added players are GUESTS and do not have UUIDs
     const newPlayer = migratePlayer({
         name: name,
-        uuid: _generateUUID(),
-        active: true
+        uuid: null,
+        active: true,
+        isGuest: true
     });
     
     // Update state arrays
     const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(newPlayer.uuid)) newQueue.push(newPlayer.uuid);
+    if (!newQueue.includes(newPlayer.name)) newQueue.push(newPlayer.name);
 
     // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
     StateStore.set('squad', [...StateStore.squad, newPlayer]);
@@ -420,8 +421,10 @@ function _removePlayerFromLocalState(playerIndex) {
 
     const newSquad = [...StateStore.squad];
     newSquad.splice(playerIndex, 1);
-    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedUUID));
-    const newQueue = StateStore.playerQueue.filter(u => u !== removedUUID && u !== removedName);
+    
+    const removedId = removedUUID || removedName;
+    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedId));
+    const newQueue = StateStore.playerQueue.filter(id => id !== removedUUID && id !== removedName);
 
     if (window._approvedPlayers) {
         if (removedUUID) delete window._approvedPlayers[removedUUID];
@@ -555,15 +558,16 @@ function renderSquad() {
 
         const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
         const skillBadge = `<span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" title="${p.skillLevel || 'Intermediate'}">${(p.skillLevel || 'Intermediate').charAt(0)}</span>`;
+        const guestBadge = p.isGuest ? '<span class="new-badge" style="background:var(--text-muted); color:var(--bg);">GUEST</span>' : '';
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
-            <span class="chip-name">${skillBadge}${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${skillBadge}${guestBadge}${escapeHTML(p.name)}${isNew && !p.isGuest ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
             ${waitBadge}
         `;
-        const isSwapping = p.uuid === swapSourceUUID;
+        const isSwapping = (p.uuid && p.uuid === swapSourceUUID) || (!p.uuid && p.name === swapSourceUUID);
         const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''}`;
 
-        let chip = existingChips.get(p.uuid);
+        let chip = existingChips.get(p.uuid || p.name);
 
         if (chip) {
             // Chip exists, update it if necessary
@@ -1536,6 +1540,7 @@ function renderStatsTab(tab) {
         const cWins  = career.wins || 0;
         const cGames = career.games || 0;
         const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+        const skillLevel = (me ? me.skillLevel : passport.skillLevel) || 'Intermediate';
         
         let sWins = 0, sGames = 0, sWr = 0;
         if (me) {

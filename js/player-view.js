@@ -681,8 +681,8 @@ const SidelineView = {
                                 <div class="sl-card-key">WIN RATE</div>
                             </div>
                             <div class="sl-card-item">
-                                <div class="sl-card-val">${rating}</div>
-                                <div class="sl-card-key">RATING</div>
+                                <div class="sl-card-val" style="font-size:1.2rem;">${skillLevel}</div>
+                                <div class="sl-card-key">SKILL LEVEL</div>
                             </div>
                         </div>
                     </div>
