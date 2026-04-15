@@ -487,7 +487,12 @@ const SidelineView = {
         const emoji = passport.spiritAnimal || '';
 
         // Calculate Trophy Counts (Gold, Silver, Bronze Tiers)
-        const myAch = me ? (me.achievements || []) : [];
+        // ALWAYS merge session achievements with all-time passport achievements
+        const myAch = [...new Set([
+            ...(me?.achievements || []), 
+            ...(passport.achievements || [])
+        ])];
+
         const counts = { gold: 0, silver: 0, bronze: 0 };
         if (window.Achievements) {
             Object.keys(window.Achievements).forEach(key => {
@@ -788,7 +793,10 @@ const SidelineView = {
 
         const container = document.getElementById('slProfileAchievements');
         if (container && window.Achievements) {
-            const myAch = me ? (me.achievements || []) : [];
+            const myAch = [...new Set([
+                ...(me?.achievements || []), 
+                ...(passport.achievements || [])
+            ])];
             const html = Object.keys(window.Achievements).map(key => {
                 const data = window.getAchievementDisplay(key, myAch);
                 const unlocked = data.unlocked;
@@ -1291,6 +1299,7 @@ const PlayerMode = {
             if (sessionRes.ok) {
                 const data = await sessionRes.json();
                 const session = data.session || {};
+                if (data.global) Passport.hydrate(data.global);
                 const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
 
                 this._isOpenParty = !!session.is_open_party;
@@ -1434,6 +1443,7 @@ const PlayerMode = {
             const result = await this._memberUpsert(passport, this._joinCode);
             if (result && result.status === 'active') {
                 this._markApprovedInSession(this._joinCode);
+                if (result.global) Passport.hydrate(result.global);
                 this._hydrateFromUpsert(result);
                 const p = Passport.get();
                 this.setStatus('approved', `You're in, ${p.playerName}!`, "You've been approved ✅");
@@ -1599,6 +1609,7 @@ const PlayerMode = {
                 if (me && achs && achs.length > 0) {
                     const ids = achs.map(a => a.achievement_id);
                     me.achievements = [...new Set([...(me.achievements || []), ...ids])];
+                    if (typeof Passport !== 'undefined') Passport.recordAchievements(ids);
                     SidelineView.refresh();
                 }
             }).catch(() => {});
@@ -1670,6 +1681,14 @@ const PlayerMode = {
                 console.warn('[CourtSide] State drift detected! Triggering background resync...');
                 SidelineView._performRefresh(true);
                 return; // Stop here; the refresh will handle the rest.
+            }
+        }
+
+        // Sync achievements to passport from broadcast
+        if (payload.squad) {
+            const me = payload.squad.find(p => p.uuid === passport.playerUUID);
+            if (me && Array.isArray(me.achievements)) {
+                Passport.recordAchievements(me.achievements);
             }
         }
 
@@ -1855,6 +1874,7 @@ const PlayerMode = {
         this._markApprovedInSession(this._joinCode);
 
         if (memberRecord.player_name && memberRecord.player_name !== passport.playerName) {
+            // Server name takes priority on activation
             Passport.rename(memberRecord.player_name);
             this._renderIdentity(Passport.get());
         }
@@ -1877,6 +1897,7 @@ const PlayerMode = {
                 if (me && achs && achs.length > 0) {
                     const ids = achs.map(a => a.achievement_id);
                     me.achievements = [...new Set([...(me.achievements || []), ...ids])];
+                    if (typeof Passport !== 'undefined') Passport.recordAchievements(ids);
                     SidelineView.refresh();
                 }
             }).catch(() => {});
@@ -1955,6 +1976,7 @@ const PlayerMode = {
 
             if (data.alreadyActive || data.status === 'active') {
                 this._isJoining = false;
+                if (data.global) Passport.hydrate(data.global);
                 this._markApprovedInSession(joinCode);
                 const msg = data.autoApproved ? "Joined instantly! 🔓" : "Reconnected to court ✅";
                 this.setStatus('approved', `You're in, ${passport.playerName}!`, msg);
@@ -2416,7 +2438,9 @@ const PlayerMode = {
         const passport = Passport.get();
         if (!passport) return;
         const me = (window.squad || []).find(p => p.uuid === passport.playerUUID);
-        const myAch = me ? (me.achievements || []) : [];
+        const sessionAch = me ? (me.achievements || []) : [];
+        const allTimeAch = passport.achievements || [];
+        const myAch = [...new Set([...sessionAch, ...allTimeAch])];
         
         if (!window.Achievements) return;
 

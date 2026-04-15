@@ -75,7 +75,7 @@ export default async function handler(req, res) {
     // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
     // This maintains a master registry of all players across all sessions.
     // If lookup fails, we attempt a POST which will safely ON CONFLICT DO NOTHING in the DB.
-    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid&limit=1`);
+    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,total_wins,total_games,achievements&limit=1`);
     if (!playerLookup.ok || (Array.isArray(playerLookup.data) && playerLookup.data.length === 0)) {
         await sbFetch('/players', {
             method: 'POST', // PostgREST handles UUID casting automatically for table inserts
@@ -86,6 +86,8 @@ export default async function handler(req, res) {
                 last_active: new Date().toISOString()
             }
         });
+    } else {
+        var globalPlayer = playerLookup.data[0];
     }
 
     // ── Step 1: Check if this player already has a row in this session ──────
@@ -117,6 +119,7 @@ export default async function handler(req, res) {
             ok:     true,
             status: member.status,  // 'pending' | 'active'
             member: { ...member, player_name: trimmedName },
+            global: globalPlayer
         });
     }
 
@@ -145,5 +148,6 @@ export default async function handler(req, res) {
         ok:     true,
         status: 'pending',
         member,
+        global: globalPlayer
     });
 }

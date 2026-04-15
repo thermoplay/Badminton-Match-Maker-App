@@ -1584,7 +1584,9 @@ function renderStatsTab(tab) {
         // 4. Achievements
         let achHTML = '';
         if (window.Achievements) {
-            const myAch = me ? (me.achievements || []) : [];
+            const sessionAch = me ? (me.achievements || []) : [];
+            const allTimeAch = passport.achievements || [];
+            const myAch = [...new Set([...sessionAch, ...allTimeAch])];
             const list = Object.keys(window.Achievements).map(key => {
                 const data = window.getAchievementDisplay(key, myAch);
                 const unlocked = data.unlocked;
@@ -2937,6 +2939,9 @@ function showLandingPage() {
             <button class="btn-main" onclick="openStandalonePassport()" style="width:100%; background:var(--bg2); color:var(--text); height:60px; font-size:1.2rem; border:1px solid var(--border); margin-top:16px;">
                 🪪 My Passport
             </button>
+            <button class="btn-main" onclick="PlayerMode.restorePassportPrompt()" style="width:100%; background:transparent; color:var(--text-muted); height:40px; font-size:0.8rem; border:none; margin-top:8px;">
+                Already have a passport? Restore it
+            </button>
         </div>
     `;
     document.body.appendChild(div);
@@ -3003,6 +3008,22 @@ window.renderPassportStandalone = function(p) {
     const avatarColor = Avatar.color(p.playerName);
     const emoji = p.spiritAnimal || '🐾';
 
+    const renderTrophies = (ids) => {
+        const listEl = document.getElementById('psAchievements');
+        if (!listEl) return;
+        const html = Object.keys(window.Achievements || {}).map(key => {
+            const data = window.getAchievementDisplay(key, ids);
+            if (!data.unlocked) return '';
+            return `
+                <div class="ps-trophy" title="${data.name}: ${data.description}">
+                    <div class="ps-trophy-icon">${data.icon}</div>
+                    <div class="ps-trophy-name">${data.name}</div>
+                </div>
+            `;
+        }).join('');
+        listEl.innerHTML = html || '<div class="ps-empty-ach">No trophies earned yet.</div>';
+    };
+
     content.innerHTML = `
         <div class="ps-header">
             <div class="ps-avatar-ring">
@@ -3010,6 +3031,11 @@ window.renderPassportStandalone = function(p) {
             </div>
             <h1 class="ps-name">${escapeHTML(p.playerName)}</h1>
             <div class="ps-badge">${emoji} ATHLETE</div>
+        </div>
+        
+        <div style="background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:20px; text-align:center;">
+            <div style="font-size:0.55rem; color:var(--text-muted); letter-spacing:1px; margin-bottom:4px;">RECOVERY KEY (Keep this safe!)</div>
+            <div style="font-family:monospace; font-size:0.7rem; color:var(--accent); cursor:pointer;" onclick="fallbackCopy('${p.playerUUID}', 'Key Copied!')">${p.playerUUID}</div>
         </div>
 
         <div class="ps-stats-grid">
@@ -3040,25 +3066,16 @@ window.renderPassportStandalone = function(p) {
         </div>
     `;
 
+    // Show local trophies immediately
+    renderTrophies(p.achievements || []);
+
     // Fetch achievements
     if (typeof fetchPlayerAchievements === 'function' && p.playerUUID) {
         fetchPlayerAchievements(p.playerUUID).then(achs => {
-            const listEl = document.getElementById('psAchievements');
-            if (!listEl) return;
-            
             const ids = (achs || []).map(a => a.achievement_id);
-            
-            const html = Object.keys(window.Achievements || {}).map(key => {
-                const data = window.getAchievementDisplay(key, ids);
-                if (!data.unlocked) return '';
-                return `
-                    <div class="ps-trophy" title="${data.name}: ${data.description}">
-                        <div class="ps-trophy-icon">${data.icon}</div>
-                        <div class="ps-trophy-name">${data.name}</div>
-                    </div>
-                `;
-            }).join('');
-            listEl.innerHTML = html || '<div class="ps-empty-ach">No trophies earned yet.</div>';
+            Passport.recordAchievements(ids);
+            // Re-render with merged data
+            renderTrophies(Passport.get().achievements);
         });
     }
 };

@@ -138,6 +138,18 @@ async function checkAndAwardAchievements(match, squad) {
         }
     }
 
+    // CRITICAL: Sync ANY newly unlocked achievements to the local Passport 
+    // if the UUID matches this device's owner (works for both Host and Player)
+    if (typeof Passport !== 'undefined') {
+        const myP = Passport.get();
+        if (myP) {
+            const myNewIds = newlyUnlocked
+                .filter(u => u.player_uuid === myP.playerUUID)
+                .map(u => u.achievement_id);
+            if (myNewIds.length > 0) Passport.recordAchievements(myNewIds);
+        }
+    }
+
     if (newlyUnlocked.length > 0 && typeof saveToDisk === 'function') saveToDisk();
     return newlyUnlocked;
 }
@@ -179,6 +191,12 @@ async function unlockAchievement(player_uuid, achievement_id) {
                 if (typeof saveToDisk === 'function') saveToDisk();
             }
         }
+    }
+
+    // Sync to local passport if it matches the current device user
+    const myPassport = (typeof Passport !== 'undefined') ? Passport.get() : null;
+    if (myPassport && myPassport.playerUUID === player_uuid) {
+        Passport.recordAchievements([achievement_id]);
     }
 
     try {

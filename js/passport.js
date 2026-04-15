@@ -38,17 +38,17 @@ const Passport = {
                 playerUUID: this._uuid(),
                 playerName: name || '',
                 spiritAnimal: null,
+                achievements: [],
                 lastProcessedTS: 0,
                 createdAt:  Date.now(),
             };
             this.save(p);
         }
-        
-        // Migration: Ensure stats object exists for returning users
-        if (!p.stats) {
-            p.stats = { wins: 0, games: 0 };
-            this.save(p);
-        }
+
+        // Migration: Ensure stats and achievements exist
+        if (!p.stats) p.stats = { wins: 0, games: 0 };
+        if (!p.achievements) p.achievements = [];
+        this.save(p);
 
         return p;
     },
@@ -74,6 +74,42 @@ const Passport = {
         p.spiritAnimal = emoji;
         this.save(p);
         return p;
+    },
+
+    hydrate(remoteData) {
+        const p = this.get();
+        if (!p || !remoteData) return;
+        
+        if (!p.stats) p.stats = { wins: 0, games: 0 };
+        
+        // Sync all-time totals from the database
+        if (remoteData.total_wins !== undefined) p.stats.wins = remoteData.total_wins;
+        if (remoteData.total_games !== undefined) p.stats.games = remoteData.total_games;
+        if (Array.isArray(remoteData.achievements)) {
+            const localSet = new Set(p.achievements || []);
+            remoteData.achievements.forEach(a => localSet.add(a));
+            p.achievements = Array.from(localSet);
+        }
+        if (remoteData.name) p.playerName = remoteData.name;
+        if (remoteData.spirit_animal) p.spiritAnimal = remoteData.spirit_animal;
+        
+        this.save(p);
+        return p;
+    },
+
+    recordAchievements(ids) {
+        if (!Array.isArray(ids) || ids.length === 0) return;
+        const p = this.get();
+        if (!p) return;
+        if (!p.achievements) p.achievements = [];
+        let changed = false;
+        ids.forEach(id => {
+            if (!p.achievements.includes(id)) {
+                p.achievements.push(id);
+                changed = true;
+            }
+        });
+        if (changed) this.save(p);
     },
 
     recordGame(isWin) {
