@@ -637,7 +637,7 @@ const SidelineView = {
             const cWins  = career.wins || 0;
             const cGames = career.games || 0;
             const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-            const skillLevel = me ? me.skillLevel : (passport.skillLevel || 'Intermediate');
+            const skillLevel = passport.skillLevel || (me ? me.skillLevel : 'Intermediate') || 'Intermediate';
             
             let sWins = 0, sGames = 0, sWr = 0;
             if (me) {

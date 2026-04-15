@@ -296,17 +296,20 @@ function applyStatsForMatch(m) { // Renamed from applyELOForMatch
     // Update Winners
     if (winners.length === 2) {
         const [p1, p2] = winners;
-        p1.partnerStats = p1.partnerStats || {};
-        p2.partnerStats = p2.partnerStats || {};
-        
-        const updateStat = (p, partner) => {
-             const s = p.partnerStats[partner.uuid] || { wins: 0, games: 0, name: partner.name };
-             s.games++; s.wins++;
-             s.name = partner.name; // Keep name fresh
-             p.partnerStats[partner.uuid] = s;
-        };
-        updateStat(p1, p2);
-        updateStat(p2, p1);
+        // Only record partnership stats if BOTH players have real Passports (UUIDs)
+        if (p1.uuid && p2.uuid) {
+            p1.partnerStats = p1.partnerStats || {};
+            p2.partnerStats = p2.partnerStats || {};
+            
+            const updateStat = (p, partner) => {
+                 const s = p.partnerStats[partner.uuid] || { wins: 0, games: 0, name: partner.name };
+                 s.games++; s.wins++;
+                 s.name = partner.name;
+                 p.partnerStats[partner.uuid] = s;
+            };
+            updateStat(p1, p2);
+            updateStat(p2, p1);
+        }
     }
     winners.forEach(p => {
         // No ELO update: only update wins, games, streak, form
@@ -316,17 +319,19 @@ function applyStatsForMatch(m) { // Renamed from applyELOForMatch
     // Update Losers
     if (losers.length === 2) {
         const [p1, p2] = losers;
-        p1.partnerStats = p1.partnerStats || {};
-        p2.partnerStats = p2.partnerStats || {};
-        // Only increment games for losers
-        const updateLoser = (p, partner) => {
-            const s = p.partnerStats[partner.uuid] || { wins: 0, games: 0, name: partner.name };
-            s.games++;
-            s.name = partner.name;
-            p.partnerStats[partner.uuid] = s;
-        };
-        updateLoser(p1, p2);
-        updateLoser(p2, p1);
+        // Guard: Guest players do not contribute to partnership "Social Proof"
+        if (p1.uuid && p2.uuid) {
+            p1.partnerStats = p1.partnerStats || {};
+            p2.partnerStats = p2.partnerStats || {};
+            const updateLoser = (p, partner) => {
+                const s = p.partnerStats[partner.uuid] || { wins: 0, games: 0, name: partner.name };
+                s.games++;
+                s.name = partner.name;
+                p.partnerStats[partner.uuid] = s;
+            };
+            updateLoser(p1, p2);
+            updateLoser(p2, p1);
+        }
     }
     losers.forEach(p => {
         // No ELO update: only update games, reset streak, update form

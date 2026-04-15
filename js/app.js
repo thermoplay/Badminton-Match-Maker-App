@@ -1504,8 +1504,8 @@ function renderStatsTab(tab) {
                 onclick="renderStatsTab('performance')">Performance</button>
             <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
                 onclick="renderStatsTab('history')">History</button>
-            <button class="stats-tab ${tab === 'leaderboard' ? 'active' : ''}" 
-                onclick="renderStatsTab('leaderboard')">Leaderboard</button>
+            <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
+                onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
             <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
                 onclick="renderStatsTab('profile')">My Profile</button>
         </div>
@@ -1571,7 +1571,7 @@ function renderStatsTab(tab) {
         const cWins  = career.wins || 0;
         const cGames = career.games || 0;
         const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-        const skillLevel = (me ? me.skillLevel : passport.skillLevel) || 'Intermediate';
+        const skillLevel = passport.skillLevel || (me ? me.skillLevel : 'Intermediate') || 'Intermediate';
         
         let sWins = 0, sGames = 0, sWr = 0;
         if (me) {
@@ -1711,38 +1711,59 @@ function renderStatsTab(tab) {
 
         content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
 
-    } else if (tab === 'leaderboard') {
+    } else if (tab === 'hall-of-fame') {
         const period = window._lbPeriod || 'all';
         content.innerHTML = tabs + `
             <div style="display:flex; gap:8px; margin-bottom:16px;">
-                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('leaderboard')">All-Time</button>
-                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('leaderboard')">Weekly</button>
+                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
+                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
             </div>
             <div class="sl-searching" style="margin-top:20px;">
                 <div class="sl-searching-spinner"></div>
-                <div class="sl-searching-text">FETCHING ${period.toUpperCase()} RANKINGS…</div>
+                <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
             </div>`;
 
         fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
             .then(res => res.json())
             .then(data => {
-                // Guard: only render if user is still on the leaderboard tab
-                if (document.querySelector('.stats-tab.active')?.textContent.toLowerCase() !== 'leaderboard') return;
+                // Guard: only render if user is still on the hall-of-fame tab
+                if (!document.querySelector('.stats-tab.active')?.textContent.toLowerCase().includes('hall')) return;
                 
                 const players = data.players || [];
-                const html = players.map((p, i) => `
+
+                // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
+                players.sort((a, b) => {
+                    const connA = Object.keys(a.partner_stats || {}).length;
+                    const connB = Object.keys(b.partner_stats || {}).length;
+                    if (connB !== connA) return connB - connA; // Most unique partners first
+
+                    const trophyA = (a.achievements || []).length;
+                    const trophyB = (b.achievements || []).length;
+                    if (trophyB !== trophyA) return trophyB - trophyA;
+
+                    return (b.total_games || 0) - (a.total_games || 0);
+                });
+
+                const html = players.map((p, i) => {
+                    const connections = Object.keys(p.partner_stats || {}).length;
+                    return `
                     <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
-                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
+                        <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
                         <div style="flex:1;">
                             <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
-                            <div class="stats-meta">${p.total_wins || p.wins || 0} Wins · ${p.total_games || p.games || 0} Games</div>
+                            <div class="stats-meta">${connections} Connections · ${p.total_games || 0} Games</div>
                         </div>
-                        <div style="font-family:var(--font-display); font-size:0.8rem; font-weight:800; color:var(--accent);">${p.skill_level || 'INTERMEDIATE'}</div>
-                    </div>`).join('');
-                content.innerHTML = tabs + `<div class="history-list">${html || '<div class="sl-empty">No rankings available yet.</div>'}</div>`;
+                        <div style="text-align:right;">
+                            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
+                            <div style="font-size:0.5rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">INFLUENCE</div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                content.innerHTML = tabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
             })
             .catch(() => {
-                content.innerHTML = tabs + '<div class="sl-empty">Failed to load global leaderboard.</div>';
+                content.innerHTML = tabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
             });
 
     } else if (tab === 'history') {
