@@ -1891,6 +1891,80 @@ function closePlayerCard() {
     document.getElementById('playerCardModal').style.display = 'none';
 }
 
+/**
+ * Generates a beautiful recovery card image for the player to save.
+ */
+async function generateRecoveryCard() {
+    const p = Passport.get();
+    if (!p) return;
+
+    if (window.Haptic) Haptic.tap();
+    if (typeof showSessionToast === 'function') showSessionToast('🎨 Generating Card...');
+
+    if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
+    const avatarColor = Avatar.color(p.playerName);
+    const emoji = p.spiritAnimal || '🐾';
+
+    // Create an off-screen high-quality card
+    const card = document.createElement('div');
+    card.style.cssText = `
+        position: fixed; left: -9999px; top: -9999px; width: 400px; padding: 40px;
+        background: #0a0a0f; color: #f0f0f5; font-family: sans-serif;
+        border-radius: 24px; text-align: center; border: 2px solid #00ffa3;
+    `;
+
+    card.innerHTML = `
+        <div style="font-size: 0.65rem; letter-spacing: 4px; color: #00ffa3; margin-bottom: 24px; font-weight: 900; text-transform: uppercase;">COURTSIDE PRO RECOVERY CARD</div>
+        
+        <div style="width: 100px; height: 100px; border-radius: 50%; background: ${avatarColor}; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; font-size: 3rem; border: 4px solid #0a0a0f; box-shadow: 0 0 0 2px #00ffa3;">
+            ${p.spiritAnimal || (p.playerName || '?').charAt(0).toUpperCase()}
+        </div>
+        
+        <div style="font-size: 2.2rem; font-weight: 900; font-style: italic; text-transform: uppercase; margin-bottom: 8px;">${escapeHTML(p.playerName)}</div>
+        <div style="display: inline-block; font-size: 0.7rem; font-weight: 800; letter-spacing: 2px; color: #00ffa3; background: rgba(0, 255, 163, 0.15); padding: 4px 14px; border-radius: 20px; border: 1px solid rgba(0, 255, 163, 0.25); margin-bottom: 30px;">${emoji} ATHLETE</div>
+        
+        <div style="background: #111118; border: 1px solid rgba(255,255,255,0.07); border-radius: 16px; padding: 24px; margin-bottom: 20px;">
+            <div style="font-size: 0.55rem; color: #6b6b80; letter-spacing: 1.5px; margin-bottom: 10px; font-weight: 800; text-transform: uppercase;">YOUR PRIVATE RECOVERY KEY</div>
+            <div style="font-family: monospace; font-size: 0.8rem; color: #00ffa3; word-break: break-all; line-height: 1.5; background: #000; padding: 12px; border-radius: 8px;">${p.playerUUID}</div>
+        </div>
+        
+        <div style="font-size: 0.65rem; color: #6b6b80; line-height: 1.6; max-width: 280px; margin: 0 auto;">Keep this key safe. Use it to restore your career trophies and statistics if you switch phones or clear your data.</div>
+        
+        <div style="margin-top: 40px; font-size: 0.55rem; color: rgba(0, 255, 163, 0.4); letter-spacing: 2px; font-weight: 700; text-transform: uppercase;">thecourtsidepro.vercel.app</div>
+    `;
+
+    document.body.appendChild(card);
+
+    try {
+        const canvas = await html2canvas(card, {
+            backgroundColor: '#0a0a0f',
+            scale: 2,
+            useCORS: true,
+            logging: false,
+        });
+
+        canvas.toBlob((blob) => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Courtside-Recovery-${p.playerName.replace(/\s+/g, '-')}.png`;
+            a.click();
+            if (typeof showSessionToast === 'function') showSessionToast('✅ Card Saved to Library');
+            if (window.Haptic) Haptic.success();
+        }, 'image/png');
+    } catch (e) { console.error(e); }
+    finally { document.body.removeChild(card); }
+}
+
 async function sharePlayerCard() {
     const card = document.querySelector('.player-card');
     if (!card) return;
@@ -2992,10 +3066,32 @@ window.openStandalonePassport = function() {
     // Ensure SidelineView is hidden so they don't overlap
     if (sl) sl.style.display = 'none';
 
-    if (ps) {
+    const p = Passport.get();
+    if (ps && p) {
         ps.style.display = 'flex';
         document.body.classList.add('player-mode'); // Use context to hide host UI
-        window.renderPassportStandalone(Passport.get());
+        window.renderPassportStandalone(p);
+
+        // 'Silent Hydrate' - Update career stats and trophies from global players table
+        if (p.playerUUID) {
+            fetch('/api/member-upsert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    room_code: 'RESTORE', 
+                    player_uuid: p.playerUUID, 
+                    player_name: p.playerName 
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.global) {
+                    Passport.hydrate(data.global);
+                    window.renderPassportStandalone(Passport.get());
+                }
+            })
+            .catch(e => console.warn('[Passport] Silent hydrate failed', e));
+        }
     }
 };
 
@@ -3063,6 +3159,7 @@ window.renderPassportStandalone = function(p) {
         <div class="ps-actions">
             <button class="btn-main ps-btn-sub" onclick="passportRename()">✏️ Edit Name</button>
             <button class="btn-main ps-btn-sub" onclick="PlayerMode.pickSpiritAnimal()">🐾 Spirit Animal</button>
+                        <button class="btn-main ps-btn-sub" style="grid-column: span 2; background:rgba(0, 255, 163, 0.1) !important; color:var(--accent) !important; border: 1px solid var(--border-accent) !important;" onclick="generateRecoveryCard()">💾 Download Backup Card</button>
         </div>
     `;
 

@@ -78,23 +78,51 @@ const Passport = {
 
     hydrate(remoteData) {
         const p = this.get();
-        if (!p || !remoteData) return;
+        if (!p || !remoteData) return { needsUpload: false };
         
         if (!p.stats) p.stats = { wins: 0, games: 0 };
-        
-        // Sync all-time totals from the database
-        if (remoteData.total_wins !== undefined) p.stats.wins = remoteData.total_wins;
-        if (remoteData.total_games !== undefined) p.stats.games = remoteData.total_games;
-        if (Array.isArray(remoteData.achievements)) {
-            const localSet = new Set(p.achievements || []);
-            remoteData.achievements.forEach(a => localSet.add(a));
-            p.achievements = Array.from(localSet);
+        let needsUpload = false;
+        let changed = false;
+
+        // 1. Stats Sync: Highest-Value-Wins
+        const remoteGames = remoteData.total_games || 0;
+        const localGames  = p.stats.games || 0;
+
+        if (remoteGames > localGames) {
+            p.stats.games = remoteGames;
+            p.stats.wins  = remoteData.total_wins || 0;
+            changed = true;
+        } else if (localGames > remoteGames) {
+            needsUpload = true;
         }
-        if (remoteData.name) p.playerName = remoteData.name;
-        if (remoteData.spirit_animal) p.spiritAnimal = remoteData.spirit_animal;
+
+        // 2. Achievements Sync: Bidirectional check
+        const remoteAchs = Array.isArray(remoteData.achievements) ? remoteData.achievements : [];
+        const localSet = new Set(p.achievements || []);
+        const startSize = localSet.size;
         
-        this.save(p);
-        return p;
+        remoteAchs.forEach(a => localSet.add(a));
+        if (localSet.size > startSize) {
+            p.achievements = Array.from(localSet);
+            changed = true;
+        }
+        
+        if (p.achievements.some(a => !remoteAchs.includes(a))) {
+            needsUpload = true;
+        }
+
+        // 3. Identity Sync
+        if (remoteData.name && p.playerName !== remoteData.name) {
+            p.playerName = remoteData.name;
+            changed = true;
+        }
+        if (remoteData.spirit_animal !== undefined && p.spiritAnimal !== remoteData.spirit_animal) {
+            p.spiritAnimal = remoteData.spirit_animal;
+            changed = true;
+        }
+        
+        if (changed) this.save(p);
+        return { passport: p, needsUpload };
     },
 
     recordAchievements(ids) {
