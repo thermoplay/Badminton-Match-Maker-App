@@ -56,7 +56,7 @@ const SidelineView = {
         document.querySelectorAll('.sl-tab').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().includes(tab)));
         document.getElementById('slViewLive').style.display = tab === 'live' ? 'block' : 'none';
         document.getElementById('slViewProfile').style.display = tab === 'profile' ? 'block' : 'none';
-        if (tab === 'profile') this._renderProfile();
+        this.refresh();
     },
 
     refresh() {
@@ -136,6 +136,15 @@ const SidelineView = {
         }
 
         container.style.display = 'flex';
+
+        // Defensive: Reconstruct data if not provided (direct call safety)
+        if (!squadMap) {
+            const squad = window.squad || [];
+            squadMap = new Map(squad.map(p => [p.uuid, p]));
+            const p = Passport.get();
+            myUUID = p ? p.playerUUID : null;
+        }
+
         const findP = (uuid) => squadMap.get(uuid);
 
         const fragment = document.createDocumentFragment();
@@ -205,6 +214,15 @@ const SidelineView = {
         }
 
         const courtNames = window.courtNames || {};
+
+        // Defensive: Reconstruct data if not provided (direct call safety)
+        if (!squadMap) {
+            const squad = window.squad || [];
+            squadMap = new Map(squad.map(p => [p.uuid, p]));
+            const p = Passport.get();
+            myUUID = p ? p.playerUUID : null;
+        }
+
         const findP = (uuid) => squadMap.get(uuid);
 
         const fragment = document.createDocumentFragment();
@@ -445,6 +463,15 @@ const SidelineView = {
     _renderProfile(squadMap, myUUID) {
         const passport = Passport.get();
         if (!passport) return;
+
+        // Defensive: If squadMap wasn't provided (e.g. direct call), 
+        // reconstruct it from current global state.
+        if (!squadMap) {
+            const squad = window.squad || [];
+            squadMap = new Map(squad.map(p => [p.uuid, p]));
+            myUUID = passport.playerUUID;
+        }
+
         const me = squadMap.get(myUUID);
         const profileView = document.getElementById('slViewProfile');
         if (!profileView) return;
@@ -609,7 +636,7 @@ const SidelineView = {
             const cWins  = career.wins || 0;
             const cGames = career.games || 0;
             const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-            const rating = me ? Math.round(me.rating || 1200) : 1200;
+            const skillLevel = me ? me.skillLevel : (passport.skillLevel || 'Intermediate');
             
             let sWins = 0, sGames = 0, sWr = 0;
             if (me) {
@@ -2489,6 +2516,41 @@ const PlayerMode = {
         });
     },
     
+    openSkillLevelPicker() {
+        const passport = Passport.get();
+        if (!passport) return;
+
+        const emojis = {
+            'Novice': '👶',
+            'Intermediate': '🧑',
+            'Advanced': '🧙'
+        };
+
+        const content = `
+            <div class="menu-card">
+                <h2>Set Skill Level</h2>
+                <p>How do you rate your current skill?</p>
+                <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:20px;">
+                    ${Object.entries(emojis).map(([level, emoji]) => `
+                        <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border); ${passport.skillLevel === level ? 'border-color:var(--accent); box-shadow:0 0 10px var(--accent-dim);' : ''}" 
+                                onclick="PlayerMode.updateSkillLevel('${level}')">
+                            ${emoji} ${level}
+                        </button>
+                    `).join('')}
+                </div>
+                <button class="btn-cancel" onclick="UIManager.hide()">Cancel</button>
+            </div>
+        `;
+        UIManager.show(content, 'card');
+    },
+
+    updateSkillLevel(level) {
+        const passport = Passport.setSkillLevel(level);
+        UIManager.hide();
+        SidelineView.refresh(); // Re-render profile with new skill level
+        if (window.Haptic) Haptic.success();
+    },
+
     openTrophyRoom() {
         const passport = Passport.get();
         if (!passport) return;

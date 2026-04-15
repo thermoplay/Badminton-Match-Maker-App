@@ -25,33 +25,29 @@ function findP(uuid) {
 // ELO ENGINE
 // ---------------------------------------------------------------------------
 
-function calculateELODelta(playerRating, opponentAvgRating, actualScore, gamesPlayed) {
-    const K = (Number(gamesPlayed) || 0) < 10 ? 60 : 32; // Placement matches move faster
-    const expectedScore = 1 / (1 + Math.pow(10, (opponentAvgRating - playerRating) / 400));
-    return Math.round(K * (actualScore - expectedScore));
-}
-
+// Calculates match odds based on sum of skill weights
 function calculateOdds(teamA, teamB) {
-    // Null-safe: if a player object is missing (stale data), default rating to 1200
-    const r = p => (p && p.rating != null ? Number(p.rating) : 1200);
-    
-    // Dynamic average based on actual team size (handles 1v1 or 2v2 correctly)
-    const getAvg = (team) => {
-        if (!team || team.length === 0) return 1200;
-        return team.reduce((sum, p) => sum + r(p), 0) / team.length;
-    };
+    const getWeight = p => window.getSkillWeight ? window.getSkillWeight(p) : 2;
+    const sumA = teamA.reduce((s, p) => s + getWeight(p), 0);
+    const sumB = teamB.reduce((s, p) => s + getWeight(p), 0);
 
-    const rA = getAvg(teamA);
-    const rB = getAvg(teamB);
+    if (sumA === sumB) return [50, 50];
     
-    const expectedA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
-    const probA = Math.round(expectedA * 100);
+    // Simple probability based on relative strength.
+    // Higher sum means stronger team.
+    const totalWeight = sumA + sumB;
+    const probA = Math.round((sumA / totalWeight) * 100);
     return [probA, 100 - probA];
 }
 
 // ---------------------------------------------------------------------------
 // ROUND PROCESSING
 // ---------------------------------------------------------------------------
+
+// ABOLISHED: ELO is no longer used. This function is now applyStatsForMatch.
+// It updates wins, games, streaks, and form, but not ELO.
+// The name is kept for now to minimize diff, but its purpose has changed.
+// The `rating` field on players will become deprecated and eventually removed.
 
 // ---------------------------------------------------------------------------
 // PER-COURT ADVANCEMENT — fires when host taps "Next Game" on one court
@@ -84,7 +80,7 @@ function _createRoundSnapshot(finishedMatch, achievements = [], preSquad, preQue
  */
 function _processFinishedMatch(match, mIdx, timestamp) {
     match.resolvedAt = timestamp;
-    applyELOForMatch(match);
+    applyStatsForMatch(match); // FIX: Call renamed function to prevent crash
     if (typeof dispatchWinSignals === 'function') {
         dispatchWinSignals(mIdx, true, timestamp); // skipBroadcast = true
     }
@@ -226,7 +222,7 @@ async function processCourtResult(mIdx) {
     const resolutionTS = Date.now();
 
     // 2. Apply ELO and record stats
-    _processFinishedMatch(match, mIdx, resolutionTS);
+    _processFinishedMatch(match, mIdx, resolutionTS); // This now calls applyStatsForMatch
 
     // Performance: Capture UUIDs of the players involved for differential sync
     const matchPlayerUUIDs = match.teams.flat().map(n => findP(n)?.uuid).filter(Boolean);
@@ -283,19 +279,14 @@ function processAndNext() {
     generateMatches();
 }
 window.processAndNext = processAndNext;
-
-function applyELOForMatch(m) {
+function applyStatsForMatch(m) { // Renamed from applyELOForMatch
     if (m.winnerTeamIndex === null) return;
     const winIdx  = m.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
 
-    const winners = m.teams[winIdx].map(u => findP(u)).filter(Boolean);
-    const losers  = m.teams[loseIdx].map(u => findP(u)).filter(Boolean);
-    if (!winners.length || !losers.length) return;
-
-    const safeRating = p => Number(p.rating) || 1200;
-    const winAvg  = winners.reduce((s, p) => s + safeRating(p), 0) / winners.length;
-    const loseAvg = losers.reduce((s, p)  => s + safeRating(p), 0) / losers.length;
+    const winners = m.teams[winIdx].map(u => findP(u)).filter(Boolean); // Player objects
+    const losers  = m.teams[loseIdx].map(u => findP(u)).filter(Boolean); // Player objects
+    if (!winners.length || !losers.length) return; // Should not happen in 2v2
 
     // Update Winners
     if (winners.length === 2) {
@@ -312,8 +303,7 @@ function applyELOForMatch(m) {
         updateStat(p2, p1);
     }
     winners.forEach(p => {
-        const cur = safeRating(p);
-        p.rating = cur + calculateELODelta(cur, loseAvg, 1, p.games);
+        // No ELO update: only update wins, games, streak, form
         p.wins++; p.games++; p.streak++;
         p.form = (p.form || []).concat('W').slice(-5);
     });
@@ -329,9 +319,7 @@ function applyELOForMatch(m) {
         p2.partnerStats[p1.uuid].games++;
     }
     losers.forEach(p => {
-        const cur = safeRating(p);
-        const delta = calculateELODelta(cur, winAvg, 0, p.games);
-        p.rating = Math.max(800, cur + delta); // delta is negative here
+        // No ELO update: only update games, reset streak, update form
         p.games++; p.streak = 0;
         p.form = (p.form || []).concat('L').slice(-5);
     });
@@ -550,9 +538,8 @@ function pullNextFromQueue(onCourt) {
 
 // Build a match object from 4 player objects, applying best-split pairing.
 function buildMatchFromPlayers(p4) {
-    // ELO sort with shuffle for tie-breaking
-    p4.sort(() => Math.random() - 0.5);
-    p4.sort((a, b) => b.rating - a.rating);
+    // Sort by skill level (Advanced > Intermediate > Novice) for a structured snake draft
+    p4.sort((a, b) => (window.getSkillIndex?.(b) - window.getSkillIndex?.(a)) || Math.random() - 0.5);
 
     // All 3 team splits — pick the freshest
     const splits = [
@@ -560,8 +547,16 @@ function buildMatchFromPlayers(p4) {
         { tA: [p4[0], p4[2]], tB: [p4[1], p4[3]] },
         { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
     ];
-    splits.sort(() => Math.random() - 0.5);
-    splits.sort((a, b) => scoreSplit(a.tA, a.tB) - scoreSplit(b.tA, b.tB));
+
+    // Balance-First Sort: Prioritize splits where the weight difference is smallest.
+    // Tie-break with Variety (freshest matchup).
+    splits.sort((a, b) => {
+        const balanceA = Math.abs(calculateOdds(a.tA, a.tB)[0] - 50);
+        const balanceB = Math.abs(calculateOdds(b.tA, b.tB)[0] - 50);
+        
+        if (balanceA !== balanceB) return balanceA - balanceB;
+        return scoreSplit(a.tA, a.tB) - scoreSplit(b.tA, b.tB);
+    });
 
     const { tA, tB } = splits[0];
     const odds = calculateOdds(tA, tB);
@@ -1062,11 +1057,11 @@ function builderShuffle() {
         .filter(Boolean);
 
     // Shuffle randomly first
-    allPlayers.sort(() => Math.random() - 0.5);
+    allPlayers.sort(() => Math.random() - 0.5); // Randomize for fairness within the builder
 
     if (allPlayers.length === 4) {
         // Doubles: sort by rating for balanced snake draft
-        allPlayers.sort((a, b) => b.rating - a.rating);
+        allPlayers.sort((a, b) => getSkillIndex(b) - getSkillIndex(a)); // Sort by skill level
         builderTeams = [
             [allPlayers[0].uuid, allPlayers[3].uuid],
             [allPlayers[1].uuid, allPlayers[2].uuid]

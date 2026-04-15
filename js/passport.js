@@ -38,6 +38,7 @@ const Passport = {
                 playerUUID: this._uuid(),
                 playerName: name || '',
                 spiritAnimal: null,
+                skillLevel: 'Intermediate', // Default skill level
                 achievements: [],
                 lastProcessedTS: 0,
                 createdAt:  Date.now(),
@@ -76,6 +77,13 @@ const Passport = {
         return p;
     },
 
+    setSkillLevel(level) {
+        const p = this.get();
+        if (!p) return null;
+        p.skillLevel = level;
+        this.save(p);
+        return p;
+    },
     hydrate(remoteData) {
         const p = this.get();
         if (!p || !remoteData) return { needsUpload: false };
@@ -114,6 +122,10 @@ const Passport = {
         // 3. Identity Sync
         if (remoteData.name && p.playerName !== remoteData.name) {
             p.playerName = remoteData.name;
+            changed = true;
+        }
+        if (remoteData.skill_level && p.skillLevel !== remoteData.skill_level) {
+            p.skillLevel = remoteData.skill_level;
             changed = true;
         }
         if (remoteData.spirit_animal !== undefined && p.spiritAnimal !== remoteData.spirit_animal) {

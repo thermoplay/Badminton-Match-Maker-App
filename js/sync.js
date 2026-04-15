@@ -708,6 +708,7 @@ async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
                 player_uuid: playerUUID,
                 new_name:    newName || null,
                 spirit_animal: spiritAnimal
+                // Note: skill_level is not updated here, it's a player-controlled setting
             }),
         });
         if (!r.ok) console.error('[CourtSide] member-rename failed:', r.status);

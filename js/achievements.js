@@ -20,16 +20,6 @@ const Achievements = {
             { id: '10', name: 'Legendary',     count: 10, color: '#ffd700', description: 'Achieve a 10-game winning streak.' }
         ]
     },
-    'underdog': {
-        name: 'Underdog',
-        description: 'Win a match against a higher-rated team.',
-        icon: '🐶'
-    },
-    'giant_slayer': {
-        name: 'Giant Slayer',
-        description: 'Defeat a player with 200+ more ELO than you.',
-        icon: '⚔️'
-    },
     'endurance': {
         name: 'Iron Man',
         icon: '💪',
@@ -92,31 +82,8 @@ async function checkAndAwardAchievements(match, squad) {
                     showAchievementToast(player.name, { ...tier, icon: Achievements.streak.icon });
                 }
             });
-            // Check for 'underdog'
-            const getAvgRating = (uuids) => {
-                const team = uuids.map(findP).filter(Boolean);
-                if (team.length === 0) return 1200;
-                return team.reduce((sum, p) => sum + (p.rating || 1200), 0) / team.length;
-            };
-            const winnerTeamRating = getAvgRating(match.teams[winIdx]);
-            const loserTeamRating = getAvgRating(match.teams[loseIdx]);
-            if (!unlocked.has('underdog') && winnerTeamRating < loserTeamRating) {
-                player.achievements.push('underdog');
-                unlocked.add('underdog');
-                newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'underdog' });
-                showAchievementToast(player.name, Achievements.underdog);
-            }
-            
-            // Check for 'giant_slayer'
-            const losers = match.teams[loseIdx].map(findP).filter(Boolean);
-            const maxLoserRating = Math.max(...losers.map(l => l.rating || 1200));
-            if (!unlocked.has('giant_slayer') && (maxLoserRating - player.rating) >= 200) {
-                player.achievements.push('giant_slayer');
-                unlocked.add('giant_slayer');
-                newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'giant_slayer' });
-                showAchievementToast(player.name, Achievements.giant_slayer);
-            }
         }
+        
 
         // --- CHECK PARTICIPATION ACHIEVEMENTS ---
         Achievements.endurance.tiers.forEach(tier => {

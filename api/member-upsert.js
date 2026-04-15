@@ -76,8 +76,8 @@ export default async function handler(req, res) {
     // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
     // This maintains a master registry of all players across all sessions.
     // If lookup fails, we attempt a POST which will safely ON CONFLICT DO NOTHING in the DB.
-    let globalPlayer = null;
-    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,total_wins,total_games,achievements&limit=1`);
+    let globalPlayer = null; // Will store the player's global profile data
+    const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements&limit=1`);
     if (!playerLookup.ok || (Array.isArray(playerLookup.data) && playerLookup.data.length === 0)) {
         const insert = await sbFetch('/players', {
             method: 'POST', // PostgREST handles UUID casting automatically for table inserts
@@ -120,6 +120,7 @@ export default async function handler(req, res) {
                     method:  'PATCH',
                     headers: { 'Prefer': 'return=representation' },
                     body:    { player_name: trimmedName, spirit_animal: (spirit_animal !== undefined) ? spirit_animal : member.spirit_animal, last_seen: new Date().toISOString() },
+                    // Note: skill_level is not updated here, it's a player-controlled setting
                 }
             );
         }

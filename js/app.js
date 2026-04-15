@@ -8,6 +8,15 @@
 let passport  = null;
 let supabase  = null;
 
+// ---------------------------------------------------------------------------
+// SKILL TIER DEFINITIONS (Global)
+// ---------------------------------------------------------------------------
+window.TIER_WEIGHTS = { 'Novice': 1, 'Intermediate': 2, 'Advanced': 3 };
+window.SKILL_LEVELS = ['Novice', 'Intermediate', 'Advanced'];
+
+window.getSkillWeight = p => window.TIER_WEIGHTS[p?.skillLevel] || window.TIER_WEIGHTS['Intermediate'];
+window.getSkillIndex = p => window.SKILL_LEVELS.indexOf(p?.skillLevel || 'Intermediate');
+
 // Global state is now managed by StateStore
 
 let selectedPlayerIndex = null;
@@ -70,7 +79,6 @@ function saveToDisk() {
 // FIELD MIGRATION
 // ---------------------------------------------------------------------------
 function migratePlayer(p) {
-    if (p.rating           == null) p.rating           = 1200;
     if (p.wins             == null) p.wins             = 0;
     if (p.games            == null) p.games            = 0;
     if (p.streak           == null) p.streak           = 0;
@@ -312,6 +320,38 @@ function toggleRestingState() {
     closeMenu();
     togglePlayerActive(p.uuid);
 }
+function openSetSkillLevel() {
+    const p = StateStore.squad[selectedPlayerIndex];
+    if (!p) return;
+    closeMenu();
+    UIManager.confirm({
+        title: `Set Skill Level for ${p.name}`,
+        message: `
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${p.uuid}', 'Novice'); UIManager.hide();">Novice</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${p.uuid}', 'Intermediate'); UIManager.hide();">Intermediate</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${p.uuid}', 'Advanced'); UIManager.hide();">Advanced</button>
+            </div>
+        `,
+        confirmText: 'Cancel', // Renamed to cancel as buttons handle action
+        onConfirm: () => {}, // No action on confirm, buttons handle it
+        isDestructive: false,
+        showCancel: false, // Hide default cancel button
+    });
+}
+window.openSetSkillLevel = openSetSkillLevel;
+
+function setPlayerSkillLevel(uuid, level) {
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    if (!p) return;
+    p.skillLevel = level;
+    StateStore.set('squad', [...StateStore.squad]);
+    renderSquad();
+    if (typeof broadcastGameState === 'function') broadcastGameState(true);
+    showSessionToast(`${p.name} is now ${level}`);
+    Haptic.success();
+}
+window.setPlayerSkillLevel = setPlayerSkillLevel;
 
 function _autoAddHostToSquad() {
     // This function runs on app start for the host.
@@ -506,9 +546,10 @@ function renderSquad() {
         const isMatch = !query || p.name.toLowerCase().includes(query);
 
         const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
+        const skillBadge = `<span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" title="${p.skillLevel || 'Intermediate'}">${(p.skillLevel || 'Intermediate').charAt(0)}</span>`;
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
-            <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${skillBadge}${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
             ${waitBadge}
         `;
         const isSwapping = p.uuid === swapSourceUUID;
@@ -1031,7 +1072,7 @@ function _calculateFinalRecapData() {
     const history = StateStore.roundHistory || [];
     const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
     
-    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins || b.rating - a.rating);
+    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins || getSkillIndex(b) - getSkillIndex(a));
     const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
     
     const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
@@ -1414,10 +1455,10 @@ function renderStatsTab(tab) {
     `;
 
     if (tab === 'performance') {
-        const sorted   = [...StateStore.squad].sort((a, b) => b.rating - a.rating);
+        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins);
         const topCount = Math.max(1, Math.ceil(StateStore.squad.length * 0.3));
-        const peak     = sorted.slice(0, topCount).sort((a, b) => a.name.localeCompare(b.name));
-        const active   = sorted.slice(topCount).sort((a, b) => a.name.localeCompare(b.name));
+        const peak     = sorted.slice(0, topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
+        const active   = sorted.slice(topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
         const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
 
         const renderGroup = (label, list) => {
@@ -1501,7 +1542,10 @@ function renderStatsTab(tab) {
                         </div>
                     </div>` : `<div class="sl-card-empty">Not in squad</div>`}
                 </div>
-
+                 <div class="sl-stat-card" style="margin-top:12px;">
+                    <div class="sl-card-label">SKILL LEVEL</div>
+                    <div style="font-family:var(--font-display); font-size:1.8rem; font-weight:900; color:var(--accent);">${skillLevel.toUpperCase()}</div>
+                </div>       
                 <div class="sl-stat-card">
                     <div class="sl-card-label">CAREER RECORD</div>
                     <div class="sl-card-grid">
@@ -1631,7 +1675,7 @@ function renderStatsTab(tab) {
                             <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
                             <div class="stats-meta">${p.total_wins || p.wins || 0} Wins · ${p.total_games || p.games || 0} Games</div>
                         </div>
-                        <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.elo || p.rating || 1200}</div>
+                        <div style="font-family:var(--font-display); font-size:0.8rem; font-weight:800; color:var(--accent);">${p.skill_level || 'INTERMEDIATE'}</div>
                     </div>`).join('');
                 content.innerHTML = tabs + `<div class="history-list">${html || '<div class="sl-empty">No rankings available yet.</div>'}</div>`;
             })
@@ -3087,10 +3131,27 @@ window.openStandalonePassport = function() {
             .then(data => {
                 if (data.global) {
                     const { passport: updatedP, needsUpload } = Passport.hydrate(data.global);
-                    window.renderPassportStandalone(updatedP);
+
+                    // 2. Fetch global leaderboard to compute rank percentile
+                    fetch('/api/leaderboard-get')
+                        .then(lbRes => lbRes.json())
+                        .then(lbData => {
+                            const players = lbData.players || [];
+                            const rankIdx = players.findIndex(lp => lp.uuid === updatedP.playerUUID);
+                            if (rankIdx !== -1) {
+                                const rank = rankIdx + 1;
+                                const percentile = Math.ceil((rank / players.length) * 100);
+                                const percHTML = players.length > 5 ? `<div style="font-size:0.5rem; opacity:0.6; margin-top:2px; font-style:normal; font-weight:700;">TOP ${percentile}%</div>` : '';
+                                window._lastRankDisplay = `#${rank}${percHTML}`;
+                                window.renderPassportStandalone(updatedP, window._lastRankDisplay);
+                            } else {
+                                window.renderPassportStandalone(updatedP);
+                            }
+                        })
+                        .catch(() => window.renderPassportStandalone(updatedP));
 
                     // If local stats are more advanced than the cloud, perform a reconcile sync
-                    if (needsUpload) {
+                    if (needsUpload && !window.isOnlineSession) {
                         console.log('[Passport] Local data advanced; reconciling with cloud...');
                         fetch('/api/match-history', {
                             method: 'POST',
@@ -3111,7 +3172,7 @@ window.openStandalonePassport = function() {
     }
 };
 
-window.renderPassportStandalone = function(p) {
+window.renderPassportStandalone = function(p, globalRank = window._lastRankDisplay || '—') {
     const content = document.getElementById('passportStandaloneContent');
     if (!content || !p) return;
 
@@ -3151,6 +3212,10 @@ window.renderPassportStandalone = function(p) {
         </div>
 
         <div class="ps-stats-grid">
+            <div class="ps-stat-card" style="border-color:var(--accent-glow);">
+                <div class="ps-stat-val" style="color:var(--accent); line-height:1.1;">${globalRank}</div>
+                <div class="ps-stat-label">GLOBAL RANK</div>
+            </div>
             <div class="ps-stat-card">
                 <div class="ps-stat-val">${stats.games}</div>
                 <div class="ps-stat-label">TOTAL GAMES</div>
@@ -3162,6 +3227,10 @@ window.renderPassportStandalone = function(p) {
             <div class="ps-stat-card">
                 <div class="ps-stat-val">${wr}%</div>
                 <div class="ps-stat-label">WIN RATE</div>
+            </div>
+            <div class="ps-stat-card">
+                <div class="ps-stat-val" style="font-size:1.2rem;">${p.skillLevel || 'Intermediate'}</div>
+                <div class="ps-stat-label">SKILL LEVEL</div>
             </div>
         </div>
 
