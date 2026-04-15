@@ -3086,8 +3086,24 @@ window.openStandalonePassport = function() {
             .then(res => res.json())
             .then(data => {
                 if (data.global) {
-                    Passport.hydrate(data.global);
-                    window.renderPassportStandalone(Passport.get());
+                    const { passport: updatedP, needsUpload } = Passport.hydrate(data.global);
+                    window.renderPassportStandalone(updatedP);
+
+                    // If local stats are more advanced than the cloud, perform a reconcile sync
+                    if (needsUpload) {
+                        console.log('[Passport] Local data advanced; reconciling with cloud...');
+                        fetch('/api/match-history', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                type: 'reconcile_sync',
+                                player_uuid: updatedP.playerUUID,
+                                total_wins: updatedP.stats.wins,
+                                total_games: updatedP.stats.games,
+                                achievements: updatedP.achievements
+                            })
+                        }).catch(e => console.warn('[Passport] Reconciliation failed', e));
+                    }
                 }
             })
             .catch(e => console.warn('[Passport] Silent hydrate failed', e));
@@ -3165,16 +3181,6 @@ window.renderPassportStandalone = function(p) {
 
     // Show local trophies immediately
     renderTrophies(p.achievements || []);
-
-    // Fetch achievements
-    if (typeof fetchPlayerAchievements === 'function' && p.playerUUID) {
-        fetchPlayerAchievements(p.playerUUID).then(achs => {
-            const ids = (achs || []).map(a => a.achievement_id);
-            Passport.recordAchievements(ids);
-            // Re-render with merged data
-            renderTrophies(Passport.get().achievements);
-        });
-    }
 };
 
 window.goToPlayerMode = function() {

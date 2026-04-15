@@ -57,10 +57,11 @@ export default async function handler(req, res) {
         code = code.slice(0, 4) + '-' + code.slice(4);
     }
 
+    const isRestore = code === 'RESTORE';
     const uuid        = String(player_uuid).trim();
 
     // --- Input Validation ---
-    if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+    if (!isRestore && !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
         return res.status(400).json({ error: 'Invalid room code format' });
     }
     if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
@@ -75,9 +76,10 @@ export default async function handler(req, res) {
     // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
     // This maintains a master registry of all players across all sessions.
     // If lookup fails, we attempt a POST which will safely ON CONFLICT DO NOTHING in the DB.
+    let globalPlayer = null;
     const playerLookup = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,total_wins,total_games,achievements&limit=1`);
     if (!playerLookup.ok || (Array.isArray(playerLookup.data) && playerLookup.data.length === 0)) {
-        await sbFetch('/players', {
+        const insert = await sbFetch('/players', {
             method: 'POST', // PostgREST handles UUID casting automatically for table inserts
             body: {
                 uuid: uuid,
@@ -86,8 +88,16 @@ export default async function handler(req, res) {
                 last_active: new Date().toISOString()
             }
         });
+        if (insert.ok) {
+            globalPlayer = Array.isArray(insert.data) ? insert.data[0] : insert.data;
+        }
     } else {
-        var globalPlayer = playerLookup.data[0];
+        globalPlayer = playerLookup.data[0];
+    }
+
+    // --- Short-circuit for Restore flow ---
+    if (isRestore) {
+        return res.status(200).json({ ok: true, global: globalPlayer });
     }
 
     // ── Step 1: Check if this player already has a row in this session ──────

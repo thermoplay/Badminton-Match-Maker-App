@@ -2433,7 +2433,62 @@ const PlayerMode = {
             if (typeof showSessionToast === 'function') showSessionToast("❌ Notifications Blocked");
         }
     },
+    restorePassportPrompt() {
+        UIManager.prompt({
+            title: 'Restore Passport',
+            placeholder: 'Paste your Recovery Key...',
+            confirmText: 'Restore',
+            onConfirm: async (key) => {
+                if (!key || key.length < 30) return showSessionToast('Invalid Key');
+                showSessionToast('🔍 Locating Profile...');
+                try {
+                    const res = await fetch('/api/member-upsert', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ room_code: 'RESTORE', player_uuid: key.trim(), player_name: 'Recovering...' })
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.global) {
+                            // Verification Dialog
+                            UIManager.confirm({
+                                title: 'Profile Found!',
+                                message: `
+                                    <div style="text-align:center; margin-top:10px;">
+                                        <div style="font-size:1.4rem; font-weight:900; color:var(--accent); text-transform:uppercase; font-style:italic;">${data.global.name}</div>
+                                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px; font-weight:700;">
+                                            ${data.global.total_wins || 0} Wins · ${data.global.total_games || 0} Games
+                                        </div>
+                                        <div style="margin-top:16px; font-weight:600; font-size:0.85rem; color:var(--text);">Is this you?</div>
+                                    </div>
+                                `,
+                                confirmText: 'Yes, Restore it',
+                                onConfirm: () => {
+                                    // Reset local identity to this restored UUID
+                                    const p = {
+                                        playerUUID: data.global.uuid,
+                                        playerName: data.global.name,
+                                        stats: { wins: 0, games: 0 },
+                                        achievements: []
+                                    };
+                                    localStorage.setItem('cs_player_passport', JSON.stringify(p));
+                                    
+                                    // Use hydrate logic to merge trophies and stats correctly
+                                    if (typeof Passport !== 'undefined') Passport.hydrate(data.global);
 
+                                    showSessionToast('✅ Passport Restored!');
+                                    setTimeout(() => location.reload(), 1000);
+                                }
+                            });
+                        } else {
+                            showSessionToast('❌ Profile not found');
+                        }
+                    }
+                } catch(e) { showSessionToast('❌ Restore failed'); }
+            }
+        });
+    },
+    
     openTrophyRoom() {
         const passport = Passport.get();
         if (!passport) return;
