@@ -249,11 +249,11 @@ const SidelineView = {
 
             const cardContent = `
                 <div class="sl-match-header">
-                    <div class="sl-match-label">${courtName}${playing ? ' · <span class="sl-you-badge">YOU</span>' : ''}</div>
+                    <div class="sl-match-label">${courtName}${playing ? ' · <span class="sl-you-badge" style="background:var(--accent); color:var(--bg); font-weight:900; padding:2px 6px; border-radius:4px; font-size:0.5rem; margin-left:4px;">YOU</span>' : ''}</div>
                     ${storyBadges.length ? `<div class="sl-story-badges">${storyBadges.map(b => `<span>${this._esc(b)}</span>`).join('')}</div>` : ''}
                     ${timerHTML}
                 </div>
-                <div class="sl-match-teams">
+                <div class="sl-match-teams" style="padding: 14px 12px;">
                     <div class="sl-team-col">
                         <span class="${aClass}">${safeNames(tA_uuids)}</span>
                     </div>

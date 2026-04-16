@@ -289,7 +289,10 @@ body {
     min-height: 100vh;
 
     /* Broadcast-style diagonal texture */
+    /* Broadcast-style diagonal texture + Scanline Effect */
     background-image:
+        linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%),
+        linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03)),
         repeating-linear-gradient(
             -45deg,
             transparent,
@@ -297,6 +300,25 @@ body {
             rgba(255,255,255,0.012) 40px,
             rgba(255,255,255,0.012) 41px
         );
+    background-size: 100% 4px, 3px 100%, 100% 100%;
+}
+
+/* ── Custom Scrollbar ────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { 
+    background: var(--surface2); 
+    border-radius: 10px; 
+    border: 1px solid var(--border);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Glass Utility ────────────────────────────────────────────────────── */
+.glass {
+    background: rgba(22, 22, 31, 0.7);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* ---------------------------------------------------------------------------
@@ -3966,10 +3988,24 @@ button:active,
     gap: 1rem;
     padding: 1.1rem 1.25rem;
     border-radius: 16px;
-    border: 1.5px solid var(--border);
-    background: var(--surface);
+    border: 1px solid var(--border);
+    background: linear-gradient(145deg, var(--surface), var(--bg2));
     transition: border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
     will-change: border-color, background, box-shadow;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+/* Dynamic Scanline Overlay for active statuses */
+.sl-status-card[data-state="playing"]::before,
+.sl-status-card[data-state="on-deck"]::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(transparent 50%, rgba(0,0,0,0.05) 50%);
+    background-size: 100% 4px;
+    pointer-events: none;
+    opacity: 0.3;
+    z-index: 2;
 }
 
 /* State variants */
@@ -3979,7 +4015,7 @@ button:active,
 }
 .sl-status-card[data-state="playing"] {
     border-color: var(--accent);
-    background: var(--accent-dim);
+    background: linear-gradient(135deg, var(--accent-dim), rgba(0, 255, 163, 0.02));
     box-shadow: 0 0 24px rgba(var(--accent-rgb),0.15);
     position: relative; /* For pseudo-element */
     z-index: 1;
@@ -4056,8 +4092,10 @@ button:active,
     display: flex;
     align-items: center;
     gap: 1rem;
-    background: var(--surface);
-    border: 1px solid var(--border-accent);
+    background: rgba(22, 22, 31, 0.6);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
     border-radius: 14px;
     padding: 1rem 1.25rem;
 }
@@ -4253,7 +4291,8 @@ button:active,
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 0.875rem 1rem;
+    padding: 0; /* Full bleed header */
+    overflow: hidden;
     transition: border-color 0.2s, background 0.2s;
 }
 
@@ -4271,7 +4310,9 @@ button:active,
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 7px;
+    padding: 8px 12px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
     gap: 6px;
 }
@@ -4284,6 +4325,18 @@ button:active,
     text-transform: uppercase;
     color: var(--text-muted);
     white-space: nowrap;
+}
+
+.sl-match-mine .sl-match-label {
+    color: var(--accent);
+}
+
+.sl-match-teams {
+    display: grid;
+    grid-template-columns: 1fr 2rem 1fr;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 12px 10px;
 }
 
 .sl-story-badges {
@@ -4325,12 +4378,6 @@ button:active,
     font-size: 0.5rem;
 }
 
-.sl-match-teams {
-    display: grid;
-    grid-template-columns: 1fr 2rem 1fr;
-    align-items: center;
-    gap: 0.5rem;
-}
 
 .sl-team-col {
     display: flex;
@@ -5357,11 +5404,12 @@ button:active,
 .sl-tabs {
     display: flex;
     gap: 8px;
-    padding: 4px;
+    padding: 5px;
     background: var(--bg2);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 14px;
     margin-bottom: 12px;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
 }
 
 .sl-tab {
@@ -5371,18 +5419,21 @@ button:active,
     color: var(--text-muted);
     font-family: var(--font-display);
     font-size: 0.8rem;
-    font-weight: 800;
-    letter-spacing: 1px;
-    padding: 10px;
-    border-radius: 8px;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 11px;
+    border-radius: 10px;
     cursor: pointer;
     transition: all 0.2s;
 }
 
 .sl-tab.active {
-    background: var(--surface2);
+    background: var(--surface);
     color: var(--accent);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    border: 1px solid var(--border-accent);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
 }
 
 /* ── Network Health Icon ────────────────────────────────────────────────── */
