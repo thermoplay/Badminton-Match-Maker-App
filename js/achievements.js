@@ -30,8 +30,13 @@ const Achievements = {
         ]
     },
     'socialite': {
-        name: 'Social Butterfly',
+        name: 'Socialite',
         description: 'Play with 3 different partners.',
+        icon: '🤝'
+    },
+    'social_butterfly': {
+        name: 'Social Butterfly',
+        description: 'Play with 10 different partners.',
         icon: '🦋'
     },
 };
@@ -70,6 +75,7 @@ async function checkAndAwardAchievements(match, squad) {
                 player.achievements.push('first_win');
                 unlocked.add('first_win');
                 newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'first_win' });
+                unlockAchievement(player.uuid, 'first_win');
                 showAchievementToast(player.name, Achievements.first_win);
             }
             // Check for 'streak' tiers
@@ -79,6 +85,7 @@ async function checkAndAwardAchievements(match, squad) {
                     player.achievements.push(tid);
                     unlocked.add(tid);
                     newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: tid });
+                    unlockAchievement(player.uuid, tid);
                     showAchievementToast(player.name, { ...tier, icon: Achievements.streak.icon });
                 }
             });
@@ -92,6 +99,7 @@ async function checkAndAwardAchievements(match, squad) {
                 player.achievements.push(tid);
                 unlocked.add(tid);
                 newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: tid });
+                unlockAchievement(player.uuid, tid);
                 showAchievementToast(player.name, { ...tier, icon: Achievements.endurance.icon });
             }
         });
@@ -100,8 +108,18 @@ async function checkAndAwardAchievements(match, squad) {
         if (!unlocked.has('socialite') && uniquePartners >= 3) {
             player.achievements.push('socialite');
             unlocked.add('socialite');
+            unlockAchievement(player.uuid, 'socialite');
             newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'socialite' });
             showAchievementToast(player.name, Achievements.socialite);
+        }
+
+        // Check for 'social_butterfly' (10 Unique Connections)
+        if (!unlocked.has('social_butterfly') && uniquePartners >= 10) {
+            player.achievements.push('social_butterfly');
+            unlocked.add('social_butterfly');
+            unlockAchievement(player.uuid, 'social_butterfly');
+            newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'social_butterfly' });
+            showAchievementToast(player.name, Achievements.social_butterfly);
         }
     }
 

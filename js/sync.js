@@ -439,11 +439,9 @@ async function joinOnlineSession(roomCode) {
 // ---------------------------------------------------------------------------
 
 const _doPushToSupabase = async () => {
-    // Differential Sync: Only send the full squad if requested, otherwise send 
-    // only the players marked as dirty (e.g., the 4 players from the last match).
-    const squadToSend = _fullSyncPending 
-        ? StateStore.squad 
-        : StateStore.squad.filter(p => _dirtyIds.has(p.uuid || p.name));
+    // DATA SAFETY FIX: Always send the full squad. 
+    // PostgREST PATCH replaces the entire column; filtering here deletes data from the DB.
+    const squadToSend = StateStore.squad;
 
     _fullSyncPending = false;
     _dirtyIds = new Set();
@@ -570,6 +568,18 @@ function broadcastSkillLevelUpdate(playerUUID, level) {
 }
 
 /**
+ * Player broadcasts their MVP vote to the host.
+ */
+function broadcastMVPVote(voterUUID, votedForUUID, sessionUUID) {
+    const payload = { voterUUID, votedForUUID, sessionUUID };
+    if (sbManager && sbManager.socket?.readyState === WebSocket.OPEN) {
+        sbManager.broadcast('mvp_vote', payload);
+    } else {
+        _pendingActions.push({ type: 'mvp_vote', payload });
+    }
+}
+
+/**
  * BUG 1 FIX — broadcast approval to the specific player.
  * Contains: playerUUID (so player can match), token (for sessionStorage),
  * current squad + matches (so sideline view is immediately populated).
@@ -605,6 +615,20 @@ function broadcastGameState(immediate = false, lastResolvedTS = null) {
 
     if (!immediate && _broadcastThrottleTimer) return;
 
+    // Helper to calculate "Next Up" names from state instead of DOM
+    const getNextUpNames = () => {
+        const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
+        const waiting = StateStore.playerQueue
+            .map(id => StateStore.squad.find(p => p.uuid === id || p.name === id))
+            .filter(p => p && p.active && !onCourt.has(p.uuid || p.name))
+            .slice(0, 4);
+        
+        if (waiting.length === 0) return "";
+        if (waiting.length <= 2) return waiting.map(p => p.name).join(' & ');
+        // For 4 players, format as "A, B, C & D"
+        return waiting.slice(0, -1).map(p => p.name).join(', ') + ' & ' + waiting[waiting.length - 1].name;
+    };
+
     const doBroadcast = () => {
     // Serialize matches with explicit teamA/teamB keys so the player view never
     // has to infer team assignment from position or sort order.
@@ -620,7 +644,7 @@ function broadcastGameState(immediate = false, lastResolvedTS = null) {
         current_matches: safeMatches,
         player_queue: StateStore.playerQueue,
         courtNames: StateStore.get('courtNames'),
-        next_up: (document.getElementById('nextUpNames')?.textContent || '').trim(),
+        next_up: getNextUpNames(),
         hash: _generateStateHash(StateStore.squad, StateStore.playerQueue),
         lastResolvedTS: lastResolvedTS || Date.now()
     });
@@ -918,6 +942,15 @@ function _handleBroadcast(payload) {
         return;
     }
 
+    // MVP Vote broadcast — host tallies votes
+    if (type === 'mvp_vote') {
+        if (isOperator) {
+            // Dispatch a custom event so app.js can listen and update the recap modal
+            window.dispatchEvent(new CustomEvent('mvp_vote_received', { detail: payload }));
+        }
+        return;
+    }
+
     // Feature #5: Status update — host applies the change
     if (type === 'player_status_update') {
         if (isOperator) {
@@ -932,12 +965,13 @@ function _handleBroadcast(payload) {
 // squad member has .uuid stored at approval time — that never changes.
 function _applyNameUpdate(playerUUID, oldName, newName) {
     if (!newName?.trim() || !playerUUID) return;
-    const trimmed = newName.trim();
+    let trimmed = newName.trim();
 
     // 1. Find player by UUID (stored on squad member at approval) — rename-safe
     let player = StateStore.squad.find(p => p.uuid === playerUUID);
-    // 2. Fallback: find by oldName if uuid not yet on squad member
-    if (!player) player = StateStore.squad.find(p => p.name === oldName);
+    // 2. Fallback: find by oldName ONLY if the target entry has no UUID (Guest/Legacy).
+    // This prevents hijacking the Host or other Passport holders if names collide.
+    if (!player) player = StateStore.squad.find(p => p.name === oldName && !p.uuid);
 
     if (!player) {
         // If player is pending (not in squad yet), update the local playRequests cache
@@ -952,6 +986,22 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
         return;
     }
 
+    // 3. Collision Protection: If the new name is already taken by someone else
+    const collision = StateStore.squad.find(p => 
+        p.uuid !== playerUUID && 
+        p.name.toLowerCase() === trimmed.toLowerCase()
+    );
+
+    if (collision) {
+        let counter = 1;
+        let finalName = `${trimmed} (${counter})`;
+        while (StateStore.squad.find(p => p.name.toLowerCase() === finalName.toLowerCase())) {
+            counter++;
+            finalName = `${trimmed} (${counter})`;
+        }
+        trimmed = finalName;
+    }
+
     const prevName = player.name;
     player.name    = trimmed;
     player.uuid    = playerUUID;   // ensure uuid is set for future lookups
@@ -959,7 +1009,8 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     // Update uuid_map: rename the key, ensure new key exists
     const uuidMap = window._sessionUUIDMap || {};
     // Remove old name key if it points to this UUID
-    if (uuidMap[prevName] === playerUUID) delete uuidMap[prevName];
+    if (uuidMap[prevName]) delete uuidMap[prevName];
+    if (oldName && uuidMap[oldName]) delete uuidMap[oldName];
     // Always write new name key
     uuidMap[trimmed] = playerUUID;
     window._sessionUUIDMap = uuidMap;
@@ -1154,7 +1205,7 @@ function applyRemoteState(session) {
                     }
 
                     if (pChanged) {
-                        localP.achievements = Array.from(localSet);
+                        localP.achievements = [...localSet];
                         hasChanges = true;
                     }
                 }
@@ -1193,8 +1244,8 @@ function applyRemoteState(session) {
         // Allow lookup by UUID or Name during hydration to prevent queue loss
         loadedSquad.find(p => p.uuid === id || p.name.toLowerCase() === String(id).toLowerCase())
     );
-    const loadedCourtNames = session.court_names || {};
-    let loadedCourts = 1;
+    const loadedCourtNames = session.court_names || session.data?.court_names || {};
+    let loadedCourts = StateStore.get('activeCourts') || 1;
     if (Number.isInteger(session.active_courts) && session.active_courts >= 1) {
         loadedCourts = session.active_courts;
         setTimeout(() => {

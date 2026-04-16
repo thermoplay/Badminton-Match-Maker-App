@@ -164,17 +164,18 @@ function addPlayer() {
         return;
     }
 
+    const newUUID = _generateUUID();
     // Use migratePlayer to ensure all required logic fields (skillLevel, stats) are initialized
     const newPlayer = migratePlayer({
         name: name,
-        uuid: null,
+        uuid: newUUID,
         active: true,
         isGuest: true
     });
     
-    // Update state arrays
+    const pId = newPlayer.uuid || newPlayer.name;
     const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(newPlayer.name)) newQueue.push(newPlayer.name);
+    if (!newQueue.includes(pId)) newQueue.push(pId);
 
     // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
     StateStore.set('squad', [...StateStore.squad, newPlayer]);
@@ -453,15 +454,22 @@ function _removePlayerFromLocalState(playerIndex) {
     const newQueue = StateStore.playerQueue.filter(u => u !== removedId);
 
     if (window._approvedPlayers) {
-        if (removedUUID) delete window._approvedPlayers[removedUUID];
-        if (removedName) delete window._approvedPlayers[removedName];
+        // Remove by UUID and any potential name-based entry
+        if (removedUUID) delete window._approvedPlayers[removedUUID]; 
+        if (removedName && window._approvedPlayers[removedName]) delete window._approvedPlayers[removedName];
     }
 
     if (window._sessionUUIDMap) {
-        if (removedName) delete window._sessionUUIDMap[removedName];
-        if (removedUUID) { /* reversed lookup if needed, but key is name */ }
+        const uuidMap = window._sessionUUIDMap;
+        // Remove entry by the player's current name
+        if (removedName && uuidMap[removedName] === removedUUID) delete uuidMap[removedName];
+        // Iterate and remove any other entries that point to the removed UUID (e.g., old names)
+        for (const key in uuidMap) {
+            if (Object.prototype.hasOwnProperty.call(uuidMap, key) && uuidMap[key] === removedUUID) {
+                delete uuidMap[key];
+            }
+        }
     }
-
     if (typeof playRequests !== 'undefined' && removedUUID) {
         const pendingRequest = playRequests.find(r => r.player_uuid === removedUUID);
         if (pendingRequest && typeof denyPlayRequest === 'function') {
@@ -837,7 +845,7 @@ function movePlayerToFront() {
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
     saveToDisk();
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
-    Haptic.success();
+    if (window.Haptic) Haptic.success();
     if (typeof showSessionToast === 'function') showSessionToast(`${p.name} moved to front`);
 }
 
@@ -1142,6 +1150,7 @@ function _calculateFinalRecapData() {
     const sharpShooter = sortedByWR[0] || { name: 'N/A', wins: 0, games: 0 };
 
     return { 
+        sessionUUID: _generateUUID(), // Unique ID for this recap instance
         sport,
         totalGames, 
         mvp: { name: mvp.name, wins: mvp.wins, games: mvp.games }, 
@@ -1149,7 +1158,8 @@ function _calculateFinalRecapData() {
         hotHand: { name: hotHand.name, streak: hotHand.streak },
         sharpShooter: { 
             name: sharpShooter.name, 
-            wr: sharpShooter.games > 0 ? Math.round((sharpShooter.wins / sharpShooter.games) * 100) : 0 
+            wr: sharpShooter.games > 0 ? Math.round((sharpShooter.wins / sharpShooter.games) * 100) : 0,
+            squad: squad.map(p => ({ uuid: p.uuid, name: p.name, spiritAnimal: p.spiritAnimal })) // For voting
         },
         squad: sortedByWins.slice(0, 10) 
     };
@@ -1159,6 +1169,7 @@ function _showHostRecap(recap) {
     document.body.classList.add('session-ended');
     closeOverlay();
 
+    const sessionMVPVotes = {}; // To store votes for this recap
     const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
 
     const leaderboardHTML = recap.squad.map((p, i) => `
@@ -1174,7 +1185,7 @@ function _showHostRecap(recap) {
             <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:8px; text-transform:uppercase;">SESSION COMPLETE</div>
             <h2 style="font-size:2.2rem; margin-bottom:24px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic;">RECAP & RANKINGS</h2>
             
-            <div style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
+            <div id="hostMvpDisplay" style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
                 <div style="font-size:3rem; margin-bottom:10px;">🏆</div>
                 <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
                 <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(recap.mvp.name)}</div>
@@ -1216,6 +1227,35 @@ function _showHostRecap(recap) {
     `;
 
     UIManager.show(content, 'card');
+
+    // Host-side vote tallying
+    window.addEventListener('mvp_vote_received', (e) => {
+        const { votedForUUID, sessionUUID } = e.detail;
+        if (sessionUUID !== recap.sessionUUID) return; // Only count votes for this specific recap
+
+        sessionMVPVotes[votedForUUID] = (sessionMVPVotes[votedForUUID] || 0) + 1;
+        const sortedVotes = Object.entries(sessionMVPVotes).sort(([,a], [,b]) => b - a);
+        
+        if (sortedVotes.length > 0) {
+            const topVotedUUID = sortedVotes[0][0];
+            const topVotedCount = sortedVotes[0][1];
+            const topVotedPlayer = recap.squad.find(p => p.uuid === topVotedUUID);
+            
+            if (topVotedPlayer) {
+                const mvpDisplayEl = document.getElementById('hostMvpDisplay');
+                if (mvpDisplayEl) {
+                    mvpDisplayEl.innerHTML = `
+                        <div style="font-size:3rem; margin-bottom:10px;">👑</div>
+                        <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">PLAYER OF THE SESSION</div>
+                        <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(topVotedPlayer.name)}</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${topVotedCount} Votes</div>
+                        <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
+                            onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(topVotedPlayer.name)}', ${topVotedPlayer.wins}, ${topVotedPlayer.games})">📲 SHARE MVP POSTER</button>
+                    `;
+                }
+            }
+        }
+    });
 }
 // ---------------------------------------------------------------------------
 // QR CODE & SYNC TOKEN
@@ -1733,25 +1773,28 @@ function renderStatsTab(tab) {
 
                 // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
                 players.sort((a, b) => {
-                    const connA = Object.keys(a.partner_stats || {}).length;
-                    const connB = Object.keys(b.partner_stats || {}).length;
+                    // Support both snake_case (DB) and camelCase (Internal)
+                    const connA = Object.keys(a.partner_stats || a.partnerStats || {}).length;
+                    const connB = Object.keys(b.partner_stats || b.partnerStats || {}).length;
                     if (connB !== connA) return connB - connA; // Most unique partners first
 
                     const trophyA = (a.achievements || []).length;
                     const trophyB = (b.achievements || []).length;
                     if (trophyB !== trophyA) return trophyB - trophyA;
 
-                    return (b.total_games || 0) - (a.total_games || 0);
+                    const gamesA = a.total_games ?? a.totalGames ?? a.games ?? 0;
+                    const gamesB = b.total_games ?? b.totalGames ?? b.games ?? 0;
+                    return gamesB - gamesA;
                 });
 
                 const html = players.map((p, i) => {
-                    const connections = Object.keys(p.partner_stats || {}).length;
+                    const connections = Object.keys(p.partner_stats || p.partnerStats || {}).length;
                     return `
                     <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
                         <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
                         <div style="flex:1;">
                             <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
-                            <div class="stats-meta">${connections} Connections · ${p.total_games || 0} Games</div>
+                            <div class="stats-meta">${connections} Connections · ${p.total_games ?? p.totalGames ?? p.games ?? 0} Games</div>
                         </div>
                         <div style="text-align:right;">
                             <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
@@ -2481,9 +2524,9 @@ function _resolvePlayerForSession(name, incomingUUID) {
     // 2. If not found by UUID, treat as NEW.
     // 2. Secondary: Name-based lookup (Smart Recognition)
     // If UUID didn't match but the name does, assume it's the same person
-    // (e.g., host added them manually first or UUIDs were cleared).
+    // ONLY if the squad entry has no UUID (Legacy/Guest).
     player = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
-    if (player) {
+    if (player && (!player.uuid || player.uuid === incomingUUID)) {
         if (validUUID && !player.uuid) player.uuid = validUUID; // Adopt canonical ID
         return player;
     }
@@ -3435,6 +3478,26 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
 window.goToPlayerMode = function() {
     window.location.href = '?role=player';
 };
+function _startHostTimerTick() {
+    if (window._hostTickTimer) clearInterval(window._hostHostTickTimer);
+    window._hostTickTimer = setInterval(() => {
+        const matches = StateStore.currentMatches || [];
+        matches.forEach((m, i) => {
+            if (!m.startedAt || m.winnerTeamIndex !== null) return;
+            const el = document.getElementById(`timer-${i}`);
+            if (!el) return;
+            
+            const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
+            const min = Math.floor(elapsed / 60);
+            const sec = elapsed % 60;
+            el.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
+            
+            // Use the same CSS classes defined for the court-timer
+            el.classList.toggle('timer-warn', min >= 10);
+            el.classList.toggle('timer-alert', min >= 15);
+        });
+    }, 1000);
+}
 
 // =============================================================================
 // initApp
@@ -3489,6 +3552,7 @@ async function initApp() {
 
     try {
         loadFromDisk();
+        _startHostTimerTick();
     } catch (e) {
         console.error('[CourtSide] initApp: loadFromDisk failed', e);
     }

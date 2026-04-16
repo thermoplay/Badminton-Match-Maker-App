@@ -15,7 +15,8 @@ let _lastSquadForCache = null;
 /** Finds a player object by UUID or Name. Returns undefined if not found. */
 function findP(id) {
     if (!id) return undefined;
-    if (_lastSquadForCache !== StateStore.squad) {
+    // Ensure we check for squad array length changes or reference changes
+    if (_lastSquadForCache !== StateStore.squad || _findPCache.size === 0) {
         _findPCache = new Map();
         StateStore.squad.forEach(p => {
             if (p.uuid) _findPCache.set(p.uuid, p);
@@ -121,7 +122,7 @@ function _recordMatchStats(match, timestamp = Date.now()) {
 
         p.matchHistory = p.matchHistory || [];
         p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid || o.name), partnerUUID: partnerUUID, time: timestamp });
-        if (p.matchHistory.length > 5) p.matchHistory.pop();
+        if (p.matchHistory.length > 10) p.matchHistory.pop();
     });
 
     const addHistory = (p, teammate, opponents) => {
@@ -364,22 +365,26 @@ function applyStatsForMatch(m) { // Renamed from applyELOForMatch
 
 function initQueue() {
     const activeSquad = StateStore.squad.filter(p => p.active);
-    const activeIds = activeSquad.map(p => p.uuid || p.name);
+    const activeUUIDs = new Set(activeSquad.map(p => p.uuid).filter(Boolean));
+    const activeNames = new Set(activeSquad.map(p => p.name.toLowerCase()));
 
     // 1. Process current queue: Resolve names to UUIDs and filter out inactive
     let currentQueue = (StateStore.playerQueue || []).map(item => {
         const p = StateStore.squad.find(x => x.uuid === item || x.name.toLowerCase() === String(item).toLowerCase());
-        return (p && p.active) ? (p.uuid || p.name) : null;
+        if (!p || !p.active) return null;
+        return p.uuid || p.name;
     }).filter(Boolean);
 
-    // Ensure uniqueness
-    currentQueue = [...new Set(currentQueue)];
+    // 2. Add active players not yet in queue (by UUID or Name)
+    const inQueueUUIDs = new Set(currentQueue.filter(id => activeUUIDs.has(id)));
+    const inQueueNames = new Set(currentQueue.map(id => id.toLowerCase()));
+    
+    const newcomers = activeSquad.filter(p => {
+        if (p.uuid) return !inQueueUUIDs.has(p.uuid);
+        return !inQueueNames.has(p.name.toLowerCase());
+    }).map(p => p.uuid || p.name);
 
-    // 2. Add active players not yet in queue
-    const inQueueSet = new Set(currentQueue);
-    const newcomers = activeIds.filter(u => !inQueueSet.has(u));
-
-    const finalQueue = [...currentQueue, ...newcomers];
+    const finalQueue = [...new Set([...currentQueue, ...newcomers])];
     StateStore.set('playerQueue', finalQueue);
 }
 

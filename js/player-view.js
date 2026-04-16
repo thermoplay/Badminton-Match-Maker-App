@@ -98,7 +98,7 @@ const SidelineView = {
     },
 
     _startTimerTick() {
-        if (this._tickTimer) clearInterval(this._startTimerTick);
+        if (this._tickTimer) clearInterval(this._tickTimer);
         this._tickTimer = setInterval(() => {
             if (!this._visible) return;
             const matches = window.currentMatches || [];
@@ -376,7 +376,7 @@ const SidelineView = {
         const modal = document.getElementById('slRecapModal');
         const content = document.getElementById('slRecapContent');
         if (!modal || !content || !recapData) return;
-
+        const passport = Passport.get();
         const { totalGames, mvp, ironMan, hotHand, sharpShooter, squad = [] } = recapData;
 
         content.innerHTML = `
@@ -404,6 +404,29 @@ const SidelineView = {
                 </div>
             </div>
             <div class="sl-section-label" style="margin-top:14px;">📊 FINAL STANDINGS</div>
+            
+            <div class="sl-section-label" style="margin-top:24px;">⭐ VOTE FOR PLAYER OF THE SESSION</div>
+            <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; margin-top:10px;">
+                <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px; text-align:center;">
+                    Who was the true MVP of this session?
+                </p>
+                <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:10px;">
+                    ${squad.map(p => `
+                        <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border); font-size:0.8rem; height:48px;"
+                                onclick="PlayerMode.submitMVPVote('${p.uuid}', '${recapData.sessionUUID}')">
+                            ${p.spiritAnimal || Avatar.initials(p.name)} ${this._esc(p.name)}
+                        </button>
+                    `).join('')}
+                </div>
+                <button id="slMvpVoteBtn" class="btn-main" style="margin-top:16px; background:var(--accent); color:#000; height:48px; font-size:0.9rem;" 
+                        onclick="PlayerMode.submitMVPVote('${mvp.uuid}', '${recapData.sessionUUID}')">
+                    VOTE FOR ${this._esc(mvp.name).toUpperCase()} (Host's Pick)
+                </button>
+                <p id="slMvpVoteStatus" style="font-size:0.65rem; color:var(--text-muted); margin-top:10px; text-align:center; display:none;">
+                    Thanks for voting!
+                </p>
+            </div>
+
             <div style="margin-top:10px; background:var(--surface2); border-radius:12px; border:1px solid var(--border); padding:0 12px;">
                 ${squad.slice(0, 5).map((p, i) => `
                     <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border);">
@@ -1109,6 +1132,7 @@ const VictoryCard = { show() {}, hide() {}, share() {} };
 
 const LS_TOKENS   = 'cs_session_tokens';
 const LS_APPROVED = 'cs_approved_sessions';
+const SESSION_EXPIRY_MS = 72 * 60 * 60 * 1000; // 72 Hours (Covers weekend tournaments)
 
 const PlayerMode = {
 
@@ -1614,6 +1638,7 @@ const PlayerMode = {
         if (!passport) return;
         if (payload.playerUUID !== passport.playerUUID) return;
 
+        const wasAlreadyApproved = this._isApprovedInSession(this._joinCode);
         this._markApprovedInSession(this._joinCode);
         this._isJoining = false;
         if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
@@ -1628,7 +1653,7 @@ const PlayerMode = {
         this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
 
         if (window.Haptic) Haptic.success();
-        if (typeof showSessionToast === 'function') {
+        if (!wasAlreadyApproved && typeof showSessionToast === 'function') {
             showSessionToast("🏀 You're approved! Welcome to the court.");
         }
 
@@ -1884,6 +1909,9 @@ const PlayerMode = {
         // Update the profile play count badge whenever status refreshes
         _renderPlayCount(passport.playerName);
 
+        // Sliding Window: Refresh approval lease while active in a session
+        if (this._joinCode) this._markApprovedInSession(this._joinCode);
+
         if (playing) {
             const sIcon = (window.SPORT_ICONS ? window.SPORT_ICONS[window.sport || 'Badminton'] : null) || '🏸';
             const subText = courtInfo 
@@ -1906,6 +1934,7 @@ const PlayerMode = {
         if (!passport) return;
         if (memberRecord.player_uuid !== passport.playerUUID) return;
 
+        const wasAlreadyApproved = this._isApprovedInSession(this._joinCode);
         this._markApprovedInSession(this._joinCode);
 
         if (memberRecord.player_name && memberRecord.player_name !== passport.playerName) {
@@ -1946,13 +1975,16 @@ const PlayerMode = {
         setTimeout(() => this._updateStatus(p), 1200);
 
         if (window.Haptic) Haptic.success();
-        if (typeof showSessionToast === 'function') {
+        if (!wasAlreadyApproved && typeof showSessionToast === 'function') {
             showSessionToast("🏀 You're approved! Welcome to the court.");
         }
     },
 
     async _submitJoinRequest(passport, joinCode, options = {}) {
         const { force = false, statusMessage, statusSubMessage } = options;
+
+        // If already approved, skip the join request entirely to prevent duplicate notifications for the host
+        if (this._isApprovedInSession(joinCode) && !force) return;
 
         if (this._isJoining && !force) return;
         this._isJoining = true;
@@ -2119,9 +2151,9 @@ const PlayerMode = {
                 const p = Passport.get();
                 if (this._isApprovedInSession(this._joinCode) && p) {
                     const squad = window.squad || [];
-                    // Only self-heal if we HAVE squad data and we aren't in it.
-                    // If squad is empty, the session state is still loading.
-                    if (squad.length > 0 && !squad.some(m => m.uuid === p.playerUUID)) {
+                    // Only self-heal if we are definitely approved but missing from the host's squad.
+                    // Guard against re-requesting while a name change or state update is already in flight.
+                    if (squad.length > 0 && !this._isJoining && !squad.some(m => m.uuid === p.playerUUID)) {
                         console.warn('[PlayerMode] Self-healing: Approved but not in squad. Re-notifying host...');
                         this._resendRequest();
                     }
@@ -2131,14 +2163,25 @@ const PlayerMode = {
     },
 
     _isApprovedInSession(roomCode) {
-        try { return !!JSON.parse(localStorage.getItem(LS_APPROVED) || '{}')[roomCode]; }
+        try {
+            const m = JSON.parse(localStorage.getItem(LS_APPROVED) || '{}');
+            const timestamp = m[roomCode];
+            if (!timestamp) return false;
+            
+            // Check if approval has expired (if it was stored as a timestamp)
+            if (typeof timestamp === 'number' && (Date.now() - timestamp > SESSION_EXPIRY_MS)) {
+                this._clearApprovedInSession(roomCode);
+                return false;
+            }
+            return true;
+        }
         catch { return false; }
     },
 
     _markApprovedInSession(roomCode) {
         try {
             const m = JSON.parse(localStorage.getItem(LS_APPROVED) || '{}');
-            m[roomCode] = true;
+            m[roomCode] = Date.now(); // Store timestamp for expiry check
             localStorage.setItem(LS_APPROVED, JSON.stringify(m));
         } catch { }
     },
@@ -2152,7 +2195,17 @@ const PlayerMode = {
     },
 
     _loadToken(roomCode) {
-        try { return JSON.parse(localStorage.getItem(LS_TOKENS) || '{}')[roomCode] || null; }
+        try {
+            const m = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
+            const entry = m[roomCode];
+            if (!entry) return null;
+
+            if (entry.savedAt && (Date.now() - entry.savedAt > SESSION_EXPIRY_MS)) {
+                this._clearToken(roomCode);
+                return null;
+            }
+            return entry;
+        }
         catch { return null; }
     },
 
@@ -2400,6 +2453,7 @@ const PlayerMode = {
 
     openNavigation() {
         const isSaver = localStorage.getItem('cs_battery_saver') === 'true';
+        const isAudio = localStorage.getItem('cs_audio_announce') === 'true';
         const code = this._joinCode || window.currentRoomCode || '';
         const content = `
             <div class="menu-card">
@@ -2409,6 +2463,10 @@ const PlayerMode = {
                     
                     <button class="btn-main" style="background:var(--surface2); color:var(--text); height: 50px;" onclick="PlayerMode.toggleBatterySaver()">
                         🔋 BATTERY SAVER: ${isSaver ? 'ON' : 'OFF'}
+                    </button>
+
+                    <button class="btn-main" style="background:var(--surface2); color:var(--text); height: 50px;" onclick="PlayerMode.toggleAudioAnnounce()">
+                        🔊 VOICE ALERTS: ${isAudio ? 'ON' : 'OFF'}
                     </button>
 
                     ${("Notification" in window && Notification.permission !== 'granted') ? `
@@ -2456,6 +2514,14 @@ const PlayerMode = {
         this._subscribeAndPoll(this._joinCode, Passport.get());
         showSessionToast(`🔋 Battery Saver: ${newVal ? 'ON' : 'OFF'}`);
         UIManager.hide();
+    },
+
+    toggleAudioAnnounce() {
+        const current = localStorage.getItem('cs_audio_announce') === 'true';
+        const newVal = !current;
+        localStorage.setItem('cs_audio_announce', String(newVal));
+        showSessionToast(`🔊 Voice Alerts: ${newVal ? 'ON' : 'OFF'}`);
+        this.openNavigation(); // Refresh menu
     },
 
     async requestNotifications() {
@@ -2619,6 +2685,20 @@ const PlayerMode = {
         UIManager.show(content, 'card');
     },
 };
+
+PlayerMode.submitMVPVote = function(votedForUUID, sessionUUID) {
+    const passport = Passport.get();
+    if (!passport || !window.isOnlineSession) return;
+
+    if (typeof broadcastMVPVote === 'function') {
+        broadcastMVPVote(passport.playerUUID, votedForUUID, sessionUUID);
+        showSessionToast('✅ Vote submitted!');
+        const voteBtns = document.querySelectorAll('#slRecapModal .btn-main');
+        voteBtns.forEach(btn => { btn.disabled = true; btn.style.opacity = 0.5; });
+        document.getElementById('slMvpVoteStatus').style.display = 'block';
+    }
+};
+
 // =============================================================================
 // "YOU'RE UP!" BANNER — fires once on transition into playing state
 // =============================================================================
