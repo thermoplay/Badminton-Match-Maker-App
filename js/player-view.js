@@ -1133,6 +1133,7 @@ const PlayerMode = {
     _retryInterval: null,
     _joinRetryTimeout: null,
     _isOpenParty: false,
+    _hasSyncedInSquad: false, // Prevents premature kick detection during join flow
 
     resetAndTryAgain() {
         this._joinCode = null;
@@ -1276,11 +1277,16 @@ const PlayerMode = {
         const isApproved = this._isApprovedInSession(joinCode);
 
         // RECONCILIATION: If we think we are approved but the session metadata shows 
-        // we are NOT in the squad, it means the host removed us while we were away.
-        if (session && isApproved && !inSquad) {
-            console.warn('[PlayerMode] Detected removal from session. Returning to menu.');
-            this._onRemovedFromSession();
-            return;
+        // we are NOT in the squad, it might be a stale approval from a previous session.
+        // We only trigger a hard disconnect if we were previously part of THIS session's active squad.
+        if (session && isApproved && !inSquad && this._hasSyncedInSquad) {
+             console.warn('[PlayerMode] Detected removal from session. Returning to menu.');
+             this._onRemovedFromSession();
+             return;
+        } else if (session && isApproved && !inSquad && !this._hasSyncedInSquad) {
+             // Potential stale approval from another day/instance. Clear it so we go through join flow.
+             console.log('[PlayerMode] Stale approval detected. Re-initiating join flow.');
+             this._clearApprovedInSession(joinCode);
         }
 
         // 4. Handle name entry if the player is new
@@ -1368,6 +1374,7 @@ const PlayerMode = {
                 const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
 
                 this._isOpenParty = !!session.is_open_party;
+                if (inSquad) this._hasSyncedInSquad = true;
 
                 if (inSquad) {
                     this._markApprovedInSession(joinCode);
@@ -1405,6 +1412,7 @@ const PlayerMode = {
         
         panel?.classList.remove('sl-booting');
         this._clearSearchingSpinner();
+        this._hasSyncedInSquad = false; // Reset for new join attempt
 
         // Atomic Join Request: checks status, inserts request, or confirms active.
         await this._submitJoinRequest(passport, joinCode, {
@@ -1638,6 +1646,7 @@ const PlayerMode = {
         if (payload.playerUUID !== passport.playerUUID) return;
 
         const wasAlreadyApproved = this._isApprovedInSession(this._joinCode);
+        this._hasSyncedInSquad = true;
         this._markApprovedInSession(this._joinCode);
         this._isJoining = false;
         if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
@@ -1733,6 +1742,7 @@ const PlayerMode = {
         // Proactive: If we see ourselves in the squad, clear the join UI
         const me = (payload.squad || []).find(p => p.uuid === passport.playerUUID);
         if (me) {
+            this._hasSyncedInSquad = true;
             this._clearQueuedState();
 
             // Reconciliation: If the host broadcast updated profile info or name, update local passport.
@@ -1756,10 +1766,10 @@ const PlayerMode = {
             if (Array.isArray(me.achievements)) {
                 Passport.recordAchievements(me.achievements);
             }
-        } else if (this._isApprovedInSession(this._joinCode)) {
+        } else if (this._isApprovedInSession(this._joinCode) && this._hasSyncedInSquad) {
             // KICK DETECTION: We are approved locally but missing from the host's squad broadcast.
-            // This triggers a reset to the main menu.
-            console.warn('[PlayerMode] Local approval found but missing from squad update. Redirecting.');
+            // ONLY triggers if we have been synced in the squad at least once during this session's lifecycle.
+            console.warn('[PlayerMode] Session sync failed: missing from squad. Disconnecting.');
             this._onRemovedFromSession();
             return;
         }
@@ -1788,6 +1798,7 @@ const PlayerMode = {
         const myEntry  = approved[passport.playerUUID] || approved[passport.playerName];
         if (myEntry && !this._isApprovedInSession(this._joinCode)) {
             this._markApprovedInSession(this._joinCode);
+            this._hasSyncedInSquad = true;
             this._clearJoinRetryTimer();
             if (myEntry.token) this._saveToken(this._joinCode, myEntry.token, passport.playerName, passport.playerUUID);
             this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
@@ -1797,7 +1808,7 @@ const PlayerMode = {
         }
         // KICK DETECTION (Poll/Hydrate fallback): Missing from squad but approved in LS.
         const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
-        if (this._isApprovedInSession(this._joinCode) && !inSquad) {
+        if (this._isApprovedInSession(this._joinCode) && !inSquad && this._hasSyncedInSquad) {
             this._onRemovedFromSession();
             return;
         }
@@ -1968,6 +1979,7 @@ const PlayerMode = {
         if (memberRecord.player_uuid !== passport.playerUUID) return;
 
         const wasAlreadyApproved = this._isApprovedInSession(this._joinCode);
+        this._hasSyncedInSquad = true;
         this._markApprovedInSession(this._joinCode);
 
         if (memberRecord.player_name && memberRecord.player_name !== passport.playerName) {
@@ -2064,7 +2076,7 @@ const PlayerMode = {
                                     Try Another Code
                                 </button>
                                 <button class="sl-back-btn" onclick="window.location.href=window.location.origin + window.location.pathname">
-                                    ← Back to Host View
+                                    ← Back to Menu
                                 </button>
                             </div>`;
                         if (container.innerHTML.trim() !== newHTML.trim()) {
@@ -2084,6 +2096,7 @@ const PlayerMode = {
 
             if (data.alreadyActive || data.status === 'active') {
                 this._isJoining = false;
+                this._hasSyncedInSquad = true;
                 if (data.global) Passport.hydrate(data.global);
 
                 // UX: Apply session state immediately so stats don't flicker to 0
@@ -2413,7 +2426,7 @@ const PlayerMode = {
                     Join with Code
                 </button>
                 <button class="sl-back-btn" onclick="window.location.href=window.location.origin + window.location.pathname">
-                    ← Back to Host View
+                    ← Back to Menu
                 </button>
             </div>`;
             if (el.innerHTML.trim() !== newHTML.trim()) {
