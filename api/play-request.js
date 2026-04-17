@@ -73,7 +73,7 @@ export default async function handler(req, res) {
 
     // ── POST: player submits join request ────────────────────────────────────
     if (req.method === 'POST') {
-        const { room_code, name, player_uuid, force, spirit_animal } = req.body;
+        const { room_code, name, player_uuid, force, spirit_animal, skill_level } = req.body;
 
         if (!room_code || !name || !player_uuid) {
             return res.status(400).json({ error: 'Missing fields for join' });
@@ -83,8 +83,24 @@ export default async function handler(req, res) {
         let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
         if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
 
+        if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+            return res.status(400).json({ error: 'Invalid room code format' });
+        }
+
         const trimmedName = String(name).trim().slice(0, 50);
         const uuid = String(player_uuid).trim();
+
+        // --- Input Validation ---
+        if (trimmedName.length < 2) {
+            return res.status(400).json({ error: 'Player name must be at least 2 characters' });
+        }
+        if (!/^[a-zA-Z0-9\s.\-_'()]+$/.test(trimmedName)) {
+            return res.status(400).json({ error: 'Player name contains unsupported characters' });
+        }
+        if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
+            return res.status(400).json({ error: 'Invalid player identity format' });
+        }
+        // ------------------------
 
         // 1. Verify Room Exists and Fetch Metadata
         // We fetch the squad array to check if the player is already "in the queue" (host's local state)
@@ -101,7 +117,12 @@ export default async function handler(req, res) {
         // This handles cases where the host added them manually (name match) or they rejoined (UUID match).
         const inSquad = currentSquad.find(p => p.uuid === uuid || (p.name && p.name.toLowerCase() === trimmedName.toLowerCase()));
         if (inSquad) {
-            return res.status(200).json({ alreadyActive: true, ok: true });
+// Optimization: If they are already in the session, return state + global stats so they render instantly
+             const [fullSession, globalProfile] = await Promise.all([
+                 sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport&limit=1`),
+                 sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`)
+             ]);
+             return res.status(200).json({ alreadyActive: true, ok: true, session: fullSession.data?.[0], global: globalProfile.data?.[0] });
         }
 
         // 2. Check if player is already a member (any status) in session_members
@@ -110,7 +131,8 @@ export default async function handler(req, res) {
 
         if (existingMemberStatus === 'active') {
             // Player is already active. No need for a new request.
-            return res.status(200).json({ alreadyActive: true, ok: true });
+            const globalProfile = await sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`);
+            return res.status(200).json({ alreadyActive: true, ok: true, global: globalProfile.data?.[0] });
         }
 
         // 3. If Open Party is ON, bypass play_requests and go straight to session_members as active
@@ -123,13 +145,19 @@ export default async function handler(req, res) {
                     player_uuid: uuid,
                     player_name: trimmedName,
                     spirit_animal: spirit_animal || null,
+                    skill_level: skill_level || 'Intermediate',
                     status: 'active',
                     approved_at: new Date().toISOString()
                 }
             });
             if (autoApprove.ok) {
                 // If auto-approved, we're done. No play_request needed.
-                return res.status(200).json({ ok: true, status: 'active', autoApproved: true });
+                // Fetch session state + global stats for instant render
+                const [fullSession, globalProfile] = await Promise.all([
+                    sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport&limit=1`),
+                    sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`)
+                ]);
+                return res.status(200).json({ ok: true, status: 'active', autoApproved: true, session: fullSession.data?.[0], global: globalProfile.data?.[0] });
             }
             // If auto-approval failed, fall through to pending request logic.
             console.error(`[play-request] Auto-approval failed for ${uuid} in ${code}:`, autoApprove.data);
@@ -237,6 +265,9 @@ export default async function handler(req, res) {
             
             // ALSO delete from play_requests to prevent join-blocking ghosts
             await sbFetch(`/play_requests?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
+
+            // Cleanup passport signals to avoid "Ghost Result" popups on rejoin
+            await sbFetch(`/passport_signals?player_uuid=eq.${encodeURIComponent(uuid)}&room_code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
 
             return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
         }

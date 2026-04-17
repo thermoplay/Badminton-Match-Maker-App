@@ -67,6 +67,12 @@ export default async function handler(req, res) {
     if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
         return res.status(400).json({ error: 'Invalid player UUID format' });
     }
+    if (new_name && trimmed.length < 2) {
+        return res.status(400).json({ error: 'Player name must be at least 2 characters' });
+    }
+    if (new_name && !/^[a-zA-Z0-9\s.\-_'()]+$/.test(trimmed)) {
+        return res.status(400).json({ error: 'Player name contains unsupported characters' });
+    }
     // ------------------------
 
     const sessionUpdates = { last_seen: new Date().toISOString() };

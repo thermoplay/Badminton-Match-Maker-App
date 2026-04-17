@@ -80,14 +80,36 @@ export default async function handler(req, res) {
         if (!p.uuid) continue;
         const serverP = mergedSquadMap.get(p.uuid);
 
+        const mergeCounts = (incoming, server) => {
+            const res = { ...(server || {}) };
+            for (const [id, count] of Object.entries(incoming || {})) {
+                res[id] = Math.max(res[id] || 0, count);
+            }
+            return res;
+        };
+
+        const mergeHistory = (incoming, server) => {
+            const map = new Map();
+            (server || []).forEach(m => m.time && map.set(m.time, m));
+            (incoming || []).forEach(m => m.time && map.set(m.time, m));
+            return Array.from(map.values()).sort((a, b) => b.time - a.time);
+        };
+
         const mergedP = serverP ? {
             ...p,
             achievements:    [...new Set([...(p.achievements || []), ...(serverP.achievements || [])])],
             spiritAnimal:    p.spiritAnimal || serverP.spiritAnimal || null,
-            teammateHistory: { ...(serverP.teammateHistory || {}), ...(p.teammateHistory || {}) },
-            opponentHistory: { ...(serverP.opponentHistory || {}), ...(p.opponentHistory || {}) },
-            partnerStats:    { ...(serverP.partnerStats || {}),    ...(p.partnerStats || {}) },
-            matchHistory:    (p.matchHistory && p.matchHistory.length > 0) ? p.matchHistory : (serverP.matchHistory || [])
+            teammateHistory: mergeCounts(p.teammateHistory, serverP.teammateHistory),
+            opponentHistory: mergeCounts(p.opponentHistory, serverP.opponentHistory),
+            partnerStats: (() => {
+                const res = { ...(serverP.partnerStats || {}) };
+                for (const [id, stats] of Object.entries(p.partnerStats || {})) {
+                    const sStats = res[id] || { wins: 0, games: 0 };
+                    res[id] = { wins: Math.max(sStats.wins || 0, stats.wins || 0), games: Math.max(sStats.games || 0, stats.games || 0) };
+                }
+                return res;
+            })(),
+            matchHistory:    mergeHistory(p.matchHistory, serverP.matchHistory)
         } : p;
 
         mergedSquadMap.set(p.uuid, mergedP);

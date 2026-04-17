@@ -67,11 +67,13 @@ export default async function handler(req, res) {
     if (!/^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(uuid)) {
         return res.status(400).json({ error: 'Invalid player UUID format' });
     }
-    // ------------------------
-
-    if (!trimmedName || !uuid) {
-        return res.status(400).json({ error: 'Invalid name or uuid' });
+    if (trimmedName.length < 2) {
+        return res.status(400).json({ error: 'Player name must be at least 2 characters' });
     }
+    if (!/^[a-zA-Z0-9\s.\-_'()]+$/.test(trimmedName)) {
+        return res.status(400).json({ error: 'Player name contains unsupported characters' });
+    }
+    // ------------------------
 
     // ── NORMALIZE: Ensure player exists in the global 'players' table ────────
     // This maintains a master registry of all players across all sessions.

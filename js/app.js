@@ -221,15 +221,27 @@ function editPlayerName() {
     });
 }
 
+let _isProcessingOpenPartyBatch = false;
+
 function toggleOpenParty() {
     const current = StateStore.get('isOpenParty') || false;
     const next = !current;
     StateStore.set('isOpenParty', next);
     showSessionToast(`🔓 Open Party: ${next ? 'ON' : 'OFF'}`);
-    if (next && window.playRequests && window.playRequests.length > 0) {
-        [...window.playRequests].forEach(r => {
-            approvePlayRequest(r.name, r.id, r.player_uuid || null);
-        });
+
+    if (next && window.playRequests?.length > 0 && !_isProcessingOpenPartyBatch) {
+        _isProcessingOpenPartyBatch = true;
+        (async () => {
+            try {
+                for (const r of [...window.playRequests]) {
+                    // Abort batch approval if the toggle is flipped back OFF mid-process
+                    if (!StateStore.get('isOpenParty')) break;
+                    await approvePlayRequest(r.name, r.id, r.player_uuid || null);
+                }
+            } finally {
+                _isProcessingOpenPartyBatch = false;
+            }
+        })();
     }
     renderOpenPartyToggle();
 }
@@ -531,6 +543,11 @@ async function removePlayerFromSession(playerUUID, playerName) {
     });
 
     _updateUIAfterPlayerRemoval();
+
+    // Notify the player immediately so their UI resets to the menu
+    if (typeof broadcastEvent === 'function') {
+        broadcastEvent('player_removed', { playerUUID: removedUUID, playerName: removedName });
+    }
 
     await _removePlayerFromRemoteDB(removedUUID);
     Haptic.bump();
@@ -1114,6 +1131,14 @@ function confirmEndSession() {
             localStorage.removeItem('cs_operator_key');
             localStorage.removeItem('cs_op_key_hash');
             localStorage.removeItem('cs_pro_vault'); // Clear local vault to return to fresh menu
+            localStorage.removeItem('cs_pending_sync');
+
+            // Clear request tracking for the session
+            _lastSeenRequestIds.clear();
+            _processingRequestIds.clear();
+            playRequests = [];
+            _notifQueue.length = 0;
+            window.playRequests = playRequests;
 
             // 3. Show the Host Recap View (this also hides hostRoot via CSS)
             _showHostRecap(recapData);
@@ -1227,35 +1252,6 @@ function _showHostRecap(recap) {
     `;
 
     UIManager.show(content, 'card');
-
-    // Host-side vote tallying
-    window.addEventListener('mvp_vote_received', (e) => {
-        const { votedForUUID, sessionUUID } = e.detail;
-        if (sessionUUID !== recap.sessionUUID) return; // Only count votes for this specific recap
-
-        sessionMVPVotes[votedForUUID] = (sessionMVPVotes[votedForUUID] || 0) + 1;
-        const sortedVotes = Object.entries(sessionMVPVotes).sort(([,a], [,b]) => b - a);
-        
-        if (sortedVotes.length > 0) {
-            const topVotedUUID = sortedVotes[0][0];
-            const topVotedCount = sortedVotes[0][1];
-            const topVotedPlayer = recap.squad.find(p => p.uuid === topVotedUUID);
-            
-            if (topVotedPlayer) {
-                const mvpDisplayEl = document.getElementById('hostMvpDisplay');
-                if (mvpDisplayEl) {
-                    mvpDisplayEl.innerHTML = `
-                        <div style="font-size:3rem; margin-bottom:10px;">👑</div>
-                        <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">PLAYER OF THE SESSION</div>
-                        <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(topVotedPlayer.name)}</div>
-                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${topVotedCount} Votes</div>
-                        <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
-                            onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(topVotedPlayer.name)}', ${topVotedPlayer.wins}, ${topVotedPlayer.games})">📲 SHARE MVP POSTER</button>
-                    `;
-                }
-            }
-        }
-    });
 }
 // ---------------------------------------------------------------------------
 // QR CODE & SYNC TOKEN
@@ -2336,6 +2332,19 @@ let _lastSeenRequestIds = new Set();
 let _pollingInterval = null;
 let _isPolling = false;
 
+/**
+ * Tracks seen request IDs to prevent duplicate processing/notifications.
+ * Implements a sliding window (max 200 IDs) to prevent memory leaks in long sessions.
+ */
+function _trackRequestId(id) {
+    if (!id) return;
+    _lastSeenRequestIds.add(id);
+    if (_lastSeenRequestIds.size > 200) {
+        const oldest = _lastSeenRequestIds.values().next().value;
+        _lastSeenRequestIds.delete(oldest);
+    }
+}
+
 function _isPlayerAlreadyInSession(record) {
     if (!record) return null;
     const uuidMap = window._sessionUUIDMap || {};
@@ -2347,21 +2356,20 @@ function _isPlayerAlreadyInSession(record) {
 }
 
 async function pollPlayRequests() {
-    if (_isPolling || !isOnlineSession || !isOperator || !currentRoomCode) return;
+    if (_isPolling || !isOnlineSession || !isOperator || !currentRoomCode || _isProcessingOpenPartyBatch) return;
     _isPolling = true;
     try {
         const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}`);
         const data = await res.json();
         const incoming = data.requests || [];
-        playRequests = incoming;
-        window.playRequests = playRequests;
 
-        const isOpen = StateStore.get('isOpenParty');
+        const trulyPending = [];
 
         for (const r of incoming) {
+            const isOpen = StateStore.get('isOpenParty');
             if (!_lastSeenRequestIds.has(r.id)) {
-                // Always mark as seen immediately to prevent race-induced duplicate processing
-                _lastSeenRequestIds.add(r.id);
+                // Track immediately to prevent race-induced duplicate processing
+                _trackRequestId(r.id);
 
                 const existing = _isPlayerAlreadyInSession(r);
 
@@ -2387,24 +2395,28 @@ async function pollPlayRequests() {
 
                 if (isOpen) {
                     console.log(`[CourtSide] Auto-approving ${r.name} (Open Party)`);
-                    approvePlayRequest(r.name, r.id, r.player_uuid || null);
+                    await approvePlayRequest(r.name, r.id, r.player_uuid || null);
                     continue;
                 }
+                trulyPending.push(r);
                 showJoinNotification(r.name, r.id, r.player_uuid || null, r.spirit_animal || null);
+            } else {
+                // If we've seen it but it's still in the fetch, it's pending unless it's an auto-join
+                if (!isOpen) trulyPending.push(r);
             }
         }
+
+        playRequests = trulyPending;
+        window.playRequests = trulyPending;
 
         const badge = document.getElementById('playRequestsBadge');
         const count = document.getElementById('playRequestsCount');
         if (badge && count) {
-            const hasReqs = playRequests.length > 0;
+            const hasReqs = trulyPending.length > 0;
             badge.style.display = hasReqs ? 'flex' : 'none';
-            count.textContent   = playRequests.length;
-            
+            count.textContent   = trulyPending.length;
         }
-    } catch { /* silent */ } finally {
-        _isPolling = false;
-    }
+    } catch (e) { console.error('[pollPlayRequests] failed', e); } finally { _isPolling = false; }
 }
 
 const _notifQueue = [];
@@ -2450,7 +2462,6 @@ async function notifApprove() {
     const uuid  = notif?.dataset.uuid || null;
     if (name && id) {
         await approvePlayRequest(name, id, uuid);
-        _lastSeenRequestIds.delete(id);
     }
     dismissJoinNotification();
 }
@@ -2460,7 +2471,6 @@ async function notifDecline() {
     const id    = notif?.dataset.id;
     if (id) {
         await denyPlayRequest(id);
-        _lastSeenRequestIds.delete(id);
     }
     dismissJoinNotification();
 }
@@ -2555,13 +2565,15 @@ window._resolvePlayerForSession = _resolvePlayerForSession;
  * Handles a player joining via Open Party (no approval required).
  * Reuses logic from approvePlayRequest without the deletion step.
  */
-async function handleAutoJoin(name, playerUUID) {
+function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null) {
     if (!window.isOperator) return;
     
     // Avoid duplicates if already processed via broadcast or Postgres change
     if (StateStore.squad.some(p => p.uuid === playerUUID)) return;
 
     const player = _resolvePlayerForSession(name, playerUUID);
+    if (spiritAnimal) player.spiritAnimal = spiritAnimal;
+    if (skillLevel)   player.skillLevel   = skillLevel;
     player.active = true;
     player.acknowledged = false;
 
@@ -2574,12 +2586,18 @@ async function handleAutoJoin(name, playerUUID) {
         newSquad[existingIdx].name = name;
     }
 
-    // Refresh achievements in background
+    // BACKGROUND ACHIEVEMENT FETCHING (Prevent Race Conditions)
+    // Ensures the player is added to the squad immediately while trophies load in background.
     if (player.uuid && window.fetchPlayerAchievements) {
-        window.fetchPlayerAchievements(player.uuid).then(achs => {
-            player.achievements = [...new Set([...(player.achievements || []), ...achs.map(a => a.achievement_id)])];
-            renderSquad();
-        }).catch(() => {});
+        (async () => {
+            try {
+                const fetched = await window.fetchPlayerAchievements(player.uuid);
+                const achievementIds = fetched.map(a => a.achievement_id);
+                player.achievements = [...new Set([...(player.achievements || []), ...achievementIds])];
+                StateStore.set('squad', [...StateStore.squad]); // Signal update and broadcast
+                renderSquad();
+            } catch (e) { console.error(`[handleAutoJoin] Failed to fetch achievements for ${player.name}`, e); }
+        })();
     }
 
     let newQueue = [...StateStore.playerQueue];
@@ -2594,10 +2612,15 @@ async function handleAutoJoin(name, playerUUID) {
 }
 window.handleAutoJoin = handleAutoJoin;
 
+let _processingRequestIds = new Set();
+
 async function approvePlayRequest(name, id, playerUUID = null) {
+    if (!id || _processingRequestIds.has(id)) return;
+    _processingRequestIds.add(id);
+
     console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
     
-    // Priority 1: Check if achievements were already reconciled by the Join RPC
+    try {
     const requestRow = playRequests.find(r => String(r.id) === String(id));
     const reconciledAchievements = requestRow?.achievements;
     const initialEmoji = requestRow?.spirit_animal;
@@ -2618,25 +2641,25 @@ async function approvePlayRequest(name, id, playerUUID = null) {
 
     if (initialEmoji) player.spiritAnimal = initialEmoji;
 
+    // BACKGROUND ACHIEVEMENT FETCHING (Prevent Race Condition)
+    // We move this to an async block so StateStore.setState happens immediately.
+    // This prevents multiple paths from adding the same player if approval triggers overlap.
     if (player.uuid && window.fetchPlayerAchievements) {
-        try {
-            let achievementIds = [];
-            if (Array.isArray(reconciledAchievements)) {
-                achievementIds = reconciledAchievements;
-            } else {
-                // Fallback to manual fetch if reconciled data is missing
-                const fetched = await window.fetchPlayerAchievements(player.uuid);
-                achievementIds = fetched.map(a => a.achievement_id);
-            }
-
-            // Merge with existing to avoid losing session-unlocked ones
-            // If fetch returns empty but we have local ones, keep local ones (safety)
-            const currentSet = new Set(player.achievements || []); 
-            achievementIds.forEach(id => currentSet.add(id));
-            player.achievements = Array.from(currentSet);
-        } catch (e) {
-            console.error(`Failed to fetch achievements for ${player.name}`, e);
-        }
+        (async () => {
+            try {
+                let achievementIds = [];
+                if (Array.isArray(reconciledAchievements)) {
+                    achievementIds = reconciledAchievements;
+                } else {
+                    const fetched = await window.fetchPlayerAchievements(player.uuid);
+                    achievementIds = fetched.map(a => a.achievement_id);
+                }
+                const currentSet = new Set(player.achievements || []); 
+                achievementIds.forEach(id => currentSet.add(id));
+                player.achievements = Array.from(currentSet);
+                StateStore.set('squad', [...StateStore.squad]); // Signal update
+            } catch (e) { console.error(`Failed to fetch achievements for ${player.name}`, e); }
+        })();
     }
     player.active = true;
 
@@ -2671,6 +2694,11 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     }
 
     await denyPlayRequest(id);
+    } catch (e) {
+        console.error('[approvePlayRequest] Failed', e);
+    } finally {
+        _processingRequestIds.delete(id);
+    }
 }
 
 function _makeApprovalToken() {
@@ -2704,10 +2732,19 @@ async function denyPlayRequest(id) {
 }
 
 // Called by sync.js when a Realtime INSERT event occurs on play_requests table
-window.onPlayRequestInsert = function(record) {
+window.onPlayRequestInsert = async function(record) {
     if (!record) return;
     if (!_lastSeenRequestIds.has(record.id)) {
-        _lastSeenRequestIds.add(record.id);
+        // Track immediately to prevent duplicate processing
+        _trackRequestId(record.id);
+
+        // Metadata Integrity: Ensure the record is in the cache so approvePlayRequest
+        // can extract the spirit animal and achievements during auto-approval.
+        if (!playRequests.some(r => r.id === record.id)) {
+            playRequests.push(record);
+            if (playRequests.length > 100) playRequests.shift(); // Max-size cleanup
+            window.playRequests = playRequests;
+        }
 
         const existing = _isPlayerAlreadyInSession(record);
 
@@ -2727,14 +2764,19 @@ window.onPlayRequestInsert = function(record) {
             return;
         }
 
+        // Lock Check: If a batch approval is currently running, ignore realtime
+        // triggers for a moment. Sequential integrity is maintained by the
+        // batch loop and the next polling cycle.
+        if (_isProcessingOpenPartyBatch) return;
+
         if (StateStore.get('isOpenParty')) {
-            approvePlayRequest(record.name, record.id, record.player_uuid);
+            await approvePlayRequest(record.name, record.id, record.player_uuid);
             return;
         }
 
         showJoinNotification(record.name, record.id, record.player_uuid || null, record.spirit_animal || null);
     }
-    pollPlayRequests(); // Fetch full list to ensure badge count is accurate
+    if (!_isProcessingOpenPartyBatch) pollPlayRequests(); // Fetch full list to ensure badge count is accurate
 };
 
 function ensureHostUI() {
@@ -2841,18 +2883,18 @@ const _startPolling = () => {
             pollPlayRequests();
             
             // Self-Healing: Check for players who are 'active' in DB but missing in local squad
-            try {
+            if (!_isProcessingOpenPartyBatch) try {
                 const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}&status=active`);
                 const data = await res.json();
                 const activeInDB = data.requests || [];
                 
-                activeInDB.forEach(dbPlayer => {
+                for (const dbPlayer of activeInDB) {
                     const inLocal = StateStore.squad.some(p => p.uuid === dbPlayer.player_uuid);
                     if (!inLocal) {
                         console.log(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
-                        approvePlayRequest(dbPlayer.name, dbPlayer.id, dbPlayer.player_uuid);
+                        await approvePlayRequest(dbPlayer.name, dbPlayer.id, dbPlayer.player_uuid);
                     }
-                });
+                }
             } catch (e) {}
         }
     }, 15000);

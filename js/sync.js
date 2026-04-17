@@ -568,18 +568,6 @@ function broadcastSkillLevelUpdate(playerUUID, level) {
 }
 
 /**
- * Player broadcasts their MVP vote to the host.
- */
-function broadcastMVPVote(voterUUID, votedForUUID, sessionUUID) {
-    const payload = { voterUUID, votedForUUID, sessionUUID };
-    if (sbManager && sbManager.socket?.readyState === WebSocket.OPEN) {
-        sbManager.broadcast('mvp_vote', payload);
-    } else {
-        _pendingActions.push({ type: 'mvp_vote', payload });
-    }
-}
-
-/**
  * BUG 1 FIX — broadcast approval to the specific player.
  * Contains: playerUUID (so player can match), token (for sessionStorage),
  * current squad + matches (so sideline view is immediately populated).
@@ -600,7 +588,13 @@ function broadcastApproval(playerUUID, playerName, token) {
  * Informs the host that a player has auto-joined via Open Party.
  */
 function broadcastAutoJoin(playerUUID, playerName) {
-    _broadcast('player_auto_joined', { playerUUID, playerName });
+    const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
+    _broadcast('player_auto_joined', { 
+        playerUUID, 
+        playerName, 
+        spiritAnimal: p?.spiritAnimal || null,
+        skillLevel: p?.skillLevel || 'Intermediate'
+    });
 }
 window.broadcastAutoJoin = broadcastAutoJoin;
 
@@ -820,7 +814,7 @@ function _handleBroadcast(payload) {
     // Player auto-joined (Open Party): Host reconciles them immediately
     if (type === 'player_auto_joined') {
         if (isOperator && typeof window.handleAutoJoin === 'function') {
-            window.handleAutoJoin(payload.playerName, payload.playerUUID);
+            window.handleAutoJoin(payload.playerName, payload.playerUUID, payload.spiritAnimal, payload.skillLevel);
             showSessionToast(`🔓 ${payload.playerName} joined instantly`);
         }
         return;
@@ -938,15 +932,6 @@ function _handleBroadcast(payload) {
     if (type === 'skill_level_update') {
         if (isOperator) {
             _applySkillLevelUpdate(payload.playerUUID, payload.level);
-        }
-        return;
-    }
-
-    // MVP Vote broadcast — host tallies votes
-    if (type === 'mvp_vote') {
-        if (isOperator) {
-            // Dispatch a custom event so app.js can listen and update the recap modal
-            window.dispatchEvent(new CustomEvent('mvp_vote_received', { detail: payload }));
         }
         return;
     }
@@ -1189,20 +1174,37 @@ function applyRemoteState(session) {
                         pChanged = true;
                     }
 
-                    // Reconcile history and stats (merge server data into local state)
-                    if (remoteP.teammateHistory) {
-                        localP.teammateHistory = { ...remoteP.teammateHistory, ...(localP.teammateHistory || {}) };
-                    }
-                    if (remoteP.opponentHistory) {
-                        localP.opponentHistory = { ...remoteP.opponentHistory, ...(localP.opponentHistory || {}) };
-                    }
+                    // Reconcile history and stats: use deep merge with Math.max to avoid stat regression.
+                    // This ensures career totals (remote) and session progress (local) are combined correctly.
+                    const mergeCounts = (local, remote) => {
+                        const res = { ...(remote || {}) };
+                        for (const [id, count] of Object.entries(local || {})) {
+                            res[id] = Math.max(res[id] || 0, count);
+                        }
+                        return res;
+                    };
+                    if (remoteP.teammateHistory) localP.teammateHistory = mergeCounts(localP.teammateHistory, remoteP.teammateHistory);
+                    if (remoteP.opponentHistory) localP.opponentHistory = mergeCounts(localP.opponentHistory, remoteP.opponentHistory);
                     if (remoteP.partnerStats) {
-                        localP.partnerStats = { ...remoteP.partnerStats, ...(localP.partnerStats || {}) };
+                        const res = { ...(remoteP.partnerStats || {}) };
+                        for (const [id, stats] of Object.entries(localP.partnerStats || {})) {
+                            const rStats = res[id] || { wins: 0, games: 0 };
+                            res[id] = {
+                                wins: Math.max(rStats.wins || 0, stats.wins || 0),
+                                games: Math.max(rStats.games || 0, stats.games || 0)
+                            };
+                        }
+                        localP.partnerStats = res;
                     }
-                    if (remoteP.matchHistory && (!localP.matchHistory || localP.matchHistory.length === 0)) {
-                        localP.matchHistory = remoteP.matchHistory;
-                        pChanged = true;
-                    }
+                    
+                    // Reconcile match history array
+                    const incomingH = remoteP.matchHistory || [];
+                    const currentH  = localP.matchHistory || [];
+                    const hMap = new Map();
+                    currentH.forEach(m => m.time && hMap.set(m.time, m));
+                    incomingH.forEach(m => m.time && hMap.set(m.time, m));
+                    localP.matchHistory = Array.from(hMap.values()).sort((a, b) => b.time - a.time);
+                    if (localP.matchHistory.length !== currentH.length) pChanged = true;
 
                     if (pChanged) {
                         localP.achievements = [...localSet];
@@ -1449,6 +1451,10 @@ function leaveSession() {
     localStorage.removeItem('cs_room_code');
     localStorage.removeItem('cs_operator_key');
     localStorage.removeItem('cs_op_key_hash');
+    localStorage.removeItem('cs_pending_sync');
+    _pendingActions = [];
+    _dirtyIds.clear();
+    window._sessionMembers = {}; // Reset member cache to prevent memory leak
     updateSessionUI();
 }
 

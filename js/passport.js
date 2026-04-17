@@ -132,10 +132,29 @@ const Passport = {
             p.spiritAnimal = remoteData.spirit_animal;
             changed = true;
         }
-         // 4. Legacy History Sync
-        if (remoteData.teammate_history) p.teammateHistory = { ...(p.teammateHistory || {}), ...remoteData.teammate_history };
-        if (remoteData.opponent_history) p.opponentHistory = { ...(p.opponentHistory || {}), ...remoteData.opponent_history };
-        if (remoteData.partner_stats)    p.partnerStats    = { ...(p.partnerStats || {}), ...remoteData.partner_stats };
+
+        // 4. Legacy History Sync: Use deep merge with Math.max to avoid stat regression
+        const mergeCounts = (local, remote) => {
+            const res = { ...(remote || {}) };
+            for (const [id, count] of Object.entries(local || {})) {
+                const prev = res[id] || 0;
+                res[id] = Math.max(prev, count);
+                if (res[id] !== prev) changed = true;
+            }
+            return res;
+        };
+        if (remoteData.teammate_history) p.teammateHistory = mergeCounts(p.teammateHistory, remoteData.teammate_history);
+        if (remoteData.opponent_history) p.opponentHistory = mergeCounts(p.opponentHistory, remoteData.opponent_history);
+        if (remoteData.partner_stats) {
+            const res = { ...(remoteData.partner_stats || {}) };
+            for (const [id, stats] of Object.entries(p.partnerStats || {})) {
+                const rStats = res[id] || { wins: 0, games: 0 };
+                res[id] = { wins: Math.max(rStats.wins || 0, stats.wins || 0), games: Math.max(rStats.games || 0, stats.games || 0) };
+                if (res[id].games !== rStats.games || res[id].wins !== rStats.wins) changed = true;
+            }
+            p.partnerStats = res;
+        }
+
         if (changed) this.save(p);
         return { passport: p, needsUpload };
     },

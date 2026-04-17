@@ -378,64 +378,55 @@ const SidelineView = {
         if (!modal || !content || !recapData) return;
         const passport = Passport.get();
         const { totalGames, mvp, ironMan, hotHand, sharpShooter, squad = [] } = recapData;
+        const esc = (s) => this._esc(s);
 
         content.innerHTML = `
-            <div class="sl-recap-item">
-                <span class="sl-recap-val">${totalGames}</span>
-                <span class="sl-recap-label">Total Games Played</span>
-            </div>
-            <div class="sl-recap-item" style="border-color:var(--accent); background:var(--accent-dim);">
-                <div style="font-size:0.6rem; color:var(--accent); font-weight:900; letter-spacing:2px; margin-bottom:4px;">SESSION MVP</div>
-                <span class="sl-recap-val" style="font-size:1.8rem;">${this._esc(mvp.name)}</span>
-                <span class="sl-recap-label" style="color:var(--text);">${mvp.wins} Wins · ${mvp.games} Games</span>
-                <button class="sl-share-match-btn" style="margin-top:12px; background:var(--accent); color:#000;" onclick="PlayerMode.shareMVPPoster()">📲 SHARE MVP POSTER</button>
-            </div>
-            <div class="sl-section-label" style="margin-top:14px;">🏅 SESSION RECORDS</div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">
-                <div class="sl-recap-item" style="padding:12px;">
-                    <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); text-transform:uppercase;">IRON MAN</div>
-                    <div style="font-size:0.8rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${this._esc(ironMan.name)}</div>
-                    <div style="font-size:0.6rem; color:var(--text-muted);">${ironMan.sessionPlayCount} Games</div>
-                </div>
-                <div class="sl-recap-item" style="padding:12px;">
-                    <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); text-transform:uppercase;">HOT HAND</div>
-                    <div style="font-size:0.8rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${this._esc(hotHand.name)}</div>
-                    <div style="font-size:0.6rem; color:var(--text-muted);">${hotHand.streak} Win Streak</div>
-                </div>
-            </div>
-            <div class="sl-section-label" style="margin-top:14px;">📊 FINAL STANDINGS</div>
+            <div style="font-family:var(--font-display); font-size:0.6rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:4px; text-transform:uppercase;">SESSION COMPLETE</div>
+            <h2 style="font-size:2rem; margin-bottom:20px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic; text-transform:uppercase;">Recap & Rankings</h2>
             
-            <div class="sl-section-label" style="margin-top:24px;">⭐ VOTE FOR PLAYER OF THE SESSION</div>
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; margin-top:10px;">
-                <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px; text-align:center;">
-                    Who was the true MVP of this session?
-                </p>
-                <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:10px;">
-                    ${squad.map(p => `
-                        <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border); font-size:0.8rem; height:48px;"
-                                onclick="PlayerMode.submitMVPVote('${p.uuid}', '${recapData.sessionUUID}')">
-                            ${p.spiritAnimal || Avatar.initials(p.name)} ${this._esc(p.name)}
-                        </button>
-                    `).join('')}
-                </div>
-                <button id="slMvpVoteBtn" class="btn-main" style="margin-top:16px; background:var(--accent); color:#000; height:48px; font-size:0.9rem;" 
-                        onclick="PlayerMode.submitMVPVote('${mvp.uuid}', '${recapData.sessionUUID}')">
-                    VOTE FOR ${this._esc(mvp.name).toUpperCase()} (Host's Pick)
-                </button>
-                <p id="slMvpVoteStatus" style="font-size:0.65rem; color:var(--text-muted); margin-top:10px; text-align:center; display:none;">
-                    Thanks for voting!
-                </p>
+            <div style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:20px; margin-bottom:20px; text-align:center;">
+                <div style="font-size:2.5rem; margin-bottom:8px;">🏆</div>
+                <div style="font-family:var(--font-display); font-size:0.65rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
+                <div style="font-family:var(--font-display); font-size:1.8rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(mvp.name)}</div>
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">${mvp.wins} Wins · ${mvp.games} Games</div>
+                <button class="sl-share-match-btn" style="margin-top:12px; background:var(--accent); color:#000;" 
+                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(mvp.name)}', ${mvp.wins}, ${mvp.games})">📲 SHARE MVP POSTER</button>
             </div>
 
-            <div style="margin-top:10px; background:var(--surface2); border-radius:12px; border:1px solid var(--border); padding:0 12px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
+                <div style="background:var(--bg2); padding:12px; border-radius:12px; border:1px solid var(--border);">
+                    <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">TOTAL GAMES</div>
+                    <div style="font-family:var(--font-display); font-size:1.4rem; font-weight:900; color:var(--accent);">${totalGames}</div>
+                </div>
+                <div style="background:var(--bg2); padding:12px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">IRON MAN</div>
+                    <div style="font-family:var(--font-display); font-size:0.9rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(ironMan.name)}</div>
+                    <div style="font-size:0.55rem; color:var(--text-muted);">${ironMan.sessionPlayCount} Games</div>
+                </div>
+                <div style="background:var(--bg2); padding:12px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">HOT HAND</div>
+                    <div style="font-family:var(--font-display); font-size:0.9rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(hotHand.name)}</div>
+                    <div style="font-size:0.55rem; color:var(--text-muted);">${hotHand.streak} Streak</div>
+                </div>
+                <div style="background:var(--bg2); padding:12px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.5rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">SHARP SHOOTER</div>
+                    <div style="font-family:var(--font-display); font-size:0.9rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(sharpShooter.name)}</div>
+                    <div style="font-size:0.55rem; color:var(--text-muted);">${sharpShooter.wr}% Win Rate</div>
+                </div>
+            </div>
+
+            <div style="font-size:0.6rem; color:var(--text-muted); font-weight:900; letter-spacing:2px; margin-bottom:8px; text-transform:uppercase;">FINAL STANDINGS</div>
+            <div style="background:var(--surface2); border-radius:12px; border:1px solid var(--border); padding:0 12px; margin-bottom:20px;">
                 ${squad.slice(0, 5).map((p, i) => `
                     <div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border);">
-                        <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:16px;">${i+1}</div>
+                        <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:16px; font-size:0.8rem;">${i+1}</div>
                         <div style="flex:1; font-size:0.8rem; font-weight:600;">${this._esc(p.name)}</div>
                         <div style="font-family:var(--font-display); font-weight:800; color:var(--text);">${p.wins}W</div>
                     </div>
                 `).join('')}
             </div>
+
+            <button class="btn-main" style="width:100%; height:50px; background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="window.location.reload()">BACK TO MENU</button>
         `;
 
         this._lastRecap = recapData;
@@ -1167,13 +1158,20 @@ const PlayerMode = {
                 const ironMan = sortedByGames[0] || { name: 'N/A', sessionPlayCount: 0 };
                 const sortedByStreak = [...squad].sort((a,b) => b.streak - a.streak);
                 const hotHand = sortedByStreak[0] || { name: 'N/A', streak: 0 };
+                
+                const eligibleForWR = squad.filter(p => p.games >= 3);
+                const sortedByWR = [...eligibleForWR].sort((a,b) => (b.wins/b.games) - (a.wins/a.games));
+                const sharpShooter = sortedByWR[0] || { name: 'N/A', wins: 0, games: 0 };
 
                 const recapData = {
-                    totalGames: '—',
+                    totalGames: squad.reduce((sum, p) => sum + p.games, 0) / 4 || '—',
                     mvp: { name: mvp.name, wins: mvp.wins, games: mvp.games },
                     ironMan: { name: ironMan.name, sessionPlayCount: ironMan.sessionPlayCount },
                     hotHand: { name: hotHand.name, streak: hotHand.streak },
-                    sharpShooter: { name: '—', wr: 0 },
+                    sharpShooter: { 
+                        name: sharpShooter.name, 
+                        wr: sharpShooter.games > 0 ? Math.round((sharpShooter.wins / sharpShooter.games) * 100) : 0 
+                    },
                     squad: sorted.slice(0, 10)
                 };
 
@@ -1205,6 +1203,7 @@ const PlayerMode = {
         clearInterval(this._statePollTimer);
         localStorage.removeItem('cs_player_room_code');
         this._clearApprovedInSession(this._joinCode);
+        this._clearToken(this._joinCode);
 
         // Clear local session data so the landing page (menu) appears on reload
         if (typeof StateStore !== 'undefined') {
@@ -1226,6 +1225,8 @@ const PlayerMode = {
      * to subscribing to live updates.
      */
     async boot(passport, joinCode) {
+        this._pruneExpiredSessions();
+
         // Clean up previous state if rebooting with a new code
         this._isJoining = false;
         clearInterval(this._statePollTimer);
@@ -1274,13 +1275,21 @@ const PlayerMode = {
         const inSquad = session && (session.squad || []).some(p => p.uuid === passport.playerUUID);
         const isApproved = this._isApprovedInSession(joinCode);
 
+        // RECONCILIATION: If we think we are approved but the session metadata shows 
+        // we are NOT in the squad, it means the host removed us while we were away.
+        if (session && isApproved && !inSquad) {
+            console.warn('[PlayerMode] Detected removal from session. Returning to menu.');
+            this._onRemovedFromSession();
+            return;
+        }
+
         // 4. Handle name entry if the player is new
         const hasName = !!(passport.playerName && passport.playerName.trim());
         if (!hasName) {
             const name = await this._handleNewPlayerName();
             if (!name) return; // Player cancelled name entry
             passport = Passport.get(); // Re-fetch passport with new name
-        } else if (!inSquad && !isApproved) {
+        } else if (!inSquad && !isApproved && !this._isOpenParty) {
             const action = await this._promptCheckIn(passport, joinCode);
             if (action === 'rename') {
                 const name = await this._handleNewPlayerName();
@@ -1367,6 +1376,7 @@ const PlayerMode = {
                     if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
                         broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
                     }
+                    this._clearQueuedState();
                     this._subscribeAndPoll(joinCode, passport);
                     this.setStatus('approved', `Welcome back, ${passport.playerName}`, "Reconnected ✅");
                     if (panel) panel.classList.remove('sl-booting');
@@ -1651,6 +1661,7 @@ const PlayerMode = {
         this._clearJoinRetryTimer();
 
         this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
+        this._clearQueuedState();
 
         if (window.Haptic) Haptic.success();
         if (!wasAlreadyApproved && typeof showSessionToast === 'function') {
@@ -1727,8 +1738,42 @@ const PlayerMode = {
     },
 
     _onGameStateUpdate(payload) {
-        const passport = Passport.get();
+        let passport = Passport.get();
         if (!passport) return;
+
+        // Proactive: If we see ourselves in the squad, clear the join UI
+        const me = (payload.squad || []).find(p => p.uuid === passport.playerUUID);
+        if (me) {
+            this._clearQueuedState();
+
+            // Reconciliation: If the host broadcast updated profile info or name, update local passport.
+            // This ensures name changes from the host or spirit animal fixes propagate back to the player.
+            let changed = false;
+            if (me.name && me.name !== passport.playerName) {
+                Passport.rename(me.name);
+                changed = true;
+            }
+            if (me.spiritAnimal !== undefined && me.spiritAnimal !== passport.spiritAnimal) {
+                Passport.setSpiritAnimal(me.spiritAnimal);
+                changed = true;
+            }
+
+            if (changed) {
+                passport = Passport.get(); // Refresh stale reference
+                this._renderIdentity(passport);
+            }
+
+            // Sync achievements to passport from broadcast
+            if (Array.isArray(me.achievements)) {
+                Passport.recordAchievements(me.achievements);
+            }
+        } else if (this._isApprovedInSession(this._joinCode)) {
+            // KICK DETECTION: We are approved locally but missing from the host's squad broadcast.
+            // This triggers a reset to the main menu.
+            console.warn('[PlayerMode] Local approval found but missing from squad update. Redirecting.');
+            this._onRemovedFromSession();
+            return;
+        }
 
         // Connectivity Improvement: State Drift Detection
         // Compare host's broadcast hash with our new local state to verify consistency.
@@ -1738,14 +1783,6 @@ const PlayerMode = {
                 console.warn('[CourtSide] State drift detected! Triggering background resync...');
                 SidelineView._performRefresh(true);
                 return; // Stop here; the refresh will handle the rest.
-            }
-        }
-
-        // Sync achievements to passport from broadcast
-        if (payload.squad) {
-            const me = payload.squad.find(p => p.uuid === passport.playerUUID);
-            if (me && Array.isArray(me.achievements)) {
-                Passport.recordAchievements(me.achievements);
             }
         }
 
@@ -1765,7 +1802,14 @@ const PlayerMode = {
             this._clearJoinRetryTimer();
             if (myEntry.token) this._saveToken(this._joinCode, myEntry.token, passport.playerName, passport.playerUUID);
             this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
+            this._clearQueuedState();
             setTimeout(() => this._updateLiveFeed(session, passport), 1500);
+            return;
+        }
+        // KICK DETECTION (Poll/Hydrate fallback): Missing from squad but approved in LS.
+        const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
+        if (this._isApprovedInSession(this._joinCode) && !inSquad) {
+            this._onRemovedFromSession();
             return;
         }
         this._updateLiveFeed(session, passport);
@@ -2000,6 +2044,7 @@ const PlayerMode = {
                     name:        passport.playerName,
                     player_uuid: passport.playerUUID,
                     spirit_animal: passport.spiritAnimal,
+                    skill_level: passport.skillLevel,
                     force:       force,
                 }),
             });
@@ -2044,6 +2089,7 @@ const PlayerMode = {
             if (data.alreadyActive || data.status === 'active') {
                 this._isJoining = false;
                 if (data.global) Passport.hydrate(data.global);
+                this._clearQueuedState();
                 this._markApprovedInSession(joinCode);
                 const msg = data.autoApproved ? "Joined instantly! 🔓" : "Reconnected to court ✅";
                 this.setStatus('approved', `You're in, ${passport.playerName}!`, msg);
@@ -2207,6 +2253,34 @@ const PlayerMode = {
             return entry;
         }
         catch { return null; }
+    },
+
+    _pruneExpiredSessions() {
+        try {
+            const now = Date.now();
+            
+            // 1. Prune Approved Sessions
+            const app = JSON.parse(localStorage.getItem(LS_APPROVED) || '{}');
+            let appChanged = false;
+            for (const code in app) {
+                if (typeof app[code] === 'number' && (now - app[code] > SESSION_EXPIRY_MS)) {
+                    delete app[code];
+                    appChanged = true;
+                }
+            }
+            if (appChanged) localStorage.setItem(LS_APPROVED, JSON.stringify(app));
+
+            // 2. Prune Tokens
+            const tok = JSON.parse(localStorage.getItem(LS_TOKENS) || '{}');
+            let tokChanged = false;
+            for (const code in tok) {
+                if (tok[code].savedAt && (now - tok[code].savedAt > SESSION_EXPIRY_MS)) {
+                    delete tok[code];
+                    tokChanged = true;
+                }
+            }
+            if (tokChanged) localStorage.setItem(LS_TOKENS, JSON.stringify(tok));
+        } catch(e) {}
     },
 
     _saveToken(roomCode, token, name, uuid) {
@@ -2684,19 +2758,6 @@ const PlayerMode = {
         `;
         UIManager.show(content, 'card');
     },
-};
-
-PlayerMode.submitMVPVote = function(votedForUUID, sessionUUID) {
-    const passport = Passport.get();
-    if (!passport || !window.isOnlineSession) return;
-
-    if (typeof broadcastMVPVote === 'function') {
-        broadcastMVPVote(passport.playerUUID, votedForUUID, sessionUUID);
-        showSessionToast('✅ Vote submitted!');
-        const voteBtns = document.querySelectorAll('#slRecapModal .btn-main');
-        voteBtns.forEach(btn => { btn.disabled = true; btn.style.opacity = 0.5; });
-        document.getElementById('slMvpVoteStatus').style.display = 'block';
-    }
 };
 
 // =============================================================================
