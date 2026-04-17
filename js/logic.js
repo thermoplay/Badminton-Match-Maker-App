@@ -917,6 +917,7 @@ function setWinner(mIdx, tIdx) {
 let builderMatchIdx  = null;  // which game we're editing
 let builderTeams     = null;  // [teamA_names[], teamB_names[]]
 let builderSelected  = null;  // { team: 0|1, name: string } — player being swapped
+let builderOriginalUUIDs = null; // Track original players to handle queue re-insertion
 
 /**
  * Opens the team builder modal for a given match.
@@ -925,6 +926,7 @@ let builderSelected  = null;  // { team: 0|1, name: string } — player being sw
 function openTeamBuilder(mIdx) {
     builderMatchIdx = mIdx;
     builderTeams    = StateStore.currentMatches[mIdx].teams.map(t => [...t]); // deep copy UUIDs
+    builderOriginalUUIDs = StateStore.currentMatches[mIdx].teams.flat();
     builderSelected = null;
     renderTeamBuilder();
     document.getElementById('teamBuilderModal').style.display = 'flex';
@@ -968,13 +970,17 @@ function renderTeamBuilder() {
     // All names currently in this game
     const inGame = new Set([...builderTeams[0], ...builderTeams[1]]);
 
-    // Sideline = active players NOT in any game at all
+    // IMPROVEMENT: Sort sideline by actual Queue order so host knows who is "Next Up"
     const allInGames = new Set(StateStore.currentMatches.flatMap(match => match.teams.flat()));
-    const sideline = StateStore.squad.filter(p =>
-        (p.active && !allInGames.has(p.uuid)) ||
-        // also allow swapping players already in THIS game (they're shown in teams, not sideline)
-        (p.active && inGame.has(p.uuid) && !builderTeams[0].includes(p.uuid) && !builderTeams[1].includes(p.uuid))
-    ).filter(p => !inGame.has(p.uuid)); // sideline = truly not in this game
+    
+    const sideline = StateStore.playerQueue
+        .map(id => findP(id))
+        .filter(p => 
+            p && p.active && 
+            (!allInGames.has(p.uuid) || inGame.has(p.uuid)) && 
+            !builderTeams[0].includes(p.uuid) && 
+            !builderTeams[1].includes(p.uuid)
+        );
 
     document.getElementById('builderGameLabel').innerText = `Game ${builderMatchIdx + 1}`;
 
@@ -1002,11 +1008,12 @@ function renderTeamBuilder() {
     const sidelineEl = document.getElementById('builderSideline');
     if (sideline.length > 0) {
         sidelineEl.innerHTML = `
-            <div class="builder-section-label">Sideline — tap to swap in</div>
+            <div class="builder-section-label">Waiting Queue — tap to swap in</div>
             <div class="builder-bench">
-                ${sideline.map(p => `
+                ${sideline.map((p, idx) => `
                     <div class="builder-chip bench ${builderSelected ? 'bench-ready' : ''}"
                          onclick="builderSwapFromSideline('${p.uuid}')">
+                        <span style="opacity:0.5; margin-right:4px;">#${idx + 1}</span>
                         ${escapeHTML(p.name || 'Unknown')}
                     </div>
                 `).join('')}
@@ -1060,14 +1067,19 @@ function builderSwapFromSideline(sidelineUUID) {
 
     const { team, uuid: outUUID } = builderSelected;
 
-    // The outgoing player goes to sideline — they need their sessionPlayCount decremented
-    // since they won't actually be playing this game
+    // FIX: sessionPlayCount represents COMPLETED games. 
+    // We should not decrement/increment it here because _recordMatchStats 
+    // handles it atomically when the match actually ends.
     const outPlayer = findP(outUUID);
-    if (outPlayer) outPlayer.sessionPlayCount = Math.max(0, outPlayer.sessionPlayCount - 1);
+    if (outPlayer) {
+        outPlayer.consecutiveGames = 0; // They are no longer playing consecutively
+    }
 
-    // The incoming player gets a sessionPlayCount increment
     const inPlayer = findP(sidelineUUID);
-    if (inPlayer) inPlayer.sessionPlayCount++;
+    if (inPlayer) {
+        inPlayer.waitRounds = 0; // Reset wait rounds as they are entering a match
+        inPlayer.acknowledged = false; // Reset "I'm coming" status for the new assignment
+    }
 
     // Swap in the team array
     builderTeams[team] = builderTeams[team].map(u => u === outUUID ? sidelineUUID : u);
@@ -1088,12 +1100,9 @@ function builderShuffle() {
     allPlayers.sort(() => Math.random() - 0.5); // Randomize for fairness within the builder
 
     if (allPlayers.length === 4) {
-        // Doubles: sort by rating for balanced snake draft
-        allPlayers.sort((a, b) => getSkillIndex(b) - getSkillIndex(a)); // Sort by skill level
-        builderTeams = [
-            [allPlayers[0].uuid, allPlayers[3].uuid],
-            [allPlayers[1].uuid, allPlayers[2].uuid]
-        ];
+        // Use the main engine to ensure the shuffle respects Fairness vs Variety settings
+        const tempMatch = buildMatchFromPlayers(allPlayers);
+        builderTeams = tempMatch.teams;
     }
     builderSelected = null;
     renderTeamBuilder();
@@ -1108,6 +1117,17 @@ function confirmTeamBuilder() {
     const mIdx = builderMatchIdx;
     const tAObjs = builderTeams[0].map(u => findP(u)).filter(Boolean);
     const tBObjs = builderTeams[1].map(u => findP(u)).filter(Boolean);
+
+    // QUEUE MANAGEMENT: Identify players who were removed from the match
+    const newUUIDs = [...builderTeams[0], ...builderTeams[1]];
+    const removedUUIDs = builderOriginalUUIDs.filter(id => !newUUIDs.includes(id));
+
+    if (removedUUIDs.length > 0) {
+        // Move replaced players to the front of the queue
+        const currentQueue = StateStore.playerQueue.filter(id => !removedUUIDs.includes(id));
+        StateStore.set('playerQueue', [...removedUUIDs, ...currentQueue]);
+        showSessionToast(`${removedUUIDs.length} player(s) moved to front of queue`);
+    }
 
     // Validate balanced teams (Doubles 2v2 only)
     const total = tAObjs.length + tBObjs.length;
@@ -1142,6 +1162,10 @@ function confirmTeamBuilder() {
 
     closeTeamBuilder();
     renderQueueStrip();
+
+    // Refresh host insights (Director Hub) to reflect the new waiting priorities
+    if (typeof renderSquad === 'function') renderSquad();
+
     checkNextButtonState();
     saveToDisk();
     // Broadcast the updated lineup immediately so players see the correct

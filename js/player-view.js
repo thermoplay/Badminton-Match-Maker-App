@@ -1297,7 +1297,7 @@ const PlayerMode = {
                 passport = Passport.get();
             }
             this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
-        } else {
+        } else if (!this._isOpenParty) {
             this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Reconnecting…');
         }
 
@@ -1384,17 +1384,6 @@ const PlayerMode = {
                     SidelineView.refresh();
                     setTimeout(() => this._updateStatus(passport), 800);
                     return;
-                } else if (requestRes.ok) {
-                    // Check if we are already in the pending list to prevent duplicate requests
-                    const reqData = await requestRes.json();
-                    const isPending = (reqData.requests || []).some(r => r.player_uuid === passport.playerUUID);
-                    if (isPending) {
-                        console.log('[PlayerMode] Proactive bypass: already in pending requests.');
-                        this._subscribeAndPoll(joinCode, passport);
-                        this._showQueuedState(passport.playerName);
-                        if (panel) panel.classList.remove('sl-booting');
-                        return;
-                    }
                 }
             }
         } catch (e) {}
@@ -2033,7 +2022,14 @@ const PlayerMode = {
         if (this._isJoining && !force) return;
         this._isJoining = true;
 
-        this.setStatus('pending', statusMessage || 'Request sent!', statusSubMessage || 'Waiting for host to approve… 🏀');
+        // UX: Show feedback immediately even in Open Party
+        if (this._isOpenParty) {
+            this.setStatus('pending', 'Checking in...', 'Joining the rotation 🔓');
+        }
+
+        if (!this._isOpenParty) {
+            this.setStatus('pending', statusMessage || 'Request sent!', statusSubMessage || 'Waiting for host to approve… 🏀');
+        }
         console.log('[PlayerMode] Joining with UUID:', passport.playerUUID);
         try {
             const res = await fetch('/api/play-request', {
@@ -2089,6 +2085,12 @@ const PlayerMode = {
             if (data.alreadyActive || data.status === 'active') {
                 this._isJoining = false;
                 if (data.global) Passport.hydrate(data.global);
+
+                // UX: Apply session state immediately so stats don't flicker to 0
+                if (data.session && typeof applyRemoteState === 'function') {
+                    applyRemoteState(data.session);
+                }
+
                 this._clearQueuedState();
                 this._markApprovedInSession(joinCode);
                 const msg = data.autoApproved ? "Joined instantly! 🔓" : "Reconnected to court ✅";

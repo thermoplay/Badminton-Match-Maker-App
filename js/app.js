@@ -223,7 +223,7 @@ function editPlayerName() {
 
 let _isProcessingOpenPartyBatch = false;
 
-function toggleOpenParty() {
+async function toggleOpenParty() {
     const current = StateStore.get('isOpenParty') || false;
     const next = !current;
     StateStore.set('isOpenParty', next);
@@ -231,17 +231,18 @@ function toggleOpenParty() {
 
     if (next && window.playRequests?.length > 0 && !_isProcessingOpenPartyBatch) {
         _isProcessingOpenPartyBatch = true;
-        (async () => {
-            try {
-                for (const r of [...window.playRequests]) {
-                    // Abort batch approval if the toggle is flipped back OFF mid-process
-                    if (!StateStore.get('isOpenParty')) break;
-                    await approvePlayRequest(r.name, r.id, r.player_uuid || null);
-                }
-            } finally {
-                _isProcessingOpenPartyBatch = false;
+        try {
+            const toApprove = [...window.playRequests];
+            for (const r of toApprove) {
+                if (!StateStore.get('isOpenParty')) break;
+                // Internal Optimization: Approve without triggering a DB write for every single person
+                await approvePlayRequest(r.name, r.id, r.player_uuid || null, true);
             }
-        })();
+            // Final atomic sync after the batch is processed
+            StateStore.setState({ squad: [...StateStore.squad], playerQueue: [...StateStore.playerQueue] });
+        } finally {
+            _isProcessingOpenPartyBatch = false;
+        }
     }
     renderOpenPartyToggle();
 }
@@ -1522,6 +1523,11 @@ function undoLastRound() {
             updateUndoButton();
             checkNextButtonState();
             Haptic.bump();
+
+            // SYNC FIX: Immediately broadcast the undone state so players 
+            // see their form revert without delay.
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+
             showSessionToast('↩ Last round undone');
         }
     });
@@ -2375,12 +2381,22 @@ async function pollPlayRequests() {
 
                 if (existing) {
                     console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad)`);
+                    let changed = false;
 
                     // UUID Correction: If manually added by host, adopt the player's real UUID
                     // so memberApprove() and future syncs use the correct canonical ID.
                     if (r.player_uuid && existing.uuid !== r.player_uuid) {
                         existing.uuid = r.player_uuid;
-                        renderSquad(); // Update DOM datasets
+                        changed = true;
+                    }
+
+                    if (r.name && existing.name !== r.name) {
+                        existing.name = r.name;
+                        changed = true;
+                    }
+
+                    if (changed) {
+                        renderSquad();
                         saveToDisk();
                     }
 
@@ -2567,9 +2583,6 @@ window._resolvePlayerForSession = _resolvePlayerForSession;
  */
 function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null) {
     if (!window.isOperator) return;
-    
-    // Avoid duplicates if already processed via broadcast or Postgres change
-    if (StateStore.squad.some(p => p.uuid === playerUUID)) return;
 
     const player = _resolvePlayerForSession(name, playerUUID);
     if (spiritAnimal) player.spiritAnimal = spiritAnimal;
@@ -2583,7 +2596,12 @@ function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null
     if (existingIdx === -1) {
         newSquad.push(player);
     } else {
-        newSquad[existingIdx].name = name;
+        // Profile Sync: Update all fields if the player already exists
+        const existing = newSquad[existingIdx];
+        existing.name = name;
+        console.log(`[CourtSide] Re-connected ${name}. Session Record: ${existing.wins}W / ${existing.games}G`);
+        if (spiritAnimal) existing.spiritAnimal = spiritAnimal;
+        if (skillLevel) existing.skillLevel = skillLevel;
     }
 
     // BACKGROUND ACHIEVEMENT FETCHING (Prevent Race Conditions)
@@ -2600,8 +2618,9 @@ function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null
         })();
     }
 
-    let newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(player.uuid)) newQueue.push(player.uuid);
+    // Identity Cleanup: Remove any name-based entries to prevent duplicate turns
+    let newQueue = StateStore.playerQueue.filter(id => id !== player.uuid && id !== name);
+    newQueue.push(player.uuid);
 
     StateStore.setState({ squad: newSquad, playerQueue: newQueue });
     renderSquad();
@@ -2614,7 +2633,7 @@ window.handleAutoJoin = handleAutoJoin;
 
 let _processingRequestIds = new Set();
 
-async function approvePlayRequest(name, id, playerUUID = null) {
+async function approvePlayRequest(name, id, playerUUID = null, skipSync = false) {
     if (!id || _processingRequestIds.has(id)) return;
     _processingRequestIds.add(id);
 
@@ -2670,17 +2689,16 @@ async function approvePlayRequest(name, id, playerUUID = null) {
     window._approvedPlayers = window._approvedPlayers || {};
     window._approvedPlayers[validUUID || player.name] = { token, name: player.name, uuid: validUUID, approvedAt: Date.now() };
 
-    // Update queue state formally using UUID
-    let newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(player.uuid)) {
-        newQueue.push(player.uuid);
-    }
+    // Identity Cleanup: Remove name-based "Guest" entry if upgrading to UUID
+    let newQueue = StateStore.playerQueue.filter(u => u !== player.uuid && u !== name && u !== oldName);
+    newQueue.push(player.uuid);
 
     renderSquad();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
 
-    // Grouped Sync: Update both keys formally to ensure consistency and trigger cloud broadcast
-    StateStore.setState({ squad: newSquad, playerQueue: newQueue });
+    if (!skipSync) {
+        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
+    }
 
     showSessionToast(`✅ ${player.name} added`);
     Haptic.success();
@@ -2889,10 +2907,22 @@ const _startPolling = () => {
                 const activeInDB = data.requests || [];
                 
                 for (const dbPlayer of activeInDB) {
-                    const inLocal = StateStore.squad.some(p => p.uuid === dbPlayer.player_uuid);
-                    if (!inLocal) {
+                    const localP = StateStore.squad.find(p => p.uuid === dbPlayer.player_uuid);
+                    if (!localP) {
                         console.log(`[Reconciliation] Recovering missed player: ${dbPlayer.name}`);
                         await approvePlayRequest(dbPlayer.name, dbPlayer.id, dbPlayer.player_uuid);
+                    } else {
+                        // Full Metadata Sync: Ensure Host sees correct avatar/skill
+                        let changed = false;
+                        if (localP.name !== dbPlayer.name) { localP.name = dbPlayer.name; changed = true; }
+                        if (dbPlayer.spirit_animal && localP.spiritAnimal !== dbPlayer.spirit_animal) { localP.spiritAnimal = dbPlayer.spirit_animal; changed = true; }
+                        if (dbPlayer.skill_level && localP.skillLevel !== dbPlayer.skill_level) { localP.skillLevel = dbPlayer.skill_level; changed = true; }
+
+                        if (changed) {
+                            console.log(`[Reconciliation] Profile updated for ${localP.name}`);
+                            StateStore.set('squad', [...StateStore.squad]);
+                            renderSquad();
+                        }
                     }
                 }
             } catch (e) {}

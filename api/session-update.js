@@ -125,9 +125,8 @@ export default async function handler(req, res) {
         .map(p => sbFetch(`/players?uuid=eq.${encodeURIComponent(p.uuid)}`, {
             method: 'PATCH',
             body: {
-                rating:       p.rating,
-                career_wins:  p.wins,
-                career_games: p.games,
+                // BUG FIX: Do NOT overwrite career_wins/games with session stats p.wins/p.games.
+                // Career stats are handled by increment logic in match-history.js.
                 achievements: p.achievements || [],
                 spirit_animal: p.spiritAnimal || null,
                 last_active:  new Date().toISOString()

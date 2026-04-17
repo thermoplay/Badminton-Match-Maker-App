@@ -135,7 +135,9 @@ export default async function handler(req, res) {
             return res.status(200).json({ alreadyActive: true, ok: true, global: globalProfile.data?.[0] });
         }
 
-        // 3. If Open Party is ON, bypass play_requests and go straight to session_members as active
+        // 3. Open Party Auto-Approve / Upgrade
+        // If Open Party is ON, bypass play_requests and go straight to session_members as active.
+        // This also upgrades 'pending' members to 'active' immediately.
         if (isOpenParty) {
             const autoApprove = await sbFetch('/session_members', {
                 method: 'POST',
@@ -151,22 +153,17 @@ export default async function handler(req, res) {
                 }
             });
             if (autoApprove.ok) {
-                // If auto-approved, we're done. No play_request needed.
-                // Fetch session state + global stats for instant render
                 const [fullSession, globalProfile] = await Promise.all([
                     sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport&limit=1`),
                     sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`)
                 ]);
                 return res.status(200).json({ ok: true, status: 'active', autoApproved: true, session: fullSession.data?.[0], global: globalProfile.data?.[0] });
             }
-            // If auto-approval failed, fall through to pending request logic.
-            console.error(`[play-request] Auto-approval failed for ${uuid} in ${code}:`, autoApprove.data);
         }
 
-        // If we reach here, the player is not active, and not auto-approved.
-        // Now, check if they are already in `session_members` with a non-active status (e.g., 'pending', 'inactive').
-        if (existingMemberStatus) { // This means a record exists, but it's not 'active'
-            return res.status(200).json({ ok: true, status: existingMemberStatus, message: 'Player already a member, awaiting status change.' });
+        // 4. Default: If member exists but room is NOT open, keep them in their current state (likely pending)
+        if (existingMemberStatus) {
+            return res.status(200).json({ ok: true, status: existingMemberStatus });
         }
 
         // 4. Duplicate Guard: Check if a play_request already exists for this player
@@ -206,11 +203,13 @@ export default async function handler(req, res) {
         // Reconciliation support: Fetch currently active members from session_members
         // This allows the host to recover players who are active in the DB but missing locally.
         if (status === 'active') {
-            const r = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active`);
+            const r = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active&select=id,player_name,player_uuid,spirit_animal,skill_level`);
             const mapped = (Array.isArray(r.data) ? r.data : []).map(m => ({
                 id: m.id,
                 name: m.player_name,
-                player_uuid: m.player_uuid
+                player_uuid: m.player_uuid,
+                spirit_animal: m.spirit_animal,
+                skill_level: m.skill_level
             }));
             return res.status(200).json({ requests: mapped });
         }
