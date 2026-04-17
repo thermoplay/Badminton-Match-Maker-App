@@ -2625,6 +2625,21 @@ function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null
     StateStore.setState({ squad: newSquad, playerQueue: newQueue });
     renderSquad();
     if (typeof renderQueueStrip === 'function') renderQueueStrip();
+
+    // HANDSHAKE FIX: Generate a token and broadcast 'session_joined'
+    // This ensures the player's device gets the official 'Welcome' payload
+    // and saves a token for persistence/re-joins.
+    const token = _makeApprovalToken();
+    window._approvedPlayers = window._approvedPlayers || {};
+    window._approvedPlayers[player.uuid] = { token, name: player.name, uuid: player.uuid, approvedAt: Date.now() };
+
+    if (typeof broadcastApproval === 'function') {
+        broadcastApproval(player.uuid, player.name, token);
+    }
+
+    if (typeof memberApprove === 'function') {
+        memberApprove(player.uuid);
+    }
     
     if (window.Haptic) Haptic.success();
     console.log(`[CourtSide] Auto-joined player: ${name}`);

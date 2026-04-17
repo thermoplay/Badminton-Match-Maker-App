@@ -1130,8 +1130,6 @@ const PlayerMode = {
     _isJoining: false,
     _joinCode:  null,
     _statePollTimer: null,
-    _retryInterval: null,
-    _joinRetryTimeout: null,
     _isOpenParty: false,
     _hasSyncedInSquad: false, // Prevents premature kick detection during join flow
 
@@ -1187,7 +1185,6 @@ const PlayerMode = {
 
                 // 3. Clean up local state
                 clearInterval(this._statePollTimer);
-                this._clearJoinRetryTimer();
                 localStorage.removeItem('cs_player_room_code');
                 this._clearApprovedInSession(code);
                 if (typeof StateStore !== 'undefined') {
@@ -1231,7 +1228,6 @@ const PlayerMode = {
         // Clean up previous state if rebooting with a new code
         this._isJoining = false;
         clearInterval(this._statePollTimer);
-        this._clearJoinRetryTimer();
 
         window.currentMatches = []; // Clear stale matches to ensure a clean UI state
 
@@ -1438,7 +1434,6 @@ const PlayerMode = {
                         ? 'The court is open. You will be added to the rotation in a few seconds.' 
                         : 'Waiting for the host to approve you.<br>You\'ll be added to the rotation automatically.'}
                 </div>
-                <div id="slRetryNote" class="sl-retry-note" style="display:none;"></div>
                 <button class="sl-queued-resend" id="slResendBtn">Resend Request</button>
                 <div class="sl-queued-note">
                     Already approved?
@@ -1456,16 +1451,12 @@ const PlayerMode = {
     _clearQueuedState() {
         const container = document.getElementById('slCurrentMatches');
         if (!container) return;
-        if (container.querySelector('.sl-queued-state')) {
-            const emptyMessage = '<div class="sl-empty">No active round yet</div>';
-            if (container.innerHTML.trim() !== emptyMessage.trim()) {
-                container.innerHTML = emptyMessage;
-            }
-        }
+        // SENTINEL FIX: Force-remove the queued state block so SidelineView._renderMatches is no longer blocked.
+        const block = container.querySelector('.sl-queued-state');
+        if (block) block.remove();
     },
 
     async _resendRequest() {
-        this._clearJoinRetryTimer();
         const passport = Passport.get();
         if (!passport || !this._joinCode || this._isJoining) return;
 
@@ -1500,28 +1491,25 @@ const PlayerMode = {
     async _checkApprovalNow() {
         const passport = Passport.get();
         if (!passport || !this._joinCode) return;
+        
         const checkEl = document.getElementById('slCheckBtn');
-        if (checkEl) { checkEl.textContent = 'Checking…'; checkEl.style.pointerEvents = 'none'; }
+        if (checkEl) { 
+            checkEl.textContent = 'Checking…'; 
+            checkEl.style.pointerEvents = 'none'; 
+        }
+
         try {
-            const result = await this._memberUpsert(passport, this._joinCode);
-            if (result && result.status === 'active') {
-                this._markApprovedInSession(this._joinCode);
-                if (result.global) Passport.hydrate(result.global);
-                this._hydrateFromUpsert(result);
-                const p = Passport.get();
-                this.setStatus('approved', `You're in, ${p.playerName}!`, "You've been approved ✅");
-                this._clearQueuedState();
-                SidelineView.show();
-                if (window.Haptic) Haptic.success();
-                setTimeout(() => this._updateStatus(p), 800);
-            } else {
+            // RECONCILIATION FIX: Use the smarter join request path that returns full session state
+            // if the host has already added us to the squad.
+            await this._submitJoinRequest(passport, this._joinCode, { force: true });
+            
+            // If we are still pending after the check, reset the button UI
+            setTimeout(() => {
                 if (checkEl) {
-                    checkEl.textContent = 'Still pending…';
-                    setTimeout(() => {
-                        if (checkEl) { checkEl.textContent = 'Check now →'; checkEl.style.pointerEvents = 'auto'; }
-                    }, 3000);
+                    checkEl.textContent = 'Check now →';
+                    checkEl.style.pointerEvents = 'auto';
                 }
-            }
+            }, 2000);
         } catch {
             if (checkEl) { checkEl.textContent = 'Check now →'; checkEl.style.pointerEvents = 'auto'; }
         }
@@ -1656,7 +1644,6 @@ const PlayerMode = {
         if (payload.courtNames)      window.courtNames     = payload.courtNames;
 
         this._clearQueuedState();
-        this._clearJoinRetryTimer();
 
         this.setStatus('approved', `You're in, ${passport.playerName}!`, 'Added to the rotation ✅');
         this._clearQueuedState();
@@ -1989,7 +1976,6 @@ const PlayerMode = {
         }
 
         this._clearQueuedState();
-        this._clearJoinRetryTimer();
 
         const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
         const name = p?.playerName || 'Player';
@@ -2096,7 +2082,6 @@ const PlayerMode = {
 
             if (data.alreadyActive || data.status === 'active') {
                 this._isJoining = false;
-                this._hasSyncedInSquad = true;
                 if (data.global) Passport.hydrate(data.global);
 
                 // UX: Apply session state immediately so stats don't flicker to 0
@@ -2125,66 +2110,11 @@ const PlayerMode = {
             this._showQueuedState(passport.playerName);
             this._isJoining = false;
 
-            // Immediate notification to host:
-            // This ensures the host sees your request in <100ms, bypassing DB polling latency.
-            if (!data.alreadyRequested && typeof broadcastEvent === 'function') {
-                broadcastEvent('incoming_play_request', {
-                    id: data.id,
-                    name: passport.playerName,
-                    player_uuid: passport.playerUUID,
-                    spirit_animal: passport.spiritAnimal
-                });
-            }
-
-            // Start retry timer: if no host broadcast in 15s, auto-resend
-            this._startJoinRetryTimer();
-
         } catch(e) {
             this._isJoining = false;
             this.setStatus('pending', 'Connection failed', 'Check your internet');
             console.error('[PlayerMode] join request failed:', e);
         }
-    },
-
-    _startJoinRetryTimer() {
-        this._clearJoinRetryTimer();
-        
-        let secondsLeft = 15; // Increased to 15s for better stability
-        const updateText = (s) => {
-            const el = document.getElementById('slRetryNote');
-            if (el) {
-                el.textContent = s > 0 ? `Auto-retrying in ${s}s...` : 'Auto-retrying now...';
-                el.style.display = 'block';
-            }
-        };
-
-        updateText(secondsLeft);
-
-        this._retryInterval = setInterval(() => {
-            secondsLeft--;
-            updateText(secondsLeft);
-            if (secondsLeft <= 0) {
-                clearInterval(this._retryInterval);
-                this._retryInterval = null;
-            }
-        }, 1000);
-
-        this._joinRetryTimeout = setTimeout(() => {
-            this._resendRequest();
-        }, 15000);
-    },
-
-    _clearJoinRetryTimer() {
-        if (this._joinRetryTimeout) {
-            clearTimeout(this._joinRetryTimeout);
-            this._joinRetryTimeout = null;
-        }
-        if (this._retryInterval) {
-            clearInterval(this._retryInterval);
-            this._retryInterval = null;
-        }
-        const el = document.getElementById('slRetryNote');
-        if (el) el.style.display = 'none';
     },
 
     async _joinSession(passport, joinCode) {

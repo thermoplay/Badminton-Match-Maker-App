@@ -119,7 +119,7 @@ export default async function handler(req, res) {
         if (inSquad) {
 // Optimization: If they are already in the session, return state + global stats so they render instantly
              const [fullSession, globalProfile] = await Promise.all([
-                 sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport&limit=1`),
+                 sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport,approved_players&limit=1`),
                  sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`)
              ]);
              return res.status(200).json({ alreadyActive: true, ok: true, session: fullSession.data?.[0], global: globalProfile.data?.[0] });
@@ -154,7 +154,7 @@ export default async function handler(req, res) {
             });
             if (autoApprove.ok) {
                 const [fullSession, globalProfile] = await Promise.all([
-                    sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport&limit=1`),
+                    sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport,approved_players&limit=1`),
                     sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`)
                 ]);
                 return res.status(200).json({ ok: true, status: 'active', autoApproved: true, session: fullSession.data?.[0], global: globalProfile.data?.[0] });
