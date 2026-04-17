@@ -577,17 +577,26 @@ function renderSquad() {
     let searchInput = document.getElementById('squadSearchInput');
     if (!searchInput) {
         const searchWrap = document.createElement('div');
-        searchWrap.className = 'input-row';
-        searchWrap.style.marginBottom = '12px';
+        searchWrap.className = 'input-row search-wrap';
+        searchWrap.style.cssText = 'margin-bottom: 12px; position: relative;';
         searchWrap.innerHTML = ` 
             <input type="text" id="squadSearchInput" placeholder="Search players..." 
-                   style="flex:1;" oninput="window.handleSquadSearch(this.value)">
+                   style="flex:1; padding-right: 35px;" oninput="window.handleSquadSearch(this.value)">
+            <button id="squadSearchClear" onclick="window.clearSquadSearch()" 
+                    style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1.1rem;">
+                ✕
+            </button>
         `;
         container.parentNode.insertBefore(searchWrap, container);
         searchInput = document.getElementById('squadSearchInput');
     }
 
     const query = (window.squadSearchQuery || '').toLowerCase().trim();
+    
+    // Toggle clear button visibility
+    const clearBtn = document.getElementById('squadSearchClear');
+    if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
+
     // Update the input's value if the query changed externally (e.g., from clearHistorySearch)
     if (searchInput && searchInput.value !== (window.squadSearchQuery || '')) {
         searchInput.value = window.squadSearchQuery || '';
@@ -662,6 +671,17 @@ function renderSquad() {
 
     renderDirectorHub();
 }
+
+/** Clears the squad search and resets the list. */
+window.clearSquadSearch = function() {
+    const input = document.getElementById('squadSearchInput');
+    if (input) {
+        input.value = '';
+        window.squadSearchQuery = '';
+        renderSquad();
+        input.focus();
+    }
+};
 
 function checkNextButtonState() {
     const btn = document.getElementById('nextRoundBtn');

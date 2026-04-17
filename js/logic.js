@@ -512,14 +512,23 @@ function combinations4(arr) {
 // Get the candidate pool for one court — front of the queue, excluding
 // players already assigned to another court this round.
 function getCandidatePool(onCourt) {
-    initQueue();
     const pool     = [];
     const poolSet  = new Set();
     const poolSize = 4 * POOL_FACTOR;
 
-    for (const uuid of StateStore.playerQueue) {
+    // SANITIZATION: Filter out any IDs in the queue that no longer exist in the squad.
+    // This prevents "Ghost" players from appearing on courts if they were deleted manually.
+    const validSquadIds = new Set(StateStore.squad.map(p => p.uuid || p.name));
+    const sanitizedQueue = StateStore.playerQueue.filter(id => validSquadIds.has(id));
+    
+    if (sanitizedQueue.length !== StateStore.playerQueue.length) {
+        console.log('[Queue] Cleaning stale IDs from rotation...');
+        StateStore.set('playerQueue', sanitizedQueue);
+    }
+
+    for (const uuid of sanitizedQueue) {
         if (pool.length >= poolSize) break;
-        if (onCourt.has(uuid)) continue;
+        if (onCourt.has(String(uuid))) continue;
         if (poolSet.has(uuid))  continue;
         const p = findP(uuid);
         if (!p || !p.active) continue;
