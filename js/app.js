@@ -3309,30 +3309,44 @@ function showLandingPage() {
     `).join('');
 
     div.innerHTML = `
-        <div class="menu-card" style="padding:40px 24px; max-width:360px; border:none; box-shadow:none; background:transparent;">
-            <div style="font-family:var(--font-display); font-size:3.5rem; font-weight:900; font-style:italic; line-height:0.9; margin-bottom:10px; color:var(--text);">
+        <div class="menu-card" style="padding:40px 20px; max-width:380px; border:none; box-shadow:none; background:transparent;">
+            <div style="font-family:var(--font-display); font-size:3.2rem; font-weight:900; font-style:italic; line-height:0.85; margin-bottom:8px; color:var(--text); text-align:center;">
                 COURTSIDE<span style="color:var(--accent);">PRO</span>
             </div>
-            <p style="color:var(--text-muted); margin-bottom:40px; font-size:0.9rem; letter-spacing:1px; text-transform:uppercase; font-weight:600;">
-                ${sport} Match Maker
+            <p style="color:var(--accent); text-align:center; margin-bottom:32px; font-size:0.6rem; letter-spacing:4px; text-transform:uppercase; font-weight:900; opacity:0.8;">
+                GLOBAL LOBBY
             </p>
 
-            <div style="display:flex; gap:8px; margin-bottom:24px; background:var(--bg2); padding:4px; border-radius:12px; border:1px solid var(--border);">
+            <div style="display:flex; gap:8px; margin-bottom:28px; background:var(--bg2); padding:4px; border-radius:12px; border:1px solid var(--border);">
                 ${sportBtns}
             </div>
 
-            <button class="btn-main" onclick="closeLandingPage()" style="width:100%; margin-bottom:16px; height:60px; font-size:1.2rem; box-shadow:0 0 30px var(--accent-dim);">
-                Host Session
-            </button>
-            <button class="btn-main" onclick="goToPlayerMode()" style="width:100%; background:var(--surface2); color:var(--text); height:60px; font-size:1.2rem; border:1px solid var(--border);">
-                Join as Player
-            </button>
-            <button class="btn-main" onclick="openStandalonePassport()" style="width:100%; background:var(--bg2); color:var(--text); height:60px; font-size:1.2rem; border:1px solid var(--border); margin-top:16px;">
-                🪪 My Passport
-            </button>
-            <button class="btn-main" onclick="PlayerMode.restorePassportPrompt()" style="width:100%; background:transparent; color:var(--text-muted); height:40px; font-size:0.8rem; border:none; margin-top:8px;">
-                Already have a passport? Restore it
-            </button>
+            <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:32px;">
+                <button class="btn-main" onclick="closeLandingPage()" style="height:64px; font-size:1.1rem; box-shadow:0 0 30px var(--accent-dim);">
+                    ➕ CREATE NEW SESSION
+                </button>
+                
+                <div style="height:1px; background:var(--border); margin:8px 0; position:relative;">
+                    <span style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--bg); padding:0 12px; font-size:0.55rem; color:var(--text-muted); font-weight:900; letter-spacing:2px;">OR JOIN BY CODE</span>
+                </div>
+
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="lobbyRoomCode" placeholder="ROOM CODE" 
+                           style="flex:1; height:54px; text-align:center; font-family:var(--font-display); font-size:1.1rem; letter-spacing:2px; font-style:italic;"
+                           oninput="this.value = this.value.toUpperCase()"
+                           onkeydown="if(event.key==='Enter') window.joinFromLobby()">
+                    <button class="btn-main" onclick="window.joinFromLobby()" style="width:70px; background:var(--surface2); color:var(--text); border:1px solid var(--border);">GO</button>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <button class="btn-main" onclick="openStandalonePassport()" style="background:var(--bg2); color:var(--text); height:50px; font-size:0.8rem; border:1px solid var(--border);">
+                    🪪 MY PASSPORT
+                </button>
+                <button class="btn-main" onclick="PlayerMode.restorePassportPrompt()" style="background:var(--bg2); color:var(--text); height:50px; font-size:0.8rem; border:1px solid var(--border);">
+                    🔑 RESTORE
+                </button>
+            </div>
         </div>
     `;
 }
@@ -3583,6 +3597,19 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
 window.goToPlayerMode = function() {
     window.location.href = '?role=player';
 };
+
+window.joinFromLobby = function() {
+    const input = document.getElementById('lobbyRoomCode');
+    const code = input?.value?.trim();
+    if (!code) return;
+    
+    // Normalize and Route
+    let cleanCode = code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (cleanCode.length === 8) cleanCode = cleanCode.slice(0, 4) + '-' + cleanCode.slice(4);
+    
+    window.location.href = `?join=${cleanCode}&role=player`;
+};
+
 function _startHostTimerTick() {
     if (window._hostTickTimer) clearInterval(window._hostHostTickTimer);
     window._hostTickTimer = setInterval(() => {

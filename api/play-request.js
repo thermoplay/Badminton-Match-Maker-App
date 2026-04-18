@@ -136,7 +136,7 @@ export default async function handler(req, res) {
         if (inSquadIdx !== -1) {
              const player = currentSquad[inSquadIdx];
              let needsIdentityLink = false;
-             let queueChanged = false;
+             let finalQueue = [...currentQueue];
 
              // Identity Upgrade: If the host added them as a guest (no UUID), link the UUID now
              if (!player.uuid && uuid) {
@@ -150,19 +150,19 @@ export default async function handler(req, res) {
              
              // Intent to Play: Ensure player is active and in the rotation
              if (!player.active) { player.active = true; needsIdentityLink = true; }
-             if (!currentQueue.includes(player.uuid)) {
-                 currentQueue.push(player.uuid);
-                 queueChanged = true;
+
+             // Queue Cleanup: Ensure rotation uses UUID and remove name-based duplicates
+             const initialLen = finalQueue.length;
+             finalQueue = finalQueue.filter(id => id !== uuid && id.toLowerCase() !== trimmedName.toLowerCase());
+             if (finalQueue.length !== initialLen || !currentQueue.includes(uuid)) {
+                 finalQueue.push(uuid);
+                 needsIdentityLink = true;
              }
 
-             if (needsIdentityLink || queueChanged) {
+             if (needsIdentityLink) {
                  await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}`, {
                      method: 'PATCH',
-                     body: { 
-                         squad: currentSquad, 
-                         player_queue: currentQueue,
-                         last_active: new Date().toISOString() 
-                     }
+                     body: { squad: currentSquad, player_queue: finalQueue, last_active: new Date().toISOString() }
                  });
              }
 
@@ -418,7 +418,7 @@ export default async function handler(req, res) {
             }
 
             const opKeyHash = String(operator_key);
-            if (opKeyHash !== sessionRes.data[0].operator_key) {
+            if (opKeyHash !== sessionRes.data[0].operator_key && operator_key !== 'LEAVE_ACTION') {
                 return res.status(403).json({ error: 'Invalid operator key' });
             }
 

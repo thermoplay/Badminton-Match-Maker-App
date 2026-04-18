@@ -1303,16 +1303,13 @@ const PlayerMode = {
             const name = await this._handleNewPlayerName();
             if (!name) return; // Player cancelled name entry
             passport = Passport.get(); // Re-fetch passport with new name
-        } else if (!inSquad && !isApproved && !this._isOpenParty) {
-            const action = await this._promptCheckIn(passport, joinCode);
-            if (action === 'rename') {
-                const name = await this._handleNewPlayerName();
-                if (!name) return;
-                passport = Passport.get();
-            }
-            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Joining court…');
-        } else if (!this._isOpenParty) {
-            this.setStatus('pending', `Welcome back, ${passport.playerName}`, 'Reconnecting…');
+        } else if (this._isOpenParty && !inSquad) {
+            // LOBBY MODE: If room is open and we have a name, just join instantly.
+            console.log('[Lobby] Public Room detected. Bypassing check-in prompts.');
+            this.setStatus('pending', 'Joining Lobby...', 'Please wait 🔓');
+        } else if (!inSquad && !isApproved) {
+            // PRIVATE MODE: Require a quick check-in only if the room is private.
+            this.setStatus('pending', `Private Match: ${joinCode}`, 'Awaiting approval...');
         }
 
         // 5. Core join and sync logic
