@@ -68,6 +68,15 @@ const SidelineView = {
         const nameEl = document.getElementById('slPassportName');
         if (nameEl) nameEl.textContent = passport.playerName;
 
+        // Visual Indicator for Open Party
+        const livePill = document.querySelector('.sl-live-pill');
+        if (livePill) {
+            const isOpen = window._isOpenParty || false;
+            livePill.innerHTML = isOpen 
+                ? `<span class="sl-live-dot" style="background:var(--accent)"></span> OPEN PARTY`
+                : `<span class="sl-live-dot" style="background:#60a5fa"></span> LIVE VIEW`;
+        }
+
         const squad = window.squad || [];
         const squadMap = new Map(squad.map(p => [p.uuid, p]));
         const myUUID = passport.playerUUID;
@@ -1771,7 +1780,10 @@ const PlayerMode = {
                 return; // Stop here; the refresh will handle the rest.
             }
         }
-
+        if (payload.is_open_party !== undefined) {
+            this._isOpenParty = !!payload.is_open_party;
+            window._isOpenParty = !!payload.is_open_party;
+        }
         if (payload.next_up) window._lastNextUp = payload.next_up;
         SidelineView.refresh();
         this._checkForMissedResults(payload.squad);
@@ -2099,10 +2111,12 @@ const PlayerMode = {
                 if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
                     broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
                 }
-                // Notify host immediately so they add you to their local StateStore.squad
+
+                // IMMEDIATE HANDSHAKE: Notify host so they add you to StateStore.squad instantly
                 if (typeof broadcastAutoJoin === 'function') {
                     broadcastAutoJoin(passport.playerUUID, passport.playerName);
                 }
+
                 setTimeout(() => this._updateStatus(passport), 800);
                 return;
             }

@@ -639,6 +639,7 @@ function broadcastGameState(immediate = false, lastResolvedTS = null) {
         player_queue: StateStore.playerQueue,
         courtNames: StateStore.get('courtNames'),
         next_up: getNextUpNames(),
+        is_open_party: StateStore.get('isOpenParty') || false,
         hash: _generateStateHash(StateStore.squad, StateStore.playerQueue),
         lastResolvedTS: lastResolvedTS || Date.now()
     });
@@ -1272,6 +1273,7 @@ function applyRemoteState(session) {
         window.currentMatches = loadedMatches;
         window.courtNames = loadedCourtNames;
         window.sport = session.sport || 'Badminton';
+        window._isOpenParty = session.is_open_party || false;
     }
 
     // round_history is no longer synced to DB — keep local undo history intact
@@ -1336,7 +1338,12 @@ function _handleMemberChange(record, oldRecord, eventType) {
             
             // If status is active (Auto-join), resolve them into the squad immediately
             if (record.status === 'active' && typeof window.handleAutoJoin === 'function') {
-                window.handleAutoJoin(name, uuid);
+                window.handleAutoJoin(
+                    name, 
+                    uuid, 
+                    record.spirit_animal || null, 
+                    record.skill_level || null
+                );
             }
 
         } else if (eventType === 'UPDATE') {

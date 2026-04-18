@@ -101,7 +101,10 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Invalid player identity format' });
         }
         // ------------------------
-
+         // Skill Level Validation
+        const validLevels = ['Novice', 'Intermediate', 'Advanced'];
+        const finalSkill = validLevels.includes(skill_level) ? skill_level : 'Intermediate';
+        // ------------------------
         // 1. Verify Room Exists and Fetch Metadata
         // We fetch the squad array to check if the player is already "in the queue" (host's local state)
         const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party,squad&limit=1`);
@@ -146,8 +149,8 @@ export default async function handler(req, res) {
                     room_code: code,
                     player_uuid: uuid,
                     player_name: trimmedName,
-                    spirit_animal: spirit_animal || null,
-                    skill_level: skill_level || 'Intermediate',
+                    spirit_animal: (spirit_animal === undefined || spirit_animal === '') ? null : spirit_animal,
+                    skill_level: finalSkill,
                     status: 'active',
                     approved_at: new Date().toISOString()
                 }
@@ -190,6 +193,44 @@ export default async function handler(req, res) {
 
         return res.status(200).json({ ok: true, status: 'pending', id: newRequest?.id });
     }
+
+    // ── PATCH: batch resolve/approve play requests ───────────────────────────
+    if (req.method === 'PATCH') {
+        const { ids, room_code, operator_key } = req.body;
+
+        if (!ids || !Array.isArray(ids) || !room_code || !operator_key) {
+            return res.status(400).json({ error: 'Missing batch parameters' });
+        }
+
+        let code = String(room_code).replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
+
+        // Verify operator key
+        const sessionRes = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=operator_key&limit=1`);
+        if (!sessionRes.ok || !sessionRes.data?.[0]) return res.status(404).json({ error: 'Session not found' });
+        if (operator_key !== sessionRes.data[0].operator_key) return res.status(403).json({ error: 'Invalid operator key' });
+
+        const idList = ids.map(id => String(id)).join(',');
+
+        // 1. Fetch UUIDs for members to activate before deleting requests
+        const requestsRes = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&id=in.(${idList})&select=player_uuid`);
+        if (requestsRes.ok && Array.isArray(requestsRes.data) && requestsRes.data.length > 0) {
+            const uuids = requestsRes.data.map(r => r.player_uuid).filter(Boolean);
+            if (uuids.length > 0) {
+                const uuidList = uuids.join(',');
+                // 2. Batch Update members status to active
+                await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&player_uuid=in.(${uuidList})`, {
+                    method: 'PATCH',
+                    body: { status: 'active', approved_at: new Date().toISOString() }
+                });
+            }
+        }
+
+        // 3. Delete the notification requests
+        const delRes = await sbFetch(`/play_requests?room_code=eq.${encodeURIComponent(code)}&id=in.(${idList})`, { method: 'DELETE' });
+        return res.status(delRes.ok ? 200 : 500).json({ ok: delRes.ok });
+    }
+
     // ── GET: host polls pending requests ─────────────────────────────────────
     if (req.method === 'GET') {
         const { room_code, status } = req.query;
@@ -203,7 +244,18 @@ export default async function handler(req, res) {
         // Reconciliation support: Fetch currently active members from session_members
         // This allows the host to recover players who are active in the DB but missing locally.
         if (status === 'active') {
-            const r = await sbFetch(`/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active&select=id,player_name,player_uuid,spirit_animal,skill_level`);
+            const { exclude } = req.query;
+            let query = `/session_members?room_code=eq.${encodeURIComponent(code)}&status=eq.active&select=id,player_name,player_uuid,spirit_animal,skill_level`;
+            
+            if (exclude) {
+                const uuids = String(exclude).split(',').map(u => u.trim()).filter(u => /^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(u));
+                if (uuids.length > 0) {
+                    const list = uuids.map(u => `"${u}"`).join(',');
+                    query += `&player_uuid=not.in.(${list})`;
+                }
+            }
+
+            const r = await sbFetch(query);
             const mapped = (Array.isArray(r.data) ? r.data : []).map(m => ({
                 id: m.id,
                 name: m.player_name,
