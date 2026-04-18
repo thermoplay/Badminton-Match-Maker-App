@@ -101,10 +101,7 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Invalid player identity format' });
         }
         // ------------------------
-         // Skill Level Validation
-        const validLevels = ['Novice', 'Intermediate', 'Advanced'];
-        const finalSkill = validLevels.includes(skill_level) ? skill_level : 'Intermediate';
-        // ------------------------
+
         // 1. Verify Room Exists and Fetch Metadata
         // We fetch the squad array to check if the player is already "in the queue" (host's local state)
         const sessionCheck = await sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=room_code,is_open_party,squad&limit=1`);
@@ -120,7 +117,7 @@ export default async function handler(req, res) {
         // This handles cases where the host added them manually (name match) or they rejoined (UUID match).
         const inSquad = currentSquad.find(p => p.uuid === uuid || (p.name && p.name.toLowerCase() === trimmedName.toLowerCase()));
         if (inSquad) {
-// Optimization: If they are already in the session, return state + global stats so they render instantly
+             // Optimization: If already in session, return state + global stats so they render instantly
              const [fullSession, globalProfile] = await Promise.all([
                  sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport,approved_players&limit=1`),
                  sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`)
@@ -149,8 +146,8 @@ export default async function handler(req, res) {
                     room_code: code,
                     player_uuid: uuid,
                     player_name: trimmedName,
-                    spirit_animal: (spirit_animal === undefined || spirit_animal === '') ? null : spirit_animal,
-                    skill_level: finalSkill,
+                    spirit_animal: spirit_animal || null,
+                    skill_level: skill_level || 'Intermediate',
                     status: 'active',
                     approved_at: new Date().toISOString()
                 }

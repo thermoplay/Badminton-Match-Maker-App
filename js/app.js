@@ -251,9 +251,11 @@ async function toggleOpenParty() {
                 playerQueue: [...StateStore.playerQueue] 
             });
             _isProcessingOpenPartyBatch = false;
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
         }
     } else {
         StateStore.set('isOpenParty', next);
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
         showSessionToast(`🔓 Open Party: ${next ? 'ON' : 'OFF'}`);
     }
     renderOpenPartyToggle();
@@ -2647,51 +2649,54 @@ function _processAutoJoinBuffer() {
     for (const item of queue) {
         const { name, playerUUID, spiritAnimal, skillLevel } = item;
         
-        // IDEMPOTENCY CHECK: Ensure we don't process the same UUID twice in one batch
-        if (newSquad.some(p => p.uuid === playerUUID && p.active && (p.spiritAnimal === spiritAnimal || !spiritAnimal))) {
+        const existingP = newSquad.find(p => p.uuid === playerUUID);
+        const wasAlreadyActive = existingP && existingP.active;
+
+        // Idempotency: skip if already active and metadata matches
+        if (wasAlreadyActive && existingP.spiritAnimal === spiritAnimal && existingP.skillLevel === skillLevel) {
             continue;
         }
 
         const player = _resolvePlayerForSession(name, playerUUID);
-        player.spiritAnimal = spiritAnimal || player.spiritAnimal;
-        player.skillLevel   = skillLevel || player.skillLevel;
+        if (spiritAnimal !== undefined) player.spiritAnimal = spiritAnimal;
+        if (skillLevel !== undefined)   player.skillLevel   = skillLevel;
         player.active = true;
         player.acknowledged = false;
 
-        const existingIdx = newSquad.findIndex(p => p.uuid === player.uuid);
-        if (existingIdx === -1) {
+        if (!existingP) {
             newSquad.push(player);
         } else {
-            newSquad[existingIdx] = { ...newSquad[existingIdx], ...player };
+            newSquad[newSquad.indexOf(existingP)] = { ...existingP, ...player };
         }
 
-        // Identity Cleanup: Remove any name-based entries to prevent duplicate turns
-        newQueue = newQueue.filter(id => id !== player.uuid && id !== name);
-        newQueue.push(player.uuid);
+        // Queue Preservation: Only re-queue if they aren't already in the rotation or on a court
+        const inQueue = newQueue.includes(player.uuid);
+        const onCourt = StateStore.currentMatches.some(m => m.teams.flat().includes(player.uuid));
 
-        // BACKGROUND ACHIEVEMENT FETCHING (Prevent Race Conditions)
-        if (player.uuid && window.fetchPlayerAchievements) {
-            (async () => {
-                try {
-                    const fetched = await window.fetchPlayerAchievements(player.uuid);
-                    const ids = fetched.map(a => a.achievement_id);
-                    const p = StateStore.squad.find(x => x.uuid === player.uuid);
-                    if (p) {
-                        p.achievements = [...new Set([...(p.achievements || []), ...ids])];
-                        StateStore.set('squad', [...StateStore.squad]); 
-                        renderSquad();
-                    }
-                } catch (e) { console.error(`[handleAutoJoin] Achievement fetch failed for ${player.name}`, e); }
-            })();
+        if (!inQueue && !onCourt) {
+            newQueue = newQueue.filter(id => id !== player.uuid && id !== name);
+            newQueue.push(player.uuid);
+        } else {
+            // Cleanup name-based IDs without moving them to the back
+            newQueue = newQueue.map(id => (id === name || id === player.name) ? player.uuid : id);
         }
 
-        // Handshake: Only generate a new token if we don't have an existing session
+        // Background achievements
+if (player.uuid && window.fetchPlayerAchievements) {
+            window.fetchPlayerAchievements(player.uuid).then(fetched => {
+                const ids = fetched.map(a => a.achievement_id);
+                const p = StateStore.squad.find(x => x.uuid === player.uuid);
+                if (p) {
+                    p.achievements = [...new Set([...(p.achievements || []), ...ids])];
+                    renderSquad();
+                }
+            }).catch(() => {});
+        }
+
+        // Handshake
         window._approvedPlayers = window._approvedPlayers || {};
-        let token = window._approvedPlayers[player.uuid]?.token;
-        if (!token) {
-            token = _makeApprovalToken();
-            window._approvedPlayers[player.uuid] = { token, name: player.name, uuid: player.uuid, approvedAt: Date.now() };
-        }
+        let token = window._approvedPlayers[player.uuid]?.token || _makeApprovalToken();
+        window._approvedPlayers[player.uuid] = { token, name: player.name, uuid: player.uuid, approvedAt: Date.now() };
 
         if (typeof broadcastApproval === 'function') {
             broadcastApproval(player.uuid, player.name, token);
@@ -2703,10 +2708,10 @@ function _processAutoJoinBuffer() {
         StateStore.setState({ squad: newSquad, playerQueue: newQueue });
         renderSquad();
         if (window.Haptic) Haptic.success();
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
         showSessionToast(`🔓 ${queue.length > 1 ? queue.length + ' players' : queue[0].name} joined instantly`);
     }
 }
-window.handleAutoJoin = handleAutoJoin;
 
 let _processingRequestIds = new Set();
 
@@ -3024,7 +3029,6 @@ const _startPolling = () => {
                     const localP = StateStore.squad.find(p => p.uuid === dbPlayer.player_uuid);
                     if (!localP) {
                         console.log(`[CourtSide] Reconciliation: Recovering missed player ${dbPlayer.name}`);
-                        // Use handleAutoJoin for players already marked active in DB
                         handleAutoJoin(dbPlayer.name, dbPlayer.player_uuid, dbPlayer.spirit_animal, dbPlayer.skill_level);
                     } else {
                         // Full Metadata Sync: Ensure Host sees correct avatar/skill

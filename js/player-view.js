@@ -71,8 +71,11 @@ const SidelineView = {
         // Visual Indicator for Open Party
         const livePill = document.querySelector('.sl-live-pill');
         if (livePill) {
-            const isOpen = window._isOpenParty || false;
-            livePill.innerHTML = isOpen 
+            const isOpen = (typeof StateStore !== 'undefined' 
+                ? StateStore.get('isOpenParty') 
+                : window._isOpenParty) || false;
+            
+            livePill.innerHTML = isOpen
                 ? `<span class="sl-live-dot" style="background:var(--accent)"></span> OPEN PARTY`
                 : `<span class="sl-live-dot" style="background:#60a5fa"></span> LIVE VIEW`;
         }

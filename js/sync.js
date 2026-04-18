@@ -1412,7 +1412,7 @@ function _updatePlayerCount() {
         count = memberEntries.filter(m => m.status === 'active').length;
     } else {
         // Fallback: use local squad length (always accurate on the host side)
-        count = (typeof StateStore.squad !== 'undefined' ? StateStore.squad : []).length;
+        count = (typeof StateStore.squad !== 'undefined' ? StateStore.squad.filter(p => p.active).length : 0);
     }
 
     let countEl = document.getElementById('sessionPlayerCount');
