@@ -516,14 +516,16 @@ function getCandidatePool(onCourt) {
     const poolSet  = new Set();
     const poolSize = 4 * POOL_FACTOR;
 
-    // SANITIZATION: Filter out any IDs in the queue that no longer exist in the squad.
-    // This prevents "Ghost" players from appearing on courts if they were deleted manually.
-    const validSquadIds = new Set(StateStore.squad.map(p => p.uuid || p.name));
-    const sanitizedQueue = StateStore.playerQueue.filter(id => validSquadIds.has(id));
+    // Authoritative Sync: Ensure the queue strictly contains IDs present in the current squad.
+    // We use a case-insensitive name fallback for legacy/guest compatibility.
+    const squadIds = new Set();
+    StateStore.squad.forEach(p => { if (p.uuid) squadIds.add(p.uuid); squadIds.add(p.name.toLowerCase()); });
     
+    const sanitizedQueue = StateStore.playerQueue.filter(id => 
+        squadIds.has(String(id).toLowerCase())
+    );
     if (sanitizedQueue.length !== StateStore.playerQueue.length) {
-        console.log('[Queue] Cleaning stale IDs from rotation...');
-        StateStore.set('playerQueue', sanitizedQueue);
+               StateStore.playerQueue = sanitizedQueue;
     }
 
     for (const uuid of sanitizedQueue) {

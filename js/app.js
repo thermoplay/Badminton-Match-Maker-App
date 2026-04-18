@@ -233,23 +233,13 @@ async function toggleOpenParty() {
         try {
             const toApprove = [...window.playRequests];
             const ids = [];
-            for (const r of toApprove) {
-                ids.push(r.id);
-                // We skip sync here to avoid redundant cloud pushes, but we must
-                // ensure approvePlayRequest updates the StateStore's internal squad array.
-                await approvePlayRequest(r.name, r.id, r.player_uuid || null, true, true);
-            }
+            toApprove.forEach(r => ids.push(r.id));
 
             if (ids.length > 0) {
                 await batchApproveAPI(ids);
             }
         } finally {
-            // Final atomic sync to commit the toggle and all player changes
-            StateStore.setState({ 
-                isOpenParty: true,
-                squad: [...StateStore.squad], 
-                playerQueue: [...StateStore.playerQueue] 
-            });
+            StateStore.set('isOpenParty', true);
             _isProcessingOpenPartyBatch = false;
             if (typeof broadcastGameState === 'function') broadcastGameState(true);
         }
@@ -2553,15 +2543,10 @@ async function approveAllRequests() {
     const toApprove = [...window.playRequests];
     closePlayRequests();
     showSessionToast(`Processing ${toApprove.length} approvals...`);
-    const ids = [];
-    for (const r of toApprove) {
-        ids.push(r.id);
-        await approvePlayRequest(r.name, r.id, r.player_uuid || null, true, true);
-    }
+    const ids = toApprove.map(r => r.id);
     if (ids.length > 0) {
         await batchApproveAPI(ids);
     }
-    StateStore.setState({ squad: [...StateStore.squad], playerQueue: [...StateStore.playerQueue] });
 }
 window.approveAllRequests = approveAllRequests;
 
@@ -2626,91 +2611,13 @@ let _autoJoinTimer = null;
 
 function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null) {
     if (!window.isOperator) return;
-    // Add to buffer for batched processing
-    _autoJoinBuffer.push({ name, playerUUID, spiritAnimal, skillLevel });
-
-    if (_autoJoinTimer) return;
-
-    // Wait 400ms to collect any other simultaneous joins
-    _autoJoinTimer = setTimeout(() => {
-        _processAutoJoinBuffer();
-        _autoJoinTimer = null;
-    }, 400);
-}
-
-function _processAutoJoinBuffer() {
-    const queue = [..._autoJoinBuffer];
-    _autoJoinBuffer = [];
-
-    let newSquad = [...StateStore.squad];
-    let newQueue = [...StateStore.playerQueue];
-    let anyAdded = false;
-
-    for (const item of queue) {
-        const { name, playerUUID, spiritAnimal, skillLevel } = item;
-        
-        const existingP = newSquad.find(p => p.uuid === playerUUID);
-        const wasAlreadyActive = existingP && existingP.active;
-
-        // Idempotency: skip if already active and metadata matches
-        if (wasAlreadyActive && existingP.spiritAnimal === spiritAnimal && existingP.skillLevel === skillLevel) {
-            continue;
-        }
-
-        const player = _resolvePlayerForSession(name, playerUUID);
-        if (spiritAnimal !== undefined) player.spiritAnimal = spiritAnimal;
-        if (skillLevel !== undefined)   player.skillLevel   = skillLevel;
-        player.active = true;
-        player.acknowledged = false;
-
-        if (!existingP) {
-            newSquad.push(player);
-        } else {
-            newSquad[newSquad.indexOf(existingP)] = { ...existingP, ...player };
-        }
-
-        // Queue Preservation: Only re-queue if they aren't already in the rotation or on a court
-        const inQueue = newQueue.includes(player.uuid);
-        const onCourt = StateStore.currentMatches.some(m => m.teams.flat().includes(player.uuid));
-
-        if (!inQueue && !onCourt) {
-            newQueue = newQueue.filter(id => id !== player.uuid && id !== name);
-            newQueue.push(player.uuid);
-        } else {
-            // Cleanup name-based IDs without moving them to the back
-            newQueue = newQueue.map(id => (id === name || id === player.name) ? player.uuid : id);
-        }
-
-        // Background achievements
-if (player.uuid && window.fetchPlayerAchievements) {
-            window.fetchPlayerAchievements(player.uuid).then(fetched => {
-                const ids = fetched.map(a => a.achievement_id);
-                const p = StateStore.squad.find(x => x.uuid === player.uuid);
-                if (p) {
-                    p.achievements = [...new Set([...(p.achievements || []), ...ids])];
-                    renderSquad();
-                }
-            }).catch(() => {});
-        }
-
-        // Handshake
-        window._approvedPlayers = window._approvedPlayers || {};
-        let token = window._approvedPlayers[player.uuid]?.token || _makeApprovalToken();
-        window._approvedPlayers[player.uuid] = { token, name: player.name, uuid: player.uuid, approvedAt: Date.now() };
-
-        if (typeof broadcastApproval === 'function') {
-            broadcastApproval(player.uuid, player.name, token);
-        }
-        anyAdded = true;
-    }
-
-    if (anyAdded) {
-        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
-        renderSquad();
-        if (window.Haptic) Haptic.success();
-        if (typeof broadcastGameState === 'function') broadcastGameState(true);
-        showSessionToast(`🔓 ${queue.length > 1 ? queue.length + ' players' : queue[0].name} joined instantly`);
-    }
+    
+    // Server-Authoritative Join:
+    // The server has already modified the DB row. The host will adopt the player
+    // automatically via the reconciliation logic in sync.js's applyRemoteState.
+    // This function now only handles local UI feedback if needed.
+    showSessionToast(`🔓 ${name} joined instantly`);
+    if (window.Haptic) Haptic.success();
 }
 
 let _processingRequestIds = new Set();

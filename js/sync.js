@@ -693,7 +693,15 @@ function broadcastAcknowledge(playerUUID) {
     _broadcast('player_ack', { playerUUID });
 }
 
-function broadcastPlayerLeaving(playerUUID, playerName) {
+async function broadcastPlayerLeaving(playerUUID, playerName) {
+    // Server-Authoritative Leave: Hit the API first to cleanup the squad array
+    if (currentRoomCode) {
+        fetch('/api/play-request', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room_code: currentRoomCode, player_uuid: playerUUID, operator_key: 'LEAVE_ACTION' })
+        }).catch(() => {});
+    }
     if (sbManager) sbManager.broadcast('player_leaving', { playerUUID, playerName });
 }
 window.broadcastPlayerLeaving = broadcastPlayerLeaving;
@@ -816,7 +824,6 @@ function _handleBroadcast(payload) {
     if (type === 'player_auto_joined') {
         if (isOperator && typeof window.handleAutoJoin === 'function') {
             window.handleAutoJoin(payload.playerName, payload.playerUUID, payload.spiritAnimal, payload.skillLevel);
-            showSessionToast(`🔓 ${payload.playerName} joined instantly`);
         }
         return;
     }
@@ -1145,15 +1152,24 @@ function applyRemoteState(session) {
     // The host is the source of truth during an active session. When their own
     // DB write bounces back via postgres_changes, applying it wipes and
     // re-renders the match container mid-game, causing the "Start Session" flash.
-    // Only allow host to apply remote state during initial boot/rejoin hydration.
+    // Reconciliation: Host adopts new players/queue updates from server (Open Party).
     if (isOperator && !_isBootingSession) {
-        // RECONCILIATION: If re-joining players had their achievements merged in the DB
-        // by the join_session RPC, the Host needs to adopt those changes into local state.
         if (Array.isArray(session.squad)) {
             let hasChanges = false;
+            let newSquad = [...StateStore.squad];
+
             session.squad.forEach(remoteP => {
                 if (!remoteP.uuid) return;
-                const localP = StateStore.squad.find(p => p.uuid === remoteP.uuid);
+                const localP = newSquad.find(p => p.uuid === remoteP.uuid);
+                
+                if (!localP) {
+                    // SERVER-ADDED PLAYER (Open Party Join)
+                    console.log(`[CourtSide] Adopting new player from server: ${remoteP.name}`);
+                    newSquad.push(remoteP);
+                    hasChanges = true;
+                    return;
+                }
+
                 if (localP) {
                     const localSet = new Set(localP.achievements || []);
                     let pChanged = false;
@@ -1213,9 +1229,20 @@ function applyRemoteState(session) {
                     }
                 }
             });
+
+            // Adopt Server Queue Order: Authoritative sync for Open Party joins/leaves
+            if (session.player_queue && JSON.stringify(session.player_queue) !== JSON.stringify(StateStore.playerQueue)) {
+                StateStore.set('playerQueue', session.player_queue);
+                hasChanges = true;
+            }
+
             if (hasChanges) {
-                StateStore.set('squad', [...StateStore.squad]);
+                StateStore.set('squad', newSquad);
                 renderSquad();
+                if (typeof renderQueueStrip === 'function') renderQueueStrip();
+                
+                // SNAPPINESS: Force an immediate broadcast so all spectators see the new joiner instantly
+                if (typeof broadcastGameState === 'function') broadcastGameState(true);
             }
         }
         _updatePlayerCount();
