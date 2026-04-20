@@ -179,7 +179,7 @@ function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     const tB = newMatch.teams[1].map(u => findP(u)).filter(Boolean);
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
-        const newCardEl = buildMatchCard(mIdx, tA, tB, newMatch.odds, newMatch.startedAt);
+        const newCardEl = buildMatchCard(mIdx, tA, tB, newMatch.odds, newMatch.startedAt, newMatch.storyBadges);
         newCardEl.classList.add('card-replace');
         newCardEl.classList.remove('card-entering');
         cardEl.replaceWith(newCardEl);

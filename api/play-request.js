@@ -168,10 +168,10 @@ export default async function handler(req, res) {
 
              // Optimization: If already in session, return state + global stats so they render instantly
              const [fullSession, globalProfile] = await Promise.all([
-                 sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport,approved_players&limit=1`),
-                 sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`)
+                 sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport,player_queue,approved_players,active_courts,guest_list&limit=1`),
+                 sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats,rating&limit=1`)
              ]);
-             return res.status(200).json({ alreadyActive: true, ok: true, session: fullSession.data?.[0], global: globalProfile.data?.[0] });
+                return res.status(200).json({ alreadyActive: true, ok: true, session: fullSession.data?.[0], global: globalProfile.data?.[0], status: 'active' });
         }
 
         // 2. Check if player is already a member (any status) in session_members
@@ -232,8 +232,8 @@ export default async function handler(req, res) {
 
                 // 5. Fetch and return finalized state
                 const [fullSession, globalProfile] = await Promise.all([
-                    sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport,approved_players&limit=1`),
-                    sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats&limit=1`)
+                    sbFetch(`/sessions?room_code=eq.${encodeURIComponent(code)}&select=squad,current_matches,court_names,is_open_party,sport,player_queue,approved_players,active_courts,guest_list&limit=1`),
+                    sbFetch(`/players?uuid=eq.${encodeURIComponent(uuid)}&select=uuid,name,spirit_animal,skill_level,total_wins,total_games,achievements,teammate_history,opponent_history,partner_stats,rating&limit=1`)
                 ]);
                 
                 return res.status(200).json({ 

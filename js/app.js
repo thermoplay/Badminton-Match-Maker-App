@@ -183,7 +183,7 @@ function addPlayer() {
 
     // Connectivity: Force an immediate push to Supabase so spectators see the new player instantly
     if (window.isOnlineSession && window.isOperator && typeof pushStateToSupabase === 'function') {
-        pushStateToSupabase(true);
+        pushStateToSupabase(true, [newUUID]);
     }
 
     el.value = '';
@@ -394,6 +394,7 @@ function setPlayerSkillLevel(id, level) {
     p.skillLevel = level;
     StateStore.set('squad', [...StateStore.squad]);
     renderSquad();
+    if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [id]);
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
     showSessionToast(`${p.name} is now ${level}`);
     Haptic.success();
@@ -785,6 +786,7 @@ function togglePlayerActive(uuid) {
 
     // Trigger reactive sync and immediate broadcast
     StateStore.set('squad', [...StateStore.squad]);
+    if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [uuid]);
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
 }
 
@@ -2612,10 +2614,24 @@ let _autoJoinTimer = null;
 function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null) {
     if (!window.isOperator) return;
     
-    // Server-Authoritative Join:
-    // The server has already modified the DB row. The host will adopt the player
-    // automatically via the reconciliation logic in sync.js's applyRemoteState.
-    // This function now only handles local UI feedback if needed.
+    // SNAPPINESS: Host adopts the player immediately to StateStore
+    const existing = StateStore.squad.find(p => p.uuid === playerUUID);
+    if (!existing) {
+        const player = migratePlayer({
+            name: name,
+            uuid: playerUUID,
+            spiritAnimal: spiritAnimal,
+            skillLevel: skillLevel || 'Intermediate',
+            active: true
+        });
+        const newSquad = [...StateStore.squad, player];
+        const newQueue = [...StateStore.playerQueue.filter(u => u !== playerUUID), playerUUID];
+        
+        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
+        renderSquad();
+        if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    }
+
     showSessionToast(`🔓 ${name} joined instantly`);
     if (window.Haptic) Haptic.success();
 }
@@ -2687,7 +2703,7 @@ async function approvePlayRequest(name, id, playerUUID = null, skipSync = false,
     if (!skipSync) {
         StateStore.setState({ squad: newSquad, playerQueue: newQueue });
     } else {
-        // Update internal references silently. 
+        // Update internal references silently.
         if (StateStore.squad !== newSquad) {
             StateStore.squad.length = 0;
             StateStore.squad.push(...newSquad);
@@ -2971,7 +2987,17 @@ function updateIWTPVisibility() {
     // BUG FIX: Only show the "I want to play" sheet for spectators.
     // If the user is already in player-mode (sideline view), hide the join prompt.
     const isPlayerView = document.body.classList.contains('player-mode');
-    const show = isOnlineSession && !isOperator && !isPlayerView;
+    
+    // If Open Party and we are a known player, just switch to player mode automatically
+    const hasPassport = !!(window._passport?.playerName && window._passport?.playerUUID);
+    if (window._isOpenParty && hasPassport && !isOperator && !isPlayerView) {
+        PlayerMode.boot(window._passport, window.currentRoomCode);
+        return;
+    }
+
+    // If already in squad, never show the join prompt
+    const inSquad = (window.squad || []).some(p => p.uuid === window._passport?.playerUUID);
+    const show = isOnlineSession && !isOperator && !isPlayerView && !inSquad;
 
     sheet.style.display = show ? 'flex' : 'none';
     if (show) checkIWTPSmartRecognition();
@@ -3286,8 +3312,6 @@ function showLandingPage() {
     if (sl) sl.style.display = 'none';
     document.body.classList.remove('player-mode');
 
-    const sport = StateStore.get('sport') || 'Badminton';
-
     if (typeof closeOverlay === 'function') closeOverlay();
     let div = document.getElementById('landingPage');
     if (!div) {
@@ -3299,14 +3323,23 @@ function showLandingPage() {
     div.style.zIndex = '9000';
     div.style.background = 'var(--bg)'; // Opaque background
 
-    const sports = ['Badminton', 'Tennis', 'Pickleball'];
-    const sportBtns = sports.map(s => `
-        <button class="btn-main ${sport === s ? '' : 'ps-btn-sub'}" 
-                style="flex:1; height:40px; font-size:0.7rem; ${sport === s ? 'background:var(--accent); color:#000;' : 'background:var(--surface2); color:var(--text); opacity:0.6;'}" 
-                onclick="window.setGlobalSport('${s}')">
-            ${window.SPORT_ICONS[s]} ${s.toUpperCase()}
-        </button>
-    `).join('');
+    const recentRooms = JSON.parse(localStorage.getItem('cs_recent_rooms') || '[]');
+    let recentHTML = '';
+    if (recentRooms.length > 0) {
+        recentHTML = `
+            <div style="margin-bottom: 24px;">
+                <div style="font-size: 0.55rem; color: var(--text-muted); font-weight: 900; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; text-align: center;">QUICK RE-JOIN</div>
+                <div style="display: flex; gap: 8px; justify-content: center;">
+                    ${recentRooms.map(code => `
+                        <button class="btn-main" onclick="window.joinFromRecent('${code}')" 
+                                style="flex: 1; height: 40px; font-size: 0.75rem; background: var(--surface2); color: var(--text); border: 1px solid var(--border); box-shadow: none;">
+                            ${code}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
 
     div.innerHTML = `
         <div class="menu-card" style="padding:40px 20px; max-width:380px; border:none; box-shadow:none; background:transparent;">
@@ -3317,9 +3350,7 @@ function showLandingPage() {
                 GLOBAL LOBBY
             </p>
 
-            <div style="display:flex; gap:8px; margin-bottom:28px; background:var(--bg2); padding:4px; border-radius:12px; border:1px solid var(--border);">
-                ${sportBtns}
-            </div>
+            ${recentHTML}
 
             <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:32px;">
                 <button class="btn-main" onclick="closeLandingPage()" style="height:64px; font-size:1.1rem; box-shadow:0 0 30px var(--accent-dim);">
@@ -3351,11 +3382,6 @@ function showLandingPage() {
     `;
 }
 
-window.setGlobalSport = function(s) {
-    StateStore.set('sport', s);
-    showLandingPage();
-    Haptic.tap();
-};
 window.goToMainMenu = showLandingPage;
 
 window.closeLandingPage = function() {
@@ -3390,6 +3416,11 @@ window.closeLandingPage = function() {
         // Host already has a name, _autoAddHostToSquad should have already run.
         doClose();
     }
+};
+
+window.joinFromRecent = function(code) {
+    if (window.Haptic) Haptic.tap();
+    window.location.href = `?join=${code}&role=player`;
 };
 
 window.openStandalonePassport = function() {
@@ -3666,8 +3697,9 @@ async function initApp() {
     const savedOpKey = localStorage.getItem('cs_operator_key');
     const isHostOfThisSession = (joinCode && savedCode === joinCode && savedOpKey);
 
-    // If the URL says "player" but we are NOT the host of this specific session, boot into player mode.
-    if (role === 'player' && !isHostOfThisSession) {
+    // ── PLAYER MODE BOOT ─────────────────────────────────────────────────────
+    // If role=player is requested, respect it even if the user is the host.
+    if (role === 'player') {
         document.body.classList.add('player-mode');
         
         // Clean URL immediately

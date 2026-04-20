@@ -266,7 +266,7 @@ class SupabaseRealtimeManager {
             const latency = Date.now() - start;
             if (typeof _updateLatencyDisplay === 'function') _updateLatencyDisplay(latency);
             
-            // If latency is very high (>1.5s), show a soft warning
+            // If latency is very high (>1.5s), show a soft warning. Otherwise, clear it.
             if (latency > 1500) {
                 if (typeof showReconnectingIndicator === 'function') showReconnectingIndicator(true, '📡 Weak Signal...');
             } else if (this.socket?.readyState === WebSocket.OPEN) {
@@ -376,13 +376,27 @@ async function createOnlineSession() {
 // JOIN SESSION
 // ---------------------------------------------------------------------------
 
-async function joinOnlineSession(roomCode) {
+async function joinOnlineSession(roomCode, initialSession = null) {
     let code = (roomCode || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
     if (code.length === 8) {
         code = code.slice(0, 4) + '-' + code.slice(4);
     }
 
     if (!code) return;
+
+    // Skip fetch if session data was already provided by PlayerMode.boot
+    if (initialSession) {
+        currentRoomCode = code;
+        isOnlineSession = true;
+        sport = initialSession.sport || 'Badminton';
+        _syncState();
+        if (!sbManager) sbManager = new SupabaseRealtimeManager(_RT_URL, _RT_KEY);
+        applyRemoteState(initialSession);
+        sbManager.connect(code);
+        updateSessionUI();
+        return;
+    }
+
     showSyncStatus('Joining…', 'info');
     try {
         const result = await apiCall(`session-get?code=${encodeURIComponent(code)}`);
@@ -426,7 +440,10 @@ async function joinOnlineSession(roomCode) {
         sbManager.connect(code);
         updateSessionUI();
         closeOverlay();
-        Haptic.bump();
+        
+        // SNAPPINESS: Ensure UI refreshes immediately after applying remote state
+        if (typeof SidelineView !== 'undefined') SidelineView.refresh();
+        Haptic.success();
     } catch (e) {
         console.error('CourtSide: join failed', e);
         showSyncStatus('Could not join. Try again.', 'error');
@@ -439,12 +456,23 @@ async function joinOnlineSession(roomCode) {
 // ---------------------------------------------------------------------------
 
 const _doPushToSupabase = async () => {
-    // DATA SAFETY FIX: Always send the full squad. 
-    // PostgREST PATCH replaces the entire column; filtering here deletes data from the DB.
-    const squadToSend = StateStore.squad;
+    if (!currentRoomCode || !operatorKey) return;
+
+    // Determine which players to sync based on tracking sets
+    let squadToSend;
+    const syncIsFull = _fullSyncPending || _dirtyIds.size === 0;
+    
+    if (syncIsFull) {
+        squadToSend = StateStore.squad;
+    } else {
+        // Targeted Sync: only send modified players. 
+        // The server-side SMART SQUAD MERGE handles integrating these into the full list.
+        const currentDirty = Array.from(_dirtyIds);
+        squadToSend = StateStore.squad.filter(p => currentDirty.includes(p.uuid || p.name));
+    }
 
     _fullSyncPending = false;
-    _dirtyIds = new Set();
+    _dirtyIds.clear();
 
     try {
         const res = await apiCall('session-update', {
@@ -454,6 +482,7 @@ const _doPushToSupabase = async () => {
                 operator_key:     operatorKey,
                 sport:            StateStore.get('sport') || 'Badminton',
                 squad:            squadToSend,
+                is_partial_sync:  !syncIsFull,
                 current_matches:  StateStore.currentMatches,
                 player_queue:     StateStore.playerQueue,
                 uuid_map:         window._sessionUUIDMap  || {},
@@ -480,6 +509,7 @@ const _doPushToSupabase = async () => {
     } catch (e) { 
         console.error('CourtSide: push failed', e); 
         localStorage.setItem('cs_pending_sync', 'true');
+        _fullSyncPending = true; // Fallback to full sync on next attempt to ensure consistency
         showSyncStatus('Sync failed. Retrying...', 'error');
     }
 };
@@ -850,6 +880,7 @@ function _handleBroadcast(payload) {
             if (p) {
                 p.acknowledged = true;
                 StateStore.set('squad', [...StateStore.squad]);
+                if (typeof broadcastGameState === 'function') broadcastGameState(true);
                 showSessionToast(`👍 ${p.name} is on the way`);
             }
         }
@@ -894,11 +925,13 @@ function _handleBroadcast(payload) {
         if (!isOperator) {
             window.squad          = payload.squad           || window.squad          || [];
             window.currentMatches = payload.current_matches || window.currentMatches || [];
+            window.playerQueue    = payload.player_queue    || window.playerQueue    || [];
             if (typeof PlayerMode !== 'undefined') {
                 PlayerMode._onGameStateUpdate(payload);
             } else if (typeof SidelineView !== 'undefined') {
                 SidelineView.refresh();
             }
+            if (typeof updateIWTPVisibility === 'function') updateIWTPVisibility();
         }
         return;
     }
@@ -1298,6 +1331,7 @@ function applyRemoteState(session) {
     if (!isOperator) {
         window.squad = loadedSquad;
         window.currentMatches = loadedMatches;
+        window.playerQueue = loadedQueue;
         window.courtNames = loadedCourtNames;
         window.sport = session.sport || 'Badminton';
         window._isOpenParty = session.is_open_party || false;

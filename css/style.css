@@ -70,7 +70,8 @@
 body.player-mode #hostRoot,
 body.player-mode #hostNav,
 body.player-mode .join-notif,
-body.player-mode .play-requests-badge {
+body.player-mode .play-requests-badge,
+body.player-mode #iwantToPlaySheet {
     display: none !important;
 }
 

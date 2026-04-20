@@ -70,15 +70,18 @@ export default async function handler(req, res) {
     const existingSquad = Array.isArray(session.squad) ? session.squad : [];
     const incomingSquad = Array.isArray(squad) ? squad : [];
 
-    // Perform a Server-Centric merge to support Differential Sync. 
-    // We map through the existing squad and apply updates only for players 
-    // included in the incoming payload. This allows the host to send only 
-    // the 4 players involved in a match, reducing bandwidth significantly.
-    const mergedSquadMap = new Map(existingSquad.map(p => [p.uuid, p]));
-
+     // --- SMART SQUAD MERGE ---
+    // If is_partial_sync is true, we preserve existing players not in the payload.
+    // If false (Full Sync), we use the host's list as the definitive membership list.
+    const isPartial = req.body.is_partial_sync === true;
+    
+    // Build a map of the server state for quick lookup
+    const serverSquadMap = new Map(existingSquad.map(p => [p.uuid || p.name, p]));
+    const mergedSquad = [];
+       // Process incoming players
     for (const p of incomingSquad) {
-        if (!p.uuid) continue;
-        const serverP = mergedSquadMap.get(p.uuid);
+        const pId = p.uuid || p.name;
+        const serverP = serverSquadMap.get(pId);
 
         const mergeCounts = (incoming, server) => {
             const res = { ...(server || {}) };
@@ -112,10 +115,16 @@ export default async function handler(req, res) {
             matchHistory:    mergeHistory(p.matchHistory, serverP.matchHistory)
         } : p;
 
-        mergedSquadMap.set(p.uuid, mergedP);
+        mergedSquad.push(mergedP);
+        serverSquadMap.delete(pId); // Mark as processed
     }
 
-    const mergedSquad = Array.from(mergedSquadMap.values());
+    // If it's a partial sync, re-add players that weren't modified by the host
+    if (isPartial) {
+        for (const remainingP of serverSquadMap.values()) {
+            mergedSquad.push(remainingP);
+        }
+    }
 
     // ── NORMALIZE: Sync career stats to global 'players' table ──────────────
     // Update the master registry with latest career ratings and achievements.

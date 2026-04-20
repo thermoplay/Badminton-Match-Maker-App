@@ -1236,12 +1236,11 @@ const PlayerMode = {
      */
     async boot(passport, joinCode) {
         this._pruneExpiredSessions();
+        document.body.classList.add('player-mode');
 
         // Clean up previous state if rebooting with a new code
         this._isJoining = false;
         clearInterval(this._statePollTimer);
-
-        window.currentMatches = []; // Clear stale matches to ensure a clean UI state
 
         // 1. Determine room code from URL param or localStorage
         if (!joinCode) {
@@ -1255,7 +1254,17 @@ const PlayerMode = {
         }
         this._joinCode = joinCode;
 
-        // Fetch session metadata first to check for Open Party
+        // Save to recent rooms list
+        if (joinCode) {
+            try {
+                const list = JSON.parse(localStorage.getItem('cs_recent_rooms') || '[]');
+                const filtered = [joinCode, ...list.filter(c => c !== joinCode)];
+                localStorage.setItem('cs_recent_rooms', JSON.stringify(filtered.slice(0, 3)));
+            } catch (e) {}
+        }
+
+        this._fetchedSession = null;
+        // Fetch session metadata first to check for presence and Open Party
         let session = null;
         if (joinCode) {
             try {
@@ -1263,57 +1272,74 @@ const PlayerMode = {
                 if (res.ok) {
                     const data = await res.json();
                     session = data.session || {};
+                    this._fetchedSession = session;
+                    
+                    // Immediate state hydration to prevent UI flicker
+                    if (session.squad)           window.squad          = session.squad;
+                    if (session.current_matches) window.currentMatches = session.current_matches;
+                    if (session.player_queue)    window.playerQueue    = session.player_queue;
+                    if (session.court_names)     window.courtNames     = session.court_names;
                     this._isOpenParty = !!session.is_open_party;
                 }
             } catch (e) {}
         }
 
+        // RECONCILIATION: If we are already in the squad, bypass ALL join logic
+        const inSquad = session && (session.squad || []).some(p => p.uuid === passport.playerUUID);
+        if (inSquad) {
+            console.log('[PlayerMode] Already in squad. Reconnecting seamlessly.');
+            this._markApprovedInSession(joinCode);
+            this._hasSyncedInSquad = true;
+            this._bootUI(passport, joinCode);
+            SidelineView.show();
+            this._subscribeAndPoll(joinCode, passport, session);
+            this.setStatus('approved', `Welcome back, ${passport.playerName}`, "Reconnected ✅");
+            setTimeout(() => this._updateStatus(passport), 500);
+            return;
+        }
+
+
         // 2. Initial UI setup
         this._bootUI(passport, joinCode);
-
-        // Ensure the sideline panel is unhidden and ready to render matches
-        SidelineView.show();
 
         // 3. If no code, prompt user to enter one and stop.
         if (!joinCode) {
             this._promptForCode();
+            SidelineView.show();
             return;
         }
 
-        // Check if player is already in the squad or approved to bypass manual check-in
-        const inSquad = session && (session.squad || []).some(p => p.uuid === passport.playerUUID);
+        // Ensure the sideline panel is visible before network calls to show skeleton/loading
+        SidelineView.show();
+        
+        // Check for approval flag as a secondary fallback
         const isApproved = this._isApprovedInSession(joinCode);
 
-        // RECONCILIATION: If we think we are approved but the session metadata shows 
-        // we are NOT in the squad, it might be a stale approval from a previous session.
-        // We only trigger a hard disconnect if we were previously part of THIS session's active squad.
-        if (session && isApproved && !inSquad && this._hasSyncedInSquad) {
-             console.warn('[PlayerMode] Detected removal from session. Returning to menu.');
-             this._onRemovedFromSession();
-             return;
-        } else if (session && isApproved && !inSquad && !this._hasSyncedInSquad) {
-             // Potential stale approval from another day/instance. Clear it so we go through join flow.
-             console.log('[PlayerMode] Stale approval detected. Re-initiating join flow.');
-             this._clearApprovedInSession(joinCode);
-        }
-
-        // 4. Handle name entry if the player is new
+        // 4. Handle name entry or instant join
         const hasName = !!(passport.playerName && passport.playerName.trim());
+        
         if (!hasName) {
             const name = await this._handleNewPlayerName();
-            if (!name) return; // Player cancelled name entry
-            passport = Passport.get(); // Re-fetch passport with new name
-        } else if (this._isOpenParty && !inSquad) {
-            // LOBBY MODE: If room is open and we have a name, just join instantly.
-            console.log('[Lobby] Public Room detected. Bypassing check-in prompts.');
-            this.setStatus('pending', 'Joining Lobby...', 'Please wait 🔓');
-        } else if (!inSquad && !isApproved) {
-            // PRIVATE MODE: Require a quick check-in only if the room is private.
-            this.setStatus('pending', `Private Match: ${joinCode}`, 'Awaiting approval...');
+            if (!name) return;
+            passport = Passport.get();
         }
 
-        // 5. Core join and sync logic
-        await this._joinAndSync(passport, joinCode);
+        // If Open Party, trigger the join immediately to be snappy
+        if (this._isOpenParty && !inSquad) {
+            this.setStatus('pending', 'Joining...', '🔓 Instant Entry');
+            await this._joinAndSync(passport, joinCode);
+        } else if (!inSquad && !isApproved) {
+            // Only show "Check-in" if we aren't approved and it's not an open party
+            const choice = await this._promptCheckIn(passport, joinCode);
+            if (choice === 'rename') {
+                const name = await this._handleNewPlayerName();
+                if (!name) return;
+                passport = Passport.get();
+            }
+            await this._joinAndSync(passport, joinCode);
+        } else {
+            await this._joinAndSync(passport, joinCode);
+        }
     },
 
     /** Sets up the initial UI elements during boot. */
@@ -1360,66 +1386,27 @@ const PlayerMode = {
     },
 
     /** The core logic for connecting to a session and fetching state. */
-    async _joinAndSync(passport, joinCode) {
+    async _joinAndSync(passport, joinCode, initialSession = null) {
         const panel = document.getElementById('sidelinePanel');
 
-        // PROACTIVE CHECK: Try to fetch session first. If we are already in the squad, 
-        // we can skip the join request entirely. This prevents redundant notifications 
-        // for players the host has already manually added or approved previously.
-        try {
-            const [sessionRes, requestRes] = await Promise.all([
-                fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`),
-                fetch(`/api/play-request?room_code=${encodeURIComponent(joinCode)}`)
-            ]);
+        // Proactive Re-hydration: If metadata fetch in boot already found us, bypass request.
+        const squad = window.squad || [];
+        const inSquad = squad.some(p => p.uuid === passport.playerUUID);
 
-            if (sessionRes.ok) {
-                const data = await sessionRes.json();
-                const session = data.session || {};
-                if (data.global) Passport.hydrate(data.global);
-                const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
-
-                this._isOpenParty = !!session.is_open_party;
-                if (inSquad) this._hasSyncedInSquad = true;
-
-                if (inSquad) {
-                    this._markApprovedInSession(joinCode);
-                    console.log('[PlayerMode] Proactive bypass: already in squad.');
-                    // Ensure spirit animal is synced on reconnection bypass
-                    if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
-                        broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
-                    }
-                    this._clearQueuedState();
-                    this._subscribeAndPoll(joinCode, passport);
-                    this.setStatus('approved', `Welcome back, ${passport.playerName}`, "Reconnected ✅");
-                    if (panel) panel.classList.remove('sl-booting');
-                    SidelineView.show();
-                    SidelineView.refresh();
-                    setTimeout(() => this._updateStatus(passport), 800);
-                    return;
-                }
-            }
-        } catch (e) {}
-
-        // Shortcut: If already approved in this browser session, go straight to live view.
-        if (this._isApprovedInSession(joinCode)) {
+        if (inSquad) {
+            this._markApprovedInSession(joinCode);
+            this._hasSyncedInSquad = true;
+            this._clearQueuedState();
+            this._subscribeAndPoll(joinCode, passport, initialSession || this._fetchedSession);
+            this.setStatus('approved', `Welcome back, ${passport.playerName}`, "Reconnected ✅");
             if (panel) panel.classList.remove('sl-booting');
-            this.setStatus('approved', `Welcome back, ${passport.playerName}`, "You're in the rotation");
-            this._subscribeAndPoll(joinCode, passport);
-            // Re-sync spirit animal on reload to ensure Host/Spectators have it
-            if (passport.spiritAnimal && typeof broadcastSpiritAnimalUpdate === 'function') {
-                broadcastSpiritAnimalUpdate(passport.playerUUID, passport.spiritAnimal);
-            }
+            SidelineView.refresh();
+            setTimeout(() => this._updateStatus(passport), 800);
             return;
         }
         
         // Start polling and show a loading state.
-        this._subscribeAndPoll(joinCode, passport);
-        
-        panel?.classList.remove('sl-booting');
-        this._clearSearchingSpinner();
-        this._hasSyncedInSquad = false; // Reset for new join attempt
-
-        // Atomic Join Request: checks status, inserts request, or confirms active.
+        this._subscribeAndPoll(joinCode, passport, initialSession || this._fetchedSession);
         await this._submitJoinRequest(passport, joinCode, {
             statusMessage: this._isOpenParty ? 'Joining Court…' : 'Connecting to court…',
             statusSubMessage: this._isOpenParty ? 'Instant Entry Enabled 🔓' : 'Verifying session'
@@ -1650,6 +1637,7 @@ const PlayerMode = {
 
         if (payload.squad)           window.squad          = payload.squad;
         if (payload.current_matches) window.currentMatches = payload.current_matches;
+        if (payload.player_queue)    window.playerQueue    = payload.player_queue;
         if (payload.courtNames)      window.courtNames     = payload.courtNames;
 
         this._clearQueuedState();
@@ -1874,8 +1862,10 @@ const PlayerMode = {
         const playing = me ? onCourtNow.has(me.uuid) : false; // Use UUID for lookup
         const inSquad = !!me;
 
-        // The bench is anyone active and not on court.
-        const bench = squad.filter(p => p.active && !onCourtNow.has(p.uuid)); // Use UUID for lookup
+        // Correct Queue Position: follow the authoritative playerQueue order
+        const bench = (window.playerQueue || [])
+            .map(uuid => squad.find(p => p.uuid === uuid))
+            .filter(p => p && p.active && !onCourtNow.has(p.uuid));
         const qPos  = me ? bench.findIndex(p => p.uuid === me.uuid) : -1;
 
         const nextUpRaw = window._lastNextUp || '';
@@ -2031,15 +2021,8 @@ const PlayerMode = {
 
         if (this._isJoining && !force) return;
         this._isJoining = true;
-
-        // UX: Show feedback immediately even in Open Party
-        if (this._isOpenParty) {
-            this.setStatus('pending', 'Checking in...', 'Joining the rotation 🔓');
-        }
-
-        if (!this._isOpenParty) {
-            this.setStatus('pending', statusMessage || 'Request sent!', statusSubMessage || 'Waiting for host to approve… 🏀');
-        }
+          // Generic loading feedback while verifying status
+        this.setStatus('pending', 'Connecting...', '🏀 Courtside Sync');
         console.log('[PlayerMode] Joining with UUID:', passport.playerUUID);
         try {
             const res = await fetch('/api/play-request', {
@@ -2121,6 +2104,14 @@ const PlayerMode = {
                 return;
             }
 
+            // If not active yet and not Open Party, show the request status UI
+            if (!this._isOpenParty) {
+                this.setStatus('pending', statusMessage || 'Request sent!', statusSubMessage || 'Waiting for host to approve… 🏀');
+            } else {
+                // Open party but not active yet? Show a faster transition
+                this.setStatus('pending', 'Joining Rotation...', '🔓 Instant Entry');
+            }
+
             this._showQueuedState(passport.playerName);
             this._isJoining = false;
 
@@ -2135,10 +2126,10 @@ const PlayerMode = {
         return this._submitJoinRequest(passport, joinCode);
     },
 
-    _subscribeAndPoll(joinCode, passport) {
+    _subscribeAndPoll(joinCode, passport, initialSession = null) {
         if (joinCode) window.currentRoomCode = joinCode;
         if (typeof joinOnlineSession === 'function') {
-            joinOnlineSession(joinCode).catch(() => {});
+            joinOnlineSession(joinCode, initialSession).catch(() => {});
         }
         
         // Connectivity Resilience: State Polling Fallback
@@ -2447,7 +2438,7 @@ const PlayerMode = {
         const btn = document.getElementById('slJoinManualCodeBtn');
         if (!btn) return;
         
-        const originalText = btn.textContent;
+        const originalText = btn.dataset.originalText || btn.textContent; // Store original text
         btn.textContent = 'Checking...';
         
         try {
@@ -2466,7 +2457,7 @@ const PlayerMode = {
                 btn.style.background = '#334155';
             }
         } catch (e) {
-            btn.textContent = originalText;
+            btn.textContent = originalText; // Revert on error
         }
     },
 
@@ -2492,7 +2483,7 @@ const PlayerMode = {
             <div class="menu-card">
                 <h2>Navigation</h2>
                 <div style="margin-bottom:20px; display:flex; flex-direction:column; gap:8px;">
-                    <button class="btn-main" style="background:var(--accent); color:#000; height: 54px;" onclick="UIManager.hide(); SidelineView._performRefresh();">🔄 SYNC NOW</button>
+                    <button class="btn-main" style="background:var(--accent); color:#000; height: 54px;" onclick="UIManager.hide(); SidelineView._performRefresh(false);">🔄 SYNC NOW</button>
                     
                     <button class="btn-main" style="background:var(--surface2); color:var(--text); height: 50px;" onclick="PlayerMode.toggleBatterySaver()">
                         🔋 BATTERY SAVER: ${isSaver ? 'ON' : 'OFF'}
