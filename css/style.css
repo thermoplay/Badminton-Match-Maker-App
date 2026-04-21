@@ -611,6 +611,12 @@ input:focus {
 }
 .player-chip.active .wait-round-badge { color: var(--accent); border-color: var(--border-accent); }
 
+.wait-round-badge.high-priority {
+    background: var(--warning);
+    color: #000;
+    border-color: #fff;
+}
+
 /* ── Court Selector (nav bar) ───────────────────────────────────────────── */
 
 .court-selector {
@@ -6223,3 +6229,26 @@ body.session-ended #nextUpTicker {
     color: var(--accent);
     font-weight: 700;
 }
+
+.urgent-tag {
+    font-size: 0.45rem;
+    background: var(--danger);
+    color: #fff;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-left: 4px;
+    vertical-align: middle;
+    animation: sl-pulse 1.5s infinite;
+}
+
+.player-chip.high-priority {
+    border-color: var(--warning);
+    background: linear-gradient(135deg, var(--surface2), rgba(250, 204, 21, 0.05));
+}
+
+.queue-item.high-priority {
+    background: linear-gradient(90deg, rgba(250, 204, 21, 0.05), transparent);
+    border-left: 3px solid var(--warning);
+}
+
+@keyframes sl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }

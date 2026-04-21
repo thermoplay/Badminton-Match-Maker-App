@@ -72,20 +72,23 @@ async function checkAndAwardAchievements(match, squad) {
         if (winners.includes(player)) {
             // Check for 'first_win'
             if (!unlocked.has('first_win') && player.wins === 1) {
-                player.achievements.push('first_win');
+                const newAchs = [...(player.achievements || []), 'first_win'];
                 unlocked.add('first_win');
                 newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'first_win' });
-                unlockAchievement(player.uuid, 'first_win');
+                // Re-inject updated achs into object before local unlock
+                player.achievements = newAchs;
+                unlockAchievement(player.uuid, 'first_win', true); // skipInternal=true
                 showAchievementToast(player.name, Achievements.first_win);
             }
             // Check for 'streak' tiers
             Achievements.streak.tiers.forEach(tier => {
                 const tid = `streak_${tier.id}`;
                 if (!unlocked.has(tid) && player.streak >= tier.count) {
-                    player.achievements.push(tid);
+                    const newAchs = [...(player.achievements || []), tid];
                     unlocked.add(tid);
                     newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: tid });
-                    unlockAchievement(player.uuid, tid);
+                    player.achievements = newAchs;
+                    unlockAchievement(player.uuid, tid, true);
                     showAchievementToast(player.name, { ...tier, icon: Achievements.streak.icon });
                 }
             });
@@ -96,28 +99,31 @@ async function checkAndAwardAchievements(match, squad) {
         Achievements.endurance.tiers.forEach(tier => {
             const tid = `endurance_${tier.id}`;
             if (!unlocked.has(tid) && player.sessionPlayCount >= tier.count) {
-                player.achievements.push(tid);
+                const newAchs = [...(player.achievements || []), tid];
                 unlocked.add(tid);
                 newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: tid });
-                unlockAchievement(player.uuid, tid);
+                player.achievements = newAchs;
+                unlockAchievement(player.uuid, tid, true);
                 showAchievementToast(player.name, { ...tier, icon: Achievements.endurance.icon });
             }
         });
         // Check for 'socialite'
         const uniquePartners = Object.keys(player.partnerStats || {}).length;
         if (!unlocked.has('socialite') && uniquePartners >= 3) {
-            player.achievements.push('socialite');
+            const newAchs = [...(player.achievements || []), 'socialite'];
             unlocked.add('socialite');
-            unlockAchievement(player.uuid, 'socialite');
+            player.achievements = newAchs;
+            unlockAchievement(player.uuid, 'socialite', true);
             newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'socialite' });
             showAchievementToast(player.name, Achievements.socialite);
         }
 
         // Check for 'social_butterfly' (10 Unique Connections)
         if (!unlocked.has('social_butterfly') && uniquePartners >= 10) {
-            player.achievements.push('social_butterfly');
+            const newAchs = [...(player.achievements || []), 'social_butterfly'];
             unlocked.add('social_butterfly');
-            unlockAchievement(player.uuid, 'social_butterfly');
+            player.achievements = newAchs;
+            unlockAchievement(player.uuid, 'social_butterfly', true);
             newlyUnlocked.push({ player_uuid: player.uuid, achievement_id: 'social_butterfly' });
             showAchievementToast(player.name, Achievements.social_butterfly);
         }
@@ -135,7 +141,11 @@ async function checkAndAwardAchievements(match, squad) {
         }
     }
 
-    if (newlyUnlocked.length > 0 && typeof saveToDisk === 'function') saveToDisk();
+    if (newlyUnlocked.length > 0) {
+        // Correctly signal the StateStore that the squad has changed
+        StateStore.set('squad', [...squad]);
+        if (typeof saveToDisk === 'function') saveToDisk();
+    }
     return newlyUnlocked;
 }
 
@@ -163,17 +173,20 @@ async function fetchPlayerAchievements(player_uuid) {
  * @param {string} player_uuid - The UUID of the player.
  * @param {string} achievement_id - The key of the achievement from the Achievements object.
  */
-async function unlockAchievement(player_uuid, achievement_id) {
+async function unlockAchievement(player_uuid, achievement_id, skipInternal = false) {
     if (!player_uuid) return;
 
-    // 1. Update local state
-    if (typeof StateStore !== 'undefined') {
+    // 1. Update local state (only if not already handled by parent loop)
+    if (!skipInternal && typeof StateStore !== 'undefined') {
         const p = StateStore.squad.find(p => p.uuid === player_uuid);
-        if (p) {
-            if (!Array.isArray(p.achievements)) p.achievements = [];
-            if (!p.achievements.includes(achievement_id)) {
-                p.achievements.push(achievement_id);
-                if (typeof saveToDisk === 'function') saveToDisk();
+        const pIdx = StateStore.squad.findIndex(p => p.uuid === player_uuid);
+        if (pIdx !== -1) {
+            const updatedAchs = [...(StateStore.squad[pIdx].achievements || [])];
+            if (!updatedAchs.includes(achievement_id)) {
+                updatedAchs.push(achievement_id);
+                const newSquad = [...StateStore.squad];
+                newSquad[pIdx] = { ...newSquad[pIdx], achievements: updatedAchs };
+                StateStore.set('squad', newSquad);
             }
         }
     }

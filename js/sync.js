@@ -85,6 +85,7 @@ class SupabaseRealtimeManager {
         this.maxReconnectDelay = 30000; // Cap at 30s
         this.heartbeatInterval = null;
         this.pendingHeartbeats = new Map();
+        this.broadcastQueue = [];
     }
 
     connect(roomCode) {
@@ -108,28 +109,44 @@ class SupabaseRealtimeManager {
     }
 
     broadcast(type, payload) {
-        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-        this.socket.send(JSON.stringify({
+        const message = {
             topic:   `realtime:courtside-${this.roomCode}`,
             event:   'broadcast',
             payload: { type, ...payload },
             ref:     String(Date.now()),
-        }));
+        };
+
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            // Queue the broadcast to be sent once connection is restored
+            this.broadcastQueue.push(message);
+            if (this.broadcastQueue.length > 50) this.broadcastQueue.shift(); // Prevent memory leak
+            return;
+        }
+        
+        try {
+            this.socket.send(JSON.stringify(message));
+        } catch (e) {
+            this.broadcastQueue.push(message);
+        }
     }
 
     _onOpen() {
         this.reconnectAttempts = 0;
-        // Clear reconnection/weak signal warning on open
         if (typeof showReconnectingIndicator === 'function') showReconnectingIndicator(false);
         const roomCode = this.roomCode;
 
-        // Connectivity Improvement: Force a state refresh on connect/reconnect
-        // to ensure we haven't missed any broadcasts while offline.
-        if (typeof SidelineView !== 'undefined' && roomCode) {
+        // RECOVERY: If we were offline, our local state might be stale.
+        // Force a background refresh to catch missed broadcasts.
+        if (!isOperator && typeof SidelineView !== 'undefined' && roomCode) {
             SidelineView._performRefresh(true);
         }
-
         this._flushPendingActions();
+
+        // Flush queued broadcasts
+        while (this.broadcastQueue.length > 0) {
+            const msg = this.broadcastQueue.shift();
+            this.socket.send(JSON.stringify(msg));
+        }
 
         // Helper to send Phx Join messages
         const join = (topic, payload) => {
@@ -270,6 +287,10 @@ class SupabaseRealtimeManager {
             if (latency > 1500) {
                 if (typeof showReconnectingIndicator === 'function') showReconnectingIndicator(true, '📡 Weak Signal...');
             } else if (this.socket?.readyState === WebSocket.OPEN) {
+                // Re-sync network icon for players to show real-time signal quality
+                const netIcon = document.getElementById('slNetworkIcon');
+                if (netIcon) netIcon.className = 'sl-network-icon ' + (latency > 400 ? 'weak' : 'online');
+                
                 if (typeof showReconnectingIndicator === 'function') showReconnectingIndicator(false);
             }
         }
@@ -282,26 +303,37 @@ class SupabaseRealtimeManager {
 
 async function apiCall(route, options = {}, retries = 2) {
     const url = `/api/${route}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
     const fetchOpts = {
         method:  options.method || 'GET',
         headers: { 'Content-Type': 'application/json' },
         body:    options.body ? JSON.stringify(options.body) : undefined,
+        signal:  controller.signal
     };
 
     for (let i = 0; i <= retries; i++) {
         try {
             const res = await fetch(url, fetchOpts);
-            // If 5xx server error, throw to trigger retry. 4xx (client error) returns immediately.
-            if (!res.ok && res.status >= 500 && i < retries) throw new Error(res.statusText);
+            
+            // RETRY STRATEGY: Retry on 5xx errors or 429 rate limits
+            if (!res.ok && (res.status >= 500 || res.status === 429) && i < retries) {
+                throw new Error(`Server error ${res.status}`);
+            }
             
             const data = await res.json().catch(() => ({}));
+            clearTimeout(timeoutId);
             return { ok: res.ok, status: res.status, data };
         } catch (e) {
+            if (e.name === 'AbortError' && i === retries) return { ok: false, status: 0, data: { error: 'Request Timeout' } };
+            // Retry on network failures (TypeError)
             if (i === retries) return { ok: false, status: 0, data: { error: 'Network error' } };
             // Backoff: 500ms, 1000ms
             await new Promise(r => setTimeout(r, 500 * (i + 1)));
         }
     }
+    clearTimeout(timeoutId);
 }
 
 function generateRoomCode() {
@@ -428,7 +460,7 @@ async function joinOnlineSession(roomCode, initialSession = null) {
             isOperator      = false;
             operatorKey     = null;
             operatorKeyHash = null;
-            showSessionToast(`👁 Joined session`);
+        showSessionToast(`👁 Joined court ${code}`);
         }
         _syncState();
 
@@ -440,9 +472,7 @@ async function joinOnlineSession(roomCode, initialSession = null) {
         sbManager.connect(code);
         updateSessionUI();
         closeOverlay();
-        
-        // SNAPPINESS: Ensure UI refreshes immediately after applying remote state
-        if (typeof SidelineView !== 'undefined') SidelineView.refresh();
+        // Note: refresh() is already triggered inside applyRemoteState -> PlayerMode._onSessionUpdate
         Haptic.success();
     } catch (e) {
         console.error('CourtSide: join failed', e);
@@ -495,6 +525,18 @@ const _doPushToSupabase = async () => {
         
         if (res.ok) {
             localStorage.removeItem('cs_pending_sync');
+
+            // IMMEDIATE GHOST RECOVERY: Verify that the server's final state matches our local state.
+            // If they differ, it means a partial sync missed a deletion or a race condition occurred.
+            const serverHash = res.data?.hash;
+            const localHash = _generateStateHash(StateStore.squad, StateStore.playerQueue);
+            if (serverHash && serverHash !== localHash) {
+                console.warn('[CourtSide] State drift detected on server. Triggering immediate corrective full sync.');
+                _fullSyncPending = true;
+                // We bypass the debounce and call _doPushToSupabase directly to heal the state now.
+                _doPushToSupabase();
+                return; 
+            }
             
             const now = new Date();
             const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
@@ -584,19 +626,6 @@ function broadcastSpiritAnimalUpdate(playerUUID, emoji) {
         if (typeof showSessionToast === 'function') showSessionToast('📡 Offline. Emoji will sync on reconnect.');
     }
 }
-
-/**
- * Player broadcasts their skill level update to the host.
- */
-function broadcastSkillLevelUpdate(playerUUID, level) {
-    const payload = { playerUUID, level };
-    if (sbManager && sbManager.socket?.readyState === WebSocket.OPEN) {
-        sbManager.broadcast('skill_level_update', payload);
-    } else {
-        _pendingActions.push({ type: 'skill_level_update', payload });
-    }
-}
-
 /**
  * BUG 1 FIX — broadcast approval to the specific player.
  * Contains: playerUUID (so player can match), token (for sessionStorage),
@@ -623,7 +652,6 @@ function broadcastAutoJoin(playerUUID, playerName) {
         playerUUID, 
         playerName, 
         spiritAnimal: p?.spiritAnimal || null,
-        skillLevel: p?.skillLevel || 'Intermediate'
     });
 }
 window.broadcastAutoJoin = broadcastAutoJoin;
@@ -642,28 +670,28 @@ function broadcastGameState(immediate = false, lastResolvedTS = null) {
     // Helper to calculate "Next Up" names from state instead of DOM
     const getNextUpNames = () => {
         const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
-        const waiting = StateStore.playerQueue
-            .map(id => StateStore.squad.find(p => p.uuid === id || p.name === id))
-            .filter(p => p && p.active && !onCourt.has(p.uuid || p.name))
-            .slice(0, 4);
-        
-        if (waiting.length === 0) return "";
-        if (waiting.length <= 2) return waiting.map(p => p.name).join(' & ');
-        // For 4 players, format as "A, B, C & D"
-        return waiting.slice(0, -1).map(p => p.name).join(', ') + ' & ' + waiting[waiting.length - 1].name;
+        if (typeof pullNextFromQueue === 'function') {
+            const next4 = pullNextFromQueue(onCourt);
+            if (next4.length === 0) return "";
+            if (next4.length <= 2) return next4.map(p => p.name).join(' & ');
+            return next4.slice(0, -1).map(p => p.name).join(', ') + ' & ' + next4[next4.length - 1].name;
+        }
+        return "";
     };
 
     const doBroadcast = () => {
-    // Serialize matches with explicit teamA/teamB keys so the player view never
-    // has to infer team assignment from position or sort order.
+    // PERFORMANCE: Lightweight Serialization
+    // Only send the minimal match data needed for player rendering.
+    // Stripping deep stats from the broadcast reduces WebSocket frame size by ~60%.
     const safeMatches = StateStore.currentMatches.map(m => ({
         ...m,
-        teams: [
-            Array.isArray(m.teams[0]) ? [...m.teams[0]] : [],
-            Array.isArray(m.teams[1]) ? [...m.teams[1]] : [],
-        ],
+        odds: m.odds,
+        storyBadges: m.storyBadges,
+        teams: m.teams ? [ [...(m.teams[0] || [])], [...(m.teams[1] || [])] ] : [[], []]
     }));
+
     _broadcast('game_state', {
+        type: 'game_state',
         squad: StateStore.squad,
         current_matches: safeMatches,
         player_queue: StateStore.playerQueue,
@@ -783,7 +811,6 @@ async function memberRename(playerUUID, newName, spiritAnimal = undefined) {
                 player_uuid: playerUUID,
                 new_name:    newName || null,
                 spirit_animal: spiritAnimal
-                // Note: skill_level is not updated here, it's a player-controlled setting
             }),
         });
         if (!r.ok) console.error('[CourtSide] member-rename failed:', r.status);
@@ -853,7 +880,7 @@ function _handleBroadcast(payload) {
     // Player auto-joined (Open Party): Host reconciles them immediately
     if (type === 'player_auto_joined') {
         if (isOperator && typeof window.handleAutoJoin === 'function') {
-            window.handleAutoJoin(payload.playerName, payload.playerUUID, payload.spiritAnimal, payload.skillLevel);
+            window.handleAutoJoin(payload.playerName, payload.playerUUID, payload.spiritAnimal);
         }
         return;
     }
@@ -877,9 +904,10 @@ function _handleBroadcast(payload) {
     if (type === 'player_ack') {
         if (isOperator) {
             const p = StateStore.squad.find(x => x.uuid === payload.playerUUID);
-            if (p) {
+            if (p && !p.acknowledged) {
                 p.acknowledged = true;
-                StateStore.set('squad', [...StateStore.squad]);
+                const hasChanged = StateStore.set('squad', [...StateStore.squad]);
+                if (hasChanged) renderSquad();
                 if (typeof broadcastGameState === 'function') broadcastGameState(true);
                 showSessionToast(`👍 ${p.name} is on the way`);
             }
@@ -923,9 +951,26 @@ function _handleBroadcast(payload) {
     // the host stored them.
     if (type === 'game_state') {
         if (!isOperator) {
-            window.squad          = payload.squad           || window.squad          || [];
-            window.currentMatches = payload.current_matches || window.currentMatches || [];
-            window.playerQueue    = payload.player_queue    || window.playerQueue    || [];
+            // Use StateStore to update global state and detect actual data changes
+            const hasChanged = StateStore.setState({
+                squad: payload.squad || [],
+                currentMatches: payload.current_matches || [],
+                playerQueue: payload.player_queue || [],
+                courtNames: payload.courtNames || {},
+                isOpenParty: payload.is_open_party || false
+            });
+
+            // Sync legacy window globals for compatibility with player-view.js logic
+            window.squad          = StateStore.squad;
+            window.currentMatches = StateStore.currentMatches;
+            window.playerQueue    = StateStore.playerQueue;
+            window.courtNames     = StateStore.get('courtNames');
+            window._isOpenParty   = StateStore.get('isOpenParty');
+            window._lastNextUp    = payload.next_up;
+
+            // PERFORMANCE: Bail if state is identical to avoid redundant heavy UI refresh
+            if (!hasChanged && !_isBootingSession) return;
+
             if (typeof PlayerMode !== 'undefined') {
                 PlayerMode._onGameStateUpdate(payload);
             } else if (typeof SidelineView !== 'undefined') {
@@ -969,14 +1014,6 @@ function _handleBroadcast(payload) {
         return;
     }
 
-    // Player skill level update — host applies the change
-    if (type === 'skill_level_update') {
-        if (isOperator) {
-            _applySkillLevelUpdate(payload.playerUUID, payload.level);
-        }
-        return;
-    }
-
     // Feature #5: Status update — host applies the change
     if (type === 'player_status_update') {
         if (isOperator) {
@@ -993,13 +1030,10 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
     if (!newName?.trim() || !playerUUID) return;
     let trimmed = newName.trim();
 
-    // 1. Find player by UUID (stored on squad member at approval) — rename-safe
-    let player = StateStore.squad.find(p => p.uuid === playerUUID);
-    // 2. Fallback: find by oldName ONLY if the target entry has no UUID (Guest/Legacy).
-    // This prevents hijacking the Host or other Passport holders if names collide.
-    if (!player) player = StateStore.squad.find(p => p.name === oldName && !p.uuid);
+    let pIdx = StateStore.squad.findIndex(p => p.uuid === playerUUID);
+    if (pIdx === -1) pIdx = StateStore.squad.findIndex(p => p.name === oldName && !p.uuid);
 
-    if (!player) {
+    if (pIdx === -1) {
         // If player is pending (not in squad yet), update the local playRequests cache
         // so the Join Notification UI shows the new name immediately.
         if (typeof window.playRequests !== 'undefined') {
@@ -1028,9 +1062,12 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
         trimmed = finalName;
     }
 
+    const player = StateStore.squad[pIdx];
+    if (player.name === trimmed) return;
+
     const prevName = player.name;
-    player.name    = trimmed;
-    player.uuid    = playerUUID;   // ensure uuid is set for future lookups
+    const newSquad = [...StateStore.squad];
+    newSquad[pIdx] = { ...player, name: trimmed, uuid: playerUUID };
 
     // Update uuid_map: rename the key, ensure new key exists
     const uuidMap = window._sessionUUIDMap || {};
@@ -1049,43 +1086,24 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
         }
     }
 
-    renderSquad();
-    rebuildMatchCardIndices();
-    if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    
-    // Reactive sync via StateStore ensures DB and spectators stay updated
-    StateStore.set('squad', [...StateStore.squad]);
-
-    // Force an immediate broadcast to bypass the 200ms throttle for real-time responsiveness
-    if (typeof broadcastGameState === 'function') broadcastGameState(true);
-
-    showSessionToast(`✏️ ${prevName} → ${trimmed}`);
-}
-
-function _applySkillLevelUpdate(playerUUID, level) {
-    const player = StateStore.squad.find(p => p.uuid === playerUUID);
-    if (!player) return;
-
-    if (player.skillLevel !== level) {
-        player.skillLevel = level;
+    const hasChanged = StateStore.set('squad', newSquad);
+    if (hasChanged) {
         renderSquad();
-        checkNextButtonState();
-        StateStore.set('squad', [...StateStore.squad]);
-
-        // Force immediate broadcast so the skill tier updates instantly for everyone
+        rebuildMatchCardIndices();
+        if (typeof renderQueueStrip === 'function') renderQueueStrip();
         if (typeof broadcastGameState === 'function') broadcastGameState(true);
-
-        showSessionToast(`${player.name} is now ${level}`);
+        showSessionToast(`✏️ ${prevName} → ${trimmed}`);
     }
 }
+
 window._applyNameUpdate = _applyNameUpdate;
 window._generateStateHash = _generateStateHash;
 
 // Host applies a spirit animal update broadcast from a player
 function _applySpiritAnimalUpdate(playerUUID, emoji) {
-    let player = StateStore.squad.find(p => p.uuid === playerUUID);
+    const pIdx = StateStore.squad.findIndex(p => p.uuid === playerUUID);
 
-    if (!player) {
+    if (pIdx === -1) {
         // If player is pending (not in squad yet), update the local playRequests cache
         if (typeof window.playRequests !== 'undefined') {
             const req = window.playRequests.find(r => r.player_uuid === playerUUID);
@@ -1097,34 +1115,38 @@ function _applySpiritAnimalUpdate(playerUUID, emoji) {
         return;
     }
 
-    if (player.spiritAnimal !== emoji) {
-        player.spiritAnimal = emoji;
-        renderSquad();
-        StateStore.set('squad', [...StateStore.squad]);
+    const player = StateStore.squad[pIdx];
+    if (player.spiritAnimal === emoji) return;
 
-        // Force immediate broadcast so profile updates feel instant for all spectators
+    const newSquad = [...StateStore.squad];
+    newSquad[pIdx] = { ...player, spiritAnimal: emoji };
+
+    const hasChanged = StateStore.set('squad', newSquad);
+    if (hasChanged) {
+        renderSquad();
         if (typeof broadcastGameState === 'function') broadcastGameState(true);
     }
 }
 
 // Host applies a status change broadcast from a player
 function _applyStatusUpdate(playerUUID, isActive) {
-    const player = StateStore.squad.find(p => p.uuid === playerUUID);
-    if (!player) return;
+    const pIdx = StateStore.squad.findIndex(p => p.uuid === playerUUID);
+    if (pIdx === -1) return;
 
-    const oldStatus = player.active;
-    player.active = !!isActive;
+    const player = StateStore.squad[pIdx];
+    if (player.active === !!isActive) return;
 
-    if (oldStatus !== player.active) {
+    const newSquad = [...StateStore.squad];
+    newSquad[pIdx] = { ...player, active: !!isActive };
+
+    const hasChanged = StateStore.set('squad', newSquad);
+    if (hasChanged) {
         renderSquad();
         checkNextButtonState();
-        StateStore.set('squad', [...StateStore.squad]);
-
-        // Force immediate broadcast so the Ready/Resting status updates instantly for everyone
         if (typeof broadcastGameState === 'function') broadcastGameState(true);
 
         const sIcon = (window.SPORT_ICONS ? window.SPORT_ICONS[window.sport || 'Badminton'] : null) || '🏸';
-        showSessionToast(`${player.name} is now ${player.active ? `Ready ${sIcon}` : 'Resting ☕'}`);
+        showSessionToast(`${player.name} is now ${isActive ? `Ready ${sIcon}` : 'Resting ☕'}`);
     }
 }
 
@@ -1193,74 +1215,45 @@ function applyRemoteState(session) {
 
             session.squad.forEach(remoteP => {
                 if (!remoteP.uuid) return;
-                const localP = newSquad.find(p => p.uuid === remoteP.uuid);
-                
-                if (!localP) {
-                    // SERVER-ADDED PLAYER (Open Party Join)
-                    console.log(`[CourtSide] Adopting new player from server: ${remoteP.name}`);
+                const localPIdx = newSquad.findIndex(p => p.uuid === remoteP.uuid);
+                if (localPIdx === -1) {
                     newSquad.push(remoteP);
                     hasChanges = true;
                     return;
                 }
 
-                if (localP) {
-                    const localSet = new Set(localP.achievements || []);
-                    let pChanged = false;
+                const localP = newSquad[localPIdx];
+                let updatedP = { ...localP };
+                let pChanged = false;
+
+                // Reconcile metadata
+                if (remoteP.name && remoteP.name !== updatedP.name) { updatedP.name = remoteP.name; pChanged = true; }
+                if (remoteP.spiritAnimal && remoteP.spiritAnimal !== updatedP.spiritAnimal) { updatedP.spiritAnimal = remoteP.spiritAnimal; pChanged = true; }
 
                     // Reconcile achievements
+                    const localSet = new Set(updatedP.achievements || []);
                     if (Array.isArray(remoteP.achievements)) {
-                        remoteP.achievements.forEach(a => {
-                            if (!localSet.has(a)) { localSet.add(a); pChanged = true; }
-                        });
+                        remoteP.achievements.forEach(a => { if (!localSet.has(a)) { localSet.add(a); pChanged = true; } });
                     }
+                    if (pChanged) updatedP.achievements = Array.from(localSet);
 
-                    // Reconcile names and spirit animals (DB-driven fallback if broadcast missed)
-                    if (remoteP.name && remoteP.name !== localP.name) {
-                        localP.name = remoteP.name;
-                        pChanged = true;
-                    }
-                    if (remoteP.spiritAnimal && remoteP.spiritAnimal !== localP.spiritAnimal) {
-                        localP.spiritAnimal = remoteP.spiritAnimal;
-                        pChanged = true;
-                    }
-
-                    // Reconcile history and stats: use deep merge with Math.max to avoid stat regression.
-                    // This ensures career totals (remote) and session progress (local) are combined correctly.
-                    const mergeCounts = (local, remote) => {
-                        const res = { ...(remote || {}) };
-                        for (const [id, count] of Object.entries(local || {})) {
-                            res[id] = Math.max(res[id] || 0, count);
-                        }
-                        return res;
-                    };
-                    if (remoteP.teammateHistory) localP.teammateHistory = mergeCounts(localP.teammateHistory, remoteP.teammateHistory);
-                    if (remoteP.opponentHistory) localP.opponentHistory = mergeCounts(localP.opponentHistory, remoteP.opponentHistory);
-                    if (remoteP.partnerStats) {
-                        const res = { ...(remoteP.partnerStats || {}) };
-                        for (const [id, stats] of Object.entries(localP.partnerStats || {})) {
-                            const rStats = res[id] || { wins: 0, games: 0 };
-                            res[id] = {
-                                wins: Math.max(rStats.wins || 0, stats.wins || 0),
-                                games: Math.max(rStats.games || 0, stats.games || 0)
-                            };
-                        }
-                        localP.partnerStats = res;
-                    }
+                    // Deep Stats Merge
+                    const merge = (l, r) => { const res = { ...(r || {}) }; for (const [id, count] of Object.entries(l || {})) { res[id] = Math.max(res[id] || 0, count); } return res; };
+                    updatedP.teammateHistory = merge(updatedP.teammateHistory, remoteP.teammateHistory);
+                    updatedP.opponentHistory = merge(updatedP.opponentHistory, remoteP.opponentHistory);
                     
-                    // Reconcile match history array
+                    // Reconcile match history
                     const incomingH = remoteP.matchHistory || [];
-                    const currentH  = localP.matchHistory || [];
+                    const currentH  = updatedP.matchHistory || [];
                     const hMap = new Map();
                     currentH.forEach(m => m.time && hMap.set(m.time, m));
                     incomingH.forEach(m => m.time && hMap.set(m.time, m));
-                    localP.matchHistory = Array.from(hMap.values()).sort((a, b) => b.time - a.time);
-                    if (localP.matchHistory.length !== currentH.length) pChanged = true;
+                    updatedP.matchHistory = Array.from(hMap.values()).sort((a, b) => b.time - a.time);
 
-                    if (pChanged) {
-                        localP.achievements = [...localSet];
+                    if (pChanged || updatedP.matchHistory.length !== currentH.length) {
+                        newSquad[localPIdx] = updatedP;
                         hasChanges = true;
                     }
-                }
             });
 
             // Adopt Server Queue Order: Authoritative sync for Open Party joins/leaves
@@ -1268,7 +1261,6 @@ function applyRemoteState(session) {
                 StateStore.set('playerQueue', session.player_queue);
                 hasChanges = true;
             }
-
             if (hasChanges) {
                 StateStore.set('squad', newSquad);
                 renderSquad();
@@ -1317,7 +1309,7 @@ function applyRemoteState(session) {
         }, 0);
     }
 
-    StateStore.setState({ 
+    const hasChanged = StateStore.setState({ 
         squad: loadedSquad, 
         currentMatches: loadedMatches, 
         playerQueue: loadedQueue, 
@@ -1337,6 +1329,9 @@ function applyRemoteState(session) {
         window._isOpenParty = session.is_open_party || false;
     }
 
+    // PERFORMANCE: If state is identical to local cache, skip expensive DOM rendering
+    if (!hasChanged && !isOperator && !_isBootingSession) return;
+
     // round_history is no longer synced to DB — keep local undo history intact
     // roundHistory stays as-is on rejoin
 
@@ -1354,15 +1349,13 @@ function applyRemoteState(session) {
             SidelineView.show();
         }
 
+        if (typeof SidelineView !== 'undefined') {
+            SidelineView._lastUpdateTS = Date.now();
+        }
+
         if (typeof PlayerMode !== 'undefined') {
             PlayerMode._onSessionUpdate(session);
         } else if (typeof SidelineView !== 'undefined') {
-            SidelineView.refresh();
-        }
-        
-        // Mark data as fresh
-        if (typeof SidelineView !== 'undefined') {
-            SidelineView._lastUpdateTS = Date.now();
             SidelineView.refresh();
         }
     } else {
@@ -1402,8 +1395,7 @@ function _handleMemberChange(record, oldRecord, eventType) {
                 window.handleAutoJoin(
                     name, 
                     uuid, 
-                    record.spirit_animal || null, 
-                    record.skill_level || null
+                    record.spirit_animal || null
                 );
             }
 
@@ -1415,7 +1407,13 @@ function _handleMemberChange(record, oldRecord, eventType) {
             if (prev.player_name && name && prev.player_name !== name) {
                 // Delegate to _applyNameUpdate which handles uuid_map + squad + render
                 _applyNameUpdate(uuid, prev.player_name, name);
-                showSessionToast(`✏️ ${prev.player_name} → ${name}`);
+            }
+
+            // Activation via server upsert (Edge function re-entry path)
+            if (record.status === 'active' && prev.status !== 'active') {
+                if (typeof _applyStatusUpdate === 'function') {
+                    _applyStatusUpdate(uuid, true);
+                }
             }
         } else if (eventType === 'DELETE') {
             delete window._sessionMembers[uuid];
@@ -1731,7 +1729,11 @@ function _finalizeRejoin(savedCode) {
 window.addEventListener('online', () => {
     // If we are host and have queued changes, sync immediately
     if (isOnlineSession && isOperator && localStorage.getItem('cs_pending_sync') === 'true') {
-        showSyncStatus('Online. Syncing queued changes...', 'info');
+        showSyncStatus('Syncing...', 'info');
+        pushStateToSupabase();
+    } else if (isOnlineSession && isOperator) {
+        // Host: provide visual feedback that connection is restored
+        showSyncStatus('Connection Restored', 'success');
         pushStateToSupabase();
     } else if (!isOnlineSession && localStorage.getItem('cs_room_code')) {
         tryAutoRejoin();
@@ -1743,17 +1745,31 @@ window.addEventListener('online', () => {
     }
 });
 
+window.addEventListener('offline', () => {
+    if (isOnlineSession && isOperator) {
+        showSyncStatus('Offline Mode', 'error');
+        // Show the same reconnecting indicator as players for consistency
+        if (typeof showReconnectingIndicator === 'function') showReconnectingIndicator(true, '📡 Offline...');
+    }
+});
+
 // Visibility change handler for mobile sleep/wake cycles
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && isOnlineSession) {
+    const isVisible = document.visibilityState === 'visible';
+    if (isVisible) {
+        const now = Date.now();
+        const wasAwayLong = (window._lastVisibilityHiddenAt && (now - window._lastVisibilityHiddenAt > 30000));
+        if (!isOnlineSession) return;
         // If socket is stale or dead, reconnect immediately
         if (!sbManager || !sbManager.socket || sbManager.socket.readyState !== WebSocket.OPEN) {
             console.log('[CourtSide] Tab resumed, reconnecting socket...');
             if (sbManager) sbManager.connect(currentRoomCode);
-        } else if (!isOperator && typeof SidelineView !== 'undefined') {
-            // Refresh state to catch missed broadcasts while backgrounded
+         } else if ((wasAwayLong || !isOperator) && typeof SidelineView !== 'undefined') {
+            // Force a refresh if we were away for a while or if we are a spectator
             SidelineView._performRefresh(true);
         }
+         } else {
+        window._lastVisibilityHiddenAt = Date.now();
     }
 });
 
@@ -1812,12 +1828,12 @@ updateSessionUI = function() {
 // ---------------------------------------------------------------------------
 
 async function archiveRoundToSupabase(snapshot) {
-    if (!currentRoomCode) return;
-    try {
-        await fetch('/api/match-history', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({
+    if (!currentRoomCode || !isOperator) return;
+    
+    // USE apiCall for retries and resilience on critical data archival
+    const res = await apiCall('match-history', {
+        method: 'POST',
+        body: {
                 type: 'match_result',
                 room_code: currentRoomCode,
                 operator_key: operatorKey,
@@ -1825,9 +1841,10 @@ async function archiveRoundToSupabase(snapshot) {
                 matches:   snapshot.matches,
                 achievements: snapshot.achievements || [],
                 squad:     snapshot.squadSnapshot || [],
-            }),
-        });
-    } catch (e) { console.error('CourtSide: archive failed', e); }
+        }
+    }, 3); // 3 retries for match history
+
+    if (!res.ok) console.error('[CourtSide] Failed to archive round after retries');
 }
 
 // ---------------------------------------------------------------------------

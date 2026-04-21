@@ -30,6 +30,19 @@ async function sbFetch(path, options = {}) {
     }
 }
 
+function generateStateHash(squad, queue) {
+    // Matches the algorithm in js/sync.js for consistency
+    const s = (squad || []).map(p => (p.uuid || p.name) + (p.active ? '1' : '0')).sort().join('');
+    const q = (queue || []).join(',');
+    const str = `${s}|${q}`;
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash).toString(36);
+}
+
 export default async function handler(req, res) {
     // 1. Handle CORS
     res.setHeader('Access-Control-Allow-Credentials', true);
@@ -166,5 +179,9 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Update failed' });
     }
 
-    return res.status(200).json({ updated: true });
+    return res.status(200).json({ 
+        updated: true,
+        hash: generateStateHash(mergedSquad, req.body.player_queue),
+        is_partial: isPartial
+    });
 }

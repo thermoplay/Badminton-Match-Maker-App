@@ -15,15 +15,23 @@ let _lastSquadForCache = null;
 /** Finds a player object by UUID or Name. Returns undefined if not found. */
 function findP(id) {
     if (!id) return undefined;
-    // Ensure we check for squad array length changes or reference changes
-    if (_lastSquadForCache !== StateStore.squad || _findPCache.size === 0) {
-        _findPCache = new Map();
-        StateStore.squad.forEach(p => {
-            if (p.uuid) _findPCache.set(p.uuid, p);
-            _findPCache.set(p.name, p); // Always map name for Guest lookups
-        });
-        _lastSquadForCache = StateStore.squad;
+
+    // PERFORMANCE: Optimized incremental cache. Only rebuild if squad reference actually changes.
+    if (_lastSquadForCache === StateStore.squad && _findPCache.has(id)) {
+        return _findPCache.get(id);
     }
+
+    // Rebuild cache
+    _findPCache.clear();
+    const squad = StateStore.squad;
+    for (let i = 0; i < squad.length; i++) {
+        const p = squad[i];
+        if (p.uuid) _findPCache.set(p.uuid, p);
+        // Map name only if UUID isn't already used as the key to prevent collisions
+        if (p.name) _findPCache.set(p.name, p); 
+    }
+    _lastSquadForCache = squad;
+
     return _findPCache.get(id);
 }
 
@@ -33,17 +41,7 @@ function findP(id) {
 
 // Calculates match odds based on sum of skill weights
 function calculateOdds(teamA, teamB) {
-    const getWeight = p => window.getSkillWeight ? window.getSkillWeight(p) : 2;
-    const sumA = teamA.reduce((s, p) => s + getWeight(p), 0);
-    const sumB = teamB.reduce((s, p) => s + getWeight(p), 0);
-
-    if (sumA === sumB) return [50, 50];
-    
-    // Simple probability based on relative strength.
-    // Higher sum means stronger team.
-    const totalWeight = sumA + sumB;
-    const probA = Math.round((sumA / totalWeight) * 100);
-    return [probA, 100 - probA];
+    return [50, 50]; // Removed skill-based odds
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +179,7 @@ function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     if (cardEl) {
         const newCardEl = buildMatchCard(mIdx, tA, tB, newMatch.odds, newMatch.startedAt, newMatch.storyBadges);
         newCardEl.classList.add('card-replace');
-        newCardEl.classList.remove('card-entering');
+        if (newCardEl.classList) newCardEl.classList.remove('card-entering');
         cardEl.replaceWith(newCardEl);
     } else {
         rebuildMatchCardIndices();
@@ -385,7 +383,7 @@ function initQueue() {
     }).map(p => p.uuid || p.name);
 
     const finalQueue = [...new Set([...currentQueue, ...newcomers])];
-    StateStore.set('playerQueue', finalQueue);
+    return StateStore.set('playerQueue', finalQueue);
 }
 
 // ---------------------------------------------------------------------------
@@ -494,18 +492,32 @@ function scoreGroup(g) {
         { tA: [g[0], g[2]], tB: [g[1], g[3]] },
         { tA: [g[0], g[1]], tB: [g[2], g[3]] },
     ];
-    return Math.min(...splits.map(s => scoreSplit(s.tA, s.tB)));
+    const varietyScore = Math.min(...splits.map(s => scoreSplit(s.tA, s.tB)));
+
+    // QUEUE FAIRNESS: Account for waitRounds to prevent skipping players at
+    // the front of the queue who might otherwise be skipped due to high history scores.
+    const totalWait = g.reduce((sum, p) => sum + (p.waitRounds || 0), 0);
+
+    // Variety score is low (typically 0-8). A weight of 5 ensures that waiting
+    // one extra round is more important than avoiding a repeat partnership (2-4 pts).
+    return varietyScore - (totalWait * 5);
 }
 
 // Generate all C(n, 4) combinations from an array
 function combinations4(arr) {
     const out = [];
     const n = arr.length;
-    for (let a = 0;     a < n - 3; a++)
-    for (let b = a + 1; b < n - 2; b++)
-    for (let c = b + 1; c < n - 1; c++)
-    for (let d = c + 1; d < n;     d++)
-        out.push([arr[a], arr[b], arr[c], arr[d]]);
+    for (let a = 0; a < n - 3; a++) {
+        for (let b = a + 1; b < n - 2; b++) {
+            for (let c = b + 1; c < n - 1; c++) {
+                for (let d = c + 1; d < n; d++) {
+                    out.push([arr[a], arr[b], arr[c], arr[d]]);
+                    // SAFETY CAP: Prevent browser hang on massive candidate pools
+                    if (out.length > 500) return out; 
+                }
+            }
+        }
+    }
     return out;
 }
 
@@ -525,7 +537,7 @@ function getCandidatePool(onCourt) {
         squadIds.has(String(id).toLowerCase())
     );
     if (sanitizedQueue.length !== StateStore.playerQueue.length) {
-               StateStore.playerQueue = sanitizedQueue;
+        StateStore.set('playerQueue', sanitizedQueue);
     }
 
     for (const uuid of sanitizedQueue) {
@@ -569,8 +581,8 @@ function pullNextFromQueue(onCourt) {
 
 // Build a match object from 4 player objects, applying best-split pairing.
 function buildMatchFromPlayers(p4) {
-    // Sort by skill level (Advanced > Intermediate > Novice) for a structured snake draft
-    p4.sort((a, b) => (window.getSkillIndex?.(b) - window.getSkillIndex?.(a)) || Math.random() - 0.5);
+    // No skill sort needed; randomize candidates within the group of 4
+    p4.sort(() => Math.random() - 0.5);
 
     // All 3 team splits — pick the freshest
     const splits = [
@@ -579,19 +591,9 @@ function buildMatchFromPlayers(p4) {
         { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
     ];
 
-    // Balance-First Sort: Prioritize splits where the weight difference is smallest.
-    // Tie-break with Variety (freshest matchup).
-    const fMult = StateStore.get('fairnessMultiplier') ?? 5;
-
-    splits.sort((a, b) => {
-        const balanceA = Math.abs(calculateOdds(a.tA, a.tB)[0] - 50);
-        const balanceB = Math.abs(calculateOdds(b.tA, b.tB)[0] - 50);
-
-        const scoreA = (balanceA * fMult) + scoreSplit(a.tA, a.tB);
-        const scoreB = (balanceB * fMult) + scoreSplit(b.tA, b.tB);
-        
-        return scoreA - scoreB;
-    });
+    // SOCIAL VARIETY OPTIMIZATION:
+    // Prioritize the team split that results in the lowest history score (freshest matchup).
+    splits.sort((a, b) => scoreSplit(a.tA, a.tB) - scoreSplit(b.tA, b.tB));
 
     const { tA, tB } = splits[0];
     const odds = calculateOdds(tA, tB);
@@ -756,7 +758,21 @@ function renderQueueStrip() {
     strip.style.display = 'block';
     strip.classList.remove('animating');
 
-    const openSlots = Math.max(0, StateStore.get('activeCourts') * 4 - onCourt.size);
+    // Determine which players the algorithm will pick next for ALL open courts
+    const openSpots = Math.max(0, StateStore.get('activeCourts') * 4 - onCourt.size);
+    const predictedNext = [];
+    if (openSpots > 0) {
+        const tempOnCourt = new Set(onCourt);
+        // Predicted selection loop: identifies EXACT selections based on current engine logic
+        for (let i = 0; i < Math.ceil(openSpots / 4); i++) {
+            const next4 = pullNextFromQueue(tempOnCourt);
+            if (next4.length === 0) break;
+            predictedNext.push(...next4);
+            next4.forEach(p => tempOnCourt.add(p.uuid || p.name));
+        }
+    }
+    const predictedUUIDs = new Set(predictedNext.map(p => p.uuid || p.name));
+
     const currentQueueUUIDs = new Set();
     const fragment = document.createDocumentFragment();
     const existingQueueItems = new Map();
@@ -778,13 +794,19 @@ function renderQueueStrip() {
 
     waiting.forEach((p, idx) => {
         currentQueueUUIDs.add(p.uuid);
+        const isHighPriority = p.waitRounds >= 3;
+        const isNext = predictedUUIDs.has(p.uuid || p.name);
+        const waitBadge = p.waitRounds > 0 ? `<span class="wait-round-badge ${isHighPriority ? 'high-priority' : ''}">${p.waitRounds}</span>` : '';
         const itemContent = `
             <span class="queue-pos">${idx + 1}</span>
-            ${Avatar.html(p.name, p.spiritAnimal)}
+            <div style="position:relative; flex-shrink:0;">
+                ${Avatar.html(p.name, p.spiritAnimal)}
+                ${waitBadge}
+            </div>
             <span class="queue-name">${escapeHTML(p.name)}</span>
-            ${idx < openSlots ? '<span class="queue-next-badge">NEXT</span>' : ''}
+            ${isNext ? '<span class="queue-next-badge">NEXT</span>' : ''}
         `;
-        const itemClasses = `queue-item ${idx < openSlots ? 'queue-item-next' : ''}`;
+        const itemClasses = `queue-item ${isNext ? 'queue-item-next' : ''} ${isHighPriority ? 'high-priority' : ''}`;
 
         let item = existingQueueItems.get(p.uuid);
 

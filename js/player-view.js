@@ -18,6 +18,18 @@ const SidelineView = {
     _visible: false,
     _currentTab: 'live',
     _lastUpdateTS: 0,
+    _squadMapCache: new Map(),
+    _lastSquadRef: null,
+
+    /** Returns a memoized Map of the squad for $O(1)$ lookups. */
+    _getSquadMap() {
+        const squad = window.squad || [];
+        if (squad === this._lastSquadRef) return this._squadMapCache;
+        
+        this._squadMapCache = new Map(squad.map(p => [p.uuid, p]));
+        this._lastSquadRef = squad;
+        return this._squadMapCache;
+    },
 
     show() {
         this._visible = true;
@@ -80,8 +92,7 @@ const SidelineView = {
                 : `<span class="sl-live-dot" style="background:#60a5fa"></span> LIVE VIEW`;
         }
 
-        const squad = window.squad || [];
-        const squadMap = new Map(squad.map(p => [p.uuid, p]));
+        const squadMap = this._getSquadMap();
         const myUUID = passport.playerUUID;
 
         this._renderCourtMap(squadMap, myUUID);
@@ -149,13 +160,9 @@ const SidelineView = {
 
         container.style.display = 'flex';
 
-        // Defensive: Reconstruct data if not provided (direct call safety)
-        if (!squadMap) {
-            const squad = window.squad || [];
-            squadMap = new Map(squad.map(p => [p.uuid, p]));
-            const p = Passport.get();
-            myUUID = p ? p.playerUUID : null;
-        }
+        // Defensive: Use memoized lookup source
+        if (!squadMap) squadMap = this._getSquadMap();
+        if (!myUUID) myUUID = Passport.get()?.playerUUID;
 
         const findP = (uuid) => squadMap.get(uuid);
 
@@ -227,13 +234,9 @@ const SidelineView = {
 
         const courtNames = window.courtNames || {};
 
-        // Defensive: Reconstruct data if not provided (direct call safety)
-        if (!squadMap) {
-            const squad = window.squad || [];
-            squadMap = new Map(squad.map(p => [p.uuid, p]));
-            const p = Passport.get();
-            myUUID = p ? p.playerUUID : null;
-        }
+        // Defensive: Use memoized lookup source
+        if (!squadMap) squadMap = this._getSquadMap();
+        if (!myUUID) myUUID = Passport.get()?.playerUUID;
 
         const findP = (uuid) => squadMap.get(uuid);
 
@@ -304,13 +307,13 @@ const SidelineView = {
     openMatchPreview(idx) {
         const match = (window.currentMatches || [])[idx];
         if (!match) return;
-        const squad = window.squad || [];
+        const squadMap = this._getSquadMap();
         const passport = Passport.get();
         const myUUID = passport?.playerUUID;
 
         // Helpers to get stats
         const getStats = (teamUUIDs) => {
-            const players = teamUUIDs.map(id => squad.find(p => p.uuid === id)).filter(Boolean);
+            const players = teamUUIDs.map(id => squadMap.get(id)).filter(Boolean);
             if (players.length === 0) return { wr: 0, streak: 0, games: 0 };
             
             const totalWins = players.reduce((sum, p) => sum + p.wins, 0);
@@ -328,7 +331,7 @@ const SidelineView = {
         const odds = match.odds || [50, 50];
 
         const renderNames = (arr) => arr.map(uuid => {
-            const p = squad.find(x => x.uuid === uuid);
+            const p = squadMap.get(uuid);
             const name = p ? p.name : 'Unknown';
             const isMe = myUUID && uuid === myUUID;
             return isMe ? `<strong style="color: var(--accent);">${this._esc(name)}</strong>` : this._esc(name);
@@ -490,13 +493,9 @@ const SidelineView = {
         const passport = Passport.get();
         if (!passport) return;
 
-        // Defensive: If squadMap wasn't provided (e.g. direct call), 
-        // reconstruct it from current global state.
-        if (!squadMap) {
-            const squad = window.squad || [];
-            squadMap = new Map(squad.map(p => [p.uuid, p]));
-            myUUID = passport.playerUUID;
-        }
+        // Defensive: Use memoized lookup source
+        if (!squadMap) squadMap = this._getSquadMap();
+        if (!myUUID) myUUID = passport.playerUUID;
 
         const me = squadMap.get(myUUID);
         const profileView = document.getElementById('slViewProfile');
@@ -566,7 +565,6 @@ const SidelineView = {
             <div class="sl-profile-card">
                 <div class="sl-profile-top-left" style="display:flex; gap:8px;">
                     <button class="sl-icon-btn" onclick="PlayerMode.pickSpiritAnimal()" title="Set Spirit Animal">${emoji || '🐾'}</button>
-                    <button class="sl-icon-btn" onclick="PlayerMode.openSkillLevelPicker()" title="Set Skill Level">⚖️</button>
                 </div>
                 <div class="sl-profile-top-right">
                     <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
@@ -663,7 +661,6 @@ const SidelineView = {
             const cWins  = career.wins || 0;
             const cGames = career.games || 0;
             const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-            const skillLevel = passport.skillLevel || (me ? me.skillLevel : 'Intermediate') || 'Intermediate';
             
             let sWins = 0, sGames = 0, sWr = 0;
             if (me) {
@@ -707,15 +704,6 @@ const SidelineView = {
                                 <div class="sl-card-val">${cWr}%</div>
                                 <div class="sl-card-key">WIN RATE</div>
                             </div>
-                            <div class="sl-card-item" onclick="PlayerMode.openSkillLevelPicker()" style="cursor:pointer;">
-                                <div class="sl-card-val" style="font-size:0.75rem; margin-top:2px;">
-                                    <span class="skill-badge skill-${skillLevel.toLowerCase()}">
-                                        ${skillLevel === 'Novice' ? '🌱 NOVICE' : skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER'}
-                                    </span>
-                                </div>
-                                <div class="sl-card-key">SKILL LEVEL</div>
-                            </div>
-                        </div>
                     </div>
                 </div>`;
             if (deck.innerHTML.trim() !== newDeckHTML.trim()) {
@@ -1144,6 +1132,8 @@ const PlayerMode = {
     _statePollTimer: null,
     _isOpenParty: false,
     _hasSyncedInSquad: false, // Prevents premature kick detection during join flow
+    _kickGraceCount: 0,
+    _lastStateHash: null,
 
     resetAndTryAgain() {
         this._joinCode = null;
@@ -1163,7 +1153,7 @@ const PlayerMode = {
 
                 // 1. Calculate local recap before state is cleared
                 const squad = window.squad || [];
-                const sorted = [...squad].sort((a,b) => b.wins - a.wins || (window.getSkillIndex?.(b) - window.getSkillIndex?.(a)));
+                const sorted = [...squad].sort((a,b) => b.wins - a.wins);
                 const mvp = sorted[0] || { name: 'N/A', wins: 0, games: 0 };
                 const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
                 const ironMan = sortedByGames[0] || { name: 'N/A', sessionPlayCount: 0 };
@@ -1264,32 +1254,30 @@ const PlayerMode = {
         }
 
         this._fetchedSession = null;
-        // Fetch session metadata first to check for presence and Open Party
         let session = null;
-        if (joinCode) {
-            try {
-                const res = await fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    session = data.session || {};
-                    this._fetchedSession = session;
-                    
-                    // Immediate state hydration to prevent UI flicker
-                    if (session.squad)           window.squad          = session.squad;
-                    if (session.current_matches) window.currentMatches = session.current_matches;
-                    if (session.player_queue)    window.playerQueue    = session.player_queue;
-                    if (session.court_names)     window.courtNames     = session.court_names;
-                    this._isOpenParty = !!session.is_open_party;
-                }
-            } catch (e) {}
-        }
+        // START metadata fetch but don't block boot flow yet
+        const metadataPromise = joinCode ? fetch(`/api/session-get?code=${encodeURIComponent(joinCode)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (!data) return null;
+                const s = data.session || data;
+                this._fetchedSession = s;
+                this._isOpenParty = !!s.is_open_party;
+                // Immediate state hydration to prevent UI flicker
+                if (s.squad) window.squad = s.squad;
+                if (s.current_matches) window.currentMatches = s.current_matches;
+                if (s.player_queue) window.playerQueue = s.player_queue;
+                return s;
+            }).catch(() => null) : Promise.resolve(null);
 
         // RECONCILIATION: If we are already in the squad, bypass ALL join logic
+        session = await metadataPromise;
         const inSquad = session && (session.squad || []).some(p => p.uuid === passport.playerUUID);
         if (inSquad) {
             console.log('[PlayerMode] Already in squad. Reconnecting seamlessly.');
             this._markApprovedInSession(joinCode);
             this._hasSyncedInSquad = true;
+            this._kickGraceCount = 0;
             this._bootUI(passport, joinCode);
             SidelineView.show();
             this._subscribeAndPoll(joinCode, passport, session);
@@ -1312,33 +1300,13 @@ const PlayerMode = {
         // Ensure the sideline panel is visible before network calls to show skeleton/loading
         SidelineView.show();
         
-        // Check for approval flag as a secondary fallback
-        const isApproved = this._isApprovedInSession(joinCode);
-
-        // 4. Handle name entry or instant join
-        const hasName = !!(passport.playerName && passport.playerName.trim());
-        
-        if (!hasName) {
-            const name = await this._handleNewPlayerName();
-            if (!name) return;
-            passport = Passport.get();
-        }
-
-        // If Open Party, trigger the join immediately to be snappy
-        if (this._isOpenParty && !inSquad) {
-            this.setStatus('pending', 'Joining...', '🔓 Instant Entry');
-            await this._joinAndSync(passport, joinCode);
-        } else if (!inSquad && !isApproved) {
-            // Only show "Check-in" if we aren't approved and it's not an open party
-            const choice = await this._promptCheckIn(passport, joinCode);
-            if (choice === 'rename') {
-                const name = await this._handleNewPlayerName();
-                if (!name) return;
-                passport = Passport.get();
-            }
-            await this._joinAndSync(passport, joinCode);
+        // 4. SPECULATIVE JOIN: If we have a name, attempt join immediately.
+        // If the party is open, the server will return "active" status and state now.
+        if (passport.playerName && passport.playerName.trim()) {
+            this._joinAndSync(passport, joinCode, session);
         } else {
-            await this._joinAndSync(passport, joinCode);
+            const name = await this._handleNewPlayerName();
+            if (name) this._joinAndSync(Passport.get(), joinCode, session);
         }
     },
 
@@ -1359,6 +1327,7 @@ const PlayerMode = {
             topbar.appendChild(btn);
         }
 
+        localStorage.setItem('cs_user_role', 'player');
         this._renderIdentity(passport);
 
         const codeEl = document.getElementById('slSessionCode');
@@ -1396,6 +1365,7 @@ const PlayerMode = {
         if (inSquad) {
             this._markApprovedInSession(joinCode);
             this._hasSyncedInSquad = true;
+            this._kickGraceCount = 0;
             this._clearQueuedState();
             this._subscribeAndPoll(joinCode, passport, initialSession || this._fetchedSession);
             this.setStatus('approved', `Welcome back, ${passport.playerName}`, "Reconnected ✅");
@@ -1631,6 +1601,7 @@ const PlayerMode = {
 
         const wasAlreadyApproved = this._isApprovedInSession(this._joinCode);
         this._hasSyncedInSquad = true;
+        this._kickGraceCount = 0;
         this._markApprovedInSession(this._joinCode);
         this._isJoining = false;
         if (payload.token) this._saveToken(this._joinCode, payload.token, passport.playerName, passport.playerUUID);
@@ -1727,6 +1698,7 @@ const PlayerMode = {
         const me = (payload.squad || []).find(p => p.uuid === passport.playerUUID);
         if (me) {
             this._hasSyncedInSquad = true;
+            this._kickGraceCount = 0;
             this._clearQueuedState();
 
             // Reconciliation: If the host broadcast updated profile info or name, update local passport.
@@ -1753,8 +1725,12 @@ const PlayerMode = {
         } else if (this._isApprovedInSession(this._joinCode) && this._hasSyncedInSquad) {
             // KICK DETECTION: We are approved locally but missing from the host's squad broadcast.
             // ONLY triggers if we have been synced in the squad at least once during this session's lifecycle.
-            console.warn('[PlayerMode] Session sync failed: missing from squad. Disconnecting.');
-            this._onRemovedFromSession();
+            // Use a grace count to handle temporary partial broadcasts or slow connections.
+            this._kickGraceCount++;
+            if (this._kickGraceCount >= 3) {
+                console.warn('[PlayerMode] Missing from squad for multiple updates. Verifying kick...');
+                this._verifyKickWithServer();
+            }
             return;
         }
 
@@ -1778,6 +1754,26 @@ const PlayerMode = {
         this._updateStatus(passport);
     },
 
+    /** Double-check with the database before finalizing a removal to prevent accidental kicks. */
+    async _verifyKickWithServer() {
+        const code = this._joinCode;
+        const passport = Passport.get();
+        if (!code || !passport) return;
+        
+        try {
+            const res = await fetch(`/api/session-get?code=${encodeURIComponent(code)}`);
+            if (res.ok) {
+                const data = await res.json();
+                const inSquad = (data.session?.squad || []).some(p => p.uuid === passport.playerUUID);
+                if (!inSquad) {
+                    this._onRemovedFromSession();
+                } else {
+                    this._kickGraceCount = 0; // False alarm, likely a network stutter
+                }
+            }
+        } catch (e) {}
+    },
+
     _onSessionUpdate(session) {
         const passport = Passport.get();
         if (!passport) return;
@@ -1796,7 +1792,7 @@ const PlayerMode = {
         // KICK DETECTION (Poll/Hydrate fallback): Missing from squad but approved in LS.
         const inSquad = (session.squad || []).some(p => p.uuid === passport.playerUUID);
         if (this._isApprovedInSession(this._joinCode) && !inSquad && this._hasSyncedInSquad) {
-            this._onRemovedFromSession();
+            this._verifyKickWithServer();
             return;
         }
         this._updateLiveFeed(session, passport);
@@ -2077,6 +2073,7 @@ const PlayerMode = {
 
             if (data.alreadyActive || data.status === 'active') {
                 this._isJoining = false;
+                this._kickGraceCount = 0;
                 if (data.global) Passport.hydrate(data.global);
 
                 // UX: Apply session state immediately so stats don't flicker to 0
@@ -2618,58 +2615,6 @@ const PlayerMode = {
         });
     },
     
-    openSkillLevelPicker() {
-        const passport = Passport.get();
-        if (!passport) return;
-
-        const emojis = {
-            'Novice': '👶',
-            'Intermediate': '🧑',
-            'Advanced': '🧙'
-        };
-
-        const content = `
-            <div class="menu-card">
-                <h2>Set Skill Level</h2>
-                <p>How do you rate your current skill?</p>
-                <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:20px;">
-                    ${Object.entries(emojis).map(([level, emoji]) => `
-                        <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border); ${passport.skillLevel === level ? 'border-color:var(--accent); box-shadow:0 0 10px var(--accent-dim);' : ''}" 
-                                onclick="PlayerMode.updateSkillLevel('${level}')">
-                            ${emoji} ${level}
-                        </button>
-                    `).join('')}
-                </div>
-                <button class="btn-cancel" onclick="UIManager.hide()">Cancel</button>
-            </div>
-        `;
-        UIManager.show(content, 'card');
-    },
-
-    updateSkillLevel(level) {
-        const passport = Passport.setSkillLevel(level);
-        UIManager.hide();
-        
-        // Update UI based on current view context
-        if (typeof SidelineView !== 'undefined' && SidelineView._visible) {
-            SidelineView.refresh();
-        }
-        
-        const ps = document.getElementById('passportStandalone');
-        if (ps && ps.style.display === 'flex') {
-            window.renderPassportStandalone(passport);
-        }
-
-        // Broadcast to host if in session
-        if (window.isOnlineSession) {
-            if (typeof broadcastSkillLevelUpdate === 'function') {
-                broadcastSkillLevelUpdate(passport.playerUUID, level);
-            }
-        }
-
-        if (window.Haptic) Haptic.success();
-    },
-
     openTrophyRoom() {
         const passport = Passport.get();
         if (!passport) return;

@@ -9,14 +9,85 @@ let passport  = null;
 let supabase  = null;
 
 // ---------------------------------------------------------------------------
-// SKILL TIER DEFINITIONS (Global)
+// STATE STORE — Centralized data management with deep change detection
+// Used to prevent redundant cloud syncs and improve performance.
 // ---------------------------------------------------------------------------
-window.TIER_WEIGHTS = { 'Novice': 1, 'Intermediate': 2, 'Advanced': 3 };
-window.SKILL_LEVELS = ['Novice', 'Intermediate', 'Advanced'];
-window.SPORT_ICONS  = { 'Badminton': '🏸', 'Tennis': '🎾', 'Pickleball': '🏓' };
+const StateStore = {
+    squad: [],
+    currentMatches: [],
+    roundHistory: [],
+    playerQueue: [],
+    _metadata: {
+        activeCourts: 1,
+        courtNames: {},
+        isOpenParty: false,
+        fairnessMultiplier: 5,
+        sport: 'Badminton',
+        guestList: [],
+        lastUpdated: Date.now()
+    },
 
-window.getSkillWeight = p => window.TIER_WEIGHTS[p?.skillLevel] || window.TIER_WEIGHTS['Intermediate'];
-window.getSkillIndex = p => window.SKILL_LEVELS.indexOf(p?.skillLevel || 'Intermediate');
+    get(key) { return this._metadata[key]; },
+
+    set(key, val) {
+        const isRootKey = ['squad', 'currentMatches', 'roundHistory', 'playerQueue'].includes(key);
+        const current = isRootKey ? this[key] : this._metadata[key];
+
+        // Deep comparison to prevent unnecessary triggers and network traffic
+        if (this._isEqual(current, val)) return false;
+
+        if (isRootKey) this[key] = val;
+        else this._metadata[key] = val;
+
+        this._metadata.lastUpdated = Date.now();
+        if (typeof saveToDisk === 'function') saveToDisk();
+        return true;
+    },
+
+    setState(updates) {
+        let changed = false;
+        for (const [key, val] of Object.entries(updates)) {
+            const isRootKey = ['squad', 'currentMatches', 'roundHistory', 'playerQueue'].includes(key);
+            const current = isRootKey ? this[key] : this._metadata[key];
+
+            if (!this._isEqual(current, val)) {
+                if (isRootKey) this[key] = val;
+                else this._metadata[key] = val;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this._metadata.lastUpdated = Date.now();
+            if (typeof saveToDisk === 'function') saveToDisk();
+        }
+        return changed; // Inform caller if UI needs to be updated
+    },
+
+    _isEqual(a, b) {
+        if (a === b) return true;
+        if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return a === b;
+        
+        // PERFORMANCE: If both objects have a lastUpdated metadata, compare that first
+        if (a.lastUpdated && b.lastUpdated && a.lastUpdated !== b.lastUpdated) return false;
+        if (a._metadata?.lastUpdated && b._metadata?.lastUpdated && a._metadata.lastUpdated !== b._metadata.lastUpdated) return false;
+
+        // PERFORMANCE: Faster check for arrays (most common state type)
+        if (Array.isArray(a) && Array.isArray(b)) {
+            if (a.length !== b.length) return false;
+            // For squad/queue, if lengths match, check first and last element as a heuristic
+            // before falling back to stringify.
+            if (a.length > 10) {
+                if (JSON.stringify(a[0]) !== JSON.stringify(b[0])) return false;
+                if (JSON.stringify(a[a.length-1]) !== JSON.stringify(b[b.length-1])) return false;
+            }
+        }
+
+        // Fallback for robust deep comparison
+        return JSON.stringify(a) === JSON.stringify(b);
+    }
+};
+window.SPORT_ICONS  = { 'Badminton': '🏸', 'Tennis': '🎾', 'Pickleball': '🏓' };
 
 // Global state is now managed by StateStore
 
@@ -229,19 +300,32 @@ async function toggleOpenParty() {
 
     if (next && window.playRequests?.length > 0 && !_isProcessingOpenPartyBatch) {
         _isProcessingOpenPartyBatch = true;
-        showSessionToast(`🔓 Open Party: ON. Approving ${window.playRequests.length} players...`);
+        const toApprove = [...window.playRequests];
+        showSessionToast(`🔓 Open Party: ON. Approving ${toApprove.length} players...`);
+        
         try {
-            const toApprove = [...window.playRequests];
-            const ids = [];
-            toApprove.forEach(r => ids.push(r.id));
+            // 1. Process all pending requests locally first for instant UI response
+            for (const r of toApprove) {
+                // skipSync=true to prevent multiple redundant StateStore triggers in the loop
+                // skipAPI=true because we will resolve them in a single batch call below
+                await approvePlayRequest(r.name, r.id, r.player_uuid, true, true);
+            }
 
+            // 2. Commit the Open Party state and the new squad members atomically
+            StateStore.setState({
+                isOpenParty: true,
+                squad: [...StateStore.squad],
+                playerQueue: [...StateStore.playerQueue]
+            });
+
+            // 3. Inform the server to clean up the requests table
+            const ids = toApprove.map(r => r.id);
             if (ids.length > 0) {
-                await batchApproveAPI(ids);
+                batchApproveAPI(ids); // Fire and forget cleanup
             }
         } finally {
-            StateStore.set('isOpenParty', true);
             _isProcessingOpenPartyBatch = false;
-            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+            if (typeof broadcastGameState === 'function') broadcastGameState(true); // Immediate sync to players
         }
     } else {
         StateStore.set('isOpenParty', next);
@@ -271,10 +355,14 @@ window.renderOpenPartyToggle = renderOpenPartyToggle;
 function resyncQueue() {
     if (window.isOperator === false) return;
     if (typeof initQueue === 'function') {
-        initQueue();
-        if (typeof renderQueueStrip === 'function') renderQueueStrip();
-        if (typeof broadcastGameState === 'function') broadcastGameState(true);
-        if (window.Haptic) Haptic.success();
+        const hasChanged = initQueue(); // initQueue now returns true if playerQueue changed
+        if (hasChanged) {
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+            if (window.Haptic) Haptic.success();
+        } else {
+            if (typeof showSessionToast === 'function') showSessionToast('Queue already synchronized.');
+        }
     }
 }
 window.resyncQueue = resyncQueue;
@@ -341,65 +429,6 @@ function toggleRestingState() {
     closeMenu();
     togglePlayerActive(p.uuid);
 }
-function openSetSkillLevel() {
-    const p = StateStore.squad[selectedPlayerIndex];
-    if (!p) return;
-    closeMenu();
-    const pId = p.uuid || p.name;
-    UIManager.confirm({
-        title: `Set Skill Level for ${p.name}`,
-        message: `
-            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Novice'); UIManager.hide();">Novice</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Intermediate'); UIManager.hide();">Intermediate</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Advanced'); UIManager.hide();">Advanced</button>
-            </div>
-        `,
-        confirmText: 'Cancel', // Renamed to cancel as buttons handle action
-        onConfirm: () => {}, // No action on confirm, buttons handle it
-        isDestructive: false,
-        showCancel: false, // Hide default cancel button
-    });
-}
-window.openSetSkillLevel = openSetSkillLevel;
-
-/** Opens the skill level picker specifically from the Player Card context. */
-function openSetSkillLevelForCard(idx) {
-    const p = StateStore.squad[idx];
-    if (!p) return;
-    
-    const pId = p.uuid || p.name;
-    UIManager.confirm({
-        title: `Set Skill Level for ${p.name}`,
-        message: `
-            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
-                        onclick="setPlayerSkillLevel('${pId}', 'Novice'); UIManager.hide(); openPlayerCard(${idx});">Novice</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
-                        onclick="setPlayerSkillLevel('${pId}', 'Intermediate'); UIManager.hide(); openPlayerCard(${idx});">Intermediate</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
-                        onclick="setPlayerSkillLevel('${pId}', 'Advanced'); UIManager.hide(); openPlayerCard(${idx});">Advanced</button>
-            </div>
-        `,
-        confirmText: 'Cancel',
-        showCancel: false,
-    });
-}
-window.openSetSkillLevelForCard = openSetSkillLevelForCard;
-
-function setPlayerSkillLevel(id, level) {
-    // Find by UUID or Name (to support both Passport holders and Guests)
-    const p = StateStore.squad.find(x => x.uuid === id || x.name === id);
-    if (!p) return;
-    p.skillLevel = level;
-    StateStore.set('squad', [...StateStore.squad]);
-    renderSquad();
-    if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [id]);
-    if (typeof broadcastGameState === 'function') broadcastGameState(true);
-    showSessionToast(`${p.name} is now ${level}`);
-    Haptic.success();
-}
-window.setPlayerSkillLevel = setPlayerSkillLevel;
 
 function _autoAddHostToSquad() {
     // This function runs on app start for the host.
@@ -447,9 +476,14 @@ function _autoAddHostToSquad() {
             changed = true;
         }
         if (hostInSquad.active === false) {
-            hostInSquad.active = true;
-            StateStore.set('squad', [...StateStore.squad]);
-            changed = true;
+            const hostIdx = StateStore.squad.findIndex(p => p.uuid === hostUUID);
+            if (hostIdx !== -1) {
+                const newSquad = [...StateStore.squad];
+                newSquad[hostIdx] = { ...hostInSquad, active: true };
+                if (StateStore.set('squad', newSquad)) {
+                    changed = true;
+                }
+            }
         }
     }
 
@@ -542,17 +576,17 @@ async function removePlayerFromSession(playerUUID, playerName) {
     const { removedName, removedUUID, newSquad, newMatches, newQueue } = _removePlayerFromLocalState(pIndex);
 
     // Atomically update the global state to ensure consistency across the session
-    StateStore.setState({
+    const hasChanged = StateStore.setState({
         squad: newSquad,
         currentMatches: newMatches,
         playerQueue: newQueue
     });
 
-    _updateUIAfterPlayerRemoval();
-
-    // Notify the player immediately so their UI resets to the menu
-    if (typeof broadcastEvent === 'function') {
-        broadcastEvent('player_removed', { playerUUID: removedUUID, playerName: removedName });
+    if (hasChanged) {
+        _updateUIAfterPlayerRemoval();
+        if (typeof broadcastEvent === 'function') {
+            broadcastEvent('player_removed', { playerUUID: removedUUID, playerName: removedName });
+        }
     }
 
     await _removePlayerFromRemoteDB(removedUUID);
@@ -623,15 +657,15 @@ function renderSquad() {
 
         const isMatch = !query || p.name.toLowerCase().includes(query);
 
+        const isHighPriority = p.active && p.waitRounds >= 3;
         const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
-        const skillBadge = `<span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" title="${p.skillLevel || 'Intermediate'}">${(p.skillLevel || 'Intermediate').charAt(0)}</span>`;
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
-            <span class="chip-name">${skillBadge}${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
             ${waitBadge}
         `;
         const isSwapping = pId === swapSourceUUID;
-        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''}`;
+        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''} ${isHighPriority ? 'high-priority' : ''}`;
 
         let chip = existingChips.get(pId);
 
@@ -776,18 +810,21 @@ function endPress(uuid) {
 }
 
 function togglePlayerActive(uuid) {
-    const player = StateStore.squad.find(p => p.uuid === uuid);
-    if (!player) return;
+    const pIdx = StateStore.squad.findIndex(p => p.uuid === uuid);
+    if (pIdx === -1) return;
     
     Haptic.tap();
-    player.active = !player.active;
-    renderSquad();
-    checkNextButtonState();
+    const player = StateStore.squad[pIdx];
+    const newSquad = [...StateStore.squad];
+    newSquad[pIdx] = { ...player, active: !player.active }; // Immutable update
 
-    // Trigger reactive sync and immediate broadcast
-    StateStore.set('squad', [...StateStore.squad]);
-    if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [uuid]);
-    if (typeof broadcastGameState === 'function') broadcastGameState(true);
+    const hasChanged = StateStore.set('squad', newSquad);
+    if (hasChanged) {
+        renderSquad();
+        checkNextButtonState();
+        if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [uuid]);
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
+    }
 }
 
 function openMenu(uuid) {
@@ -964,20 +1001,6 @@ function showOverlay(type) {
         if (isOnlineSession) {
             shContent += `
                 <div class="sh-section">
-                    <div class="sync-section-label">Matchmaking Logic</div>
-                    <div style="padding: 10px 0;">
-                        <div style="display:flex; justify-content:space-between; font-size:0.6rem; color:var(--text-muted); margin-bottom:8px;">
-                            <span>VARIETY</span>
-                            <span style="color:var(--accent); font-weight:800;">${StateStore.get('fairnessMultiplier') > 7 ? 'STRICT BALANCE' : StateStore.get('fairnessMultiplier') < 3 ? 'MAX VARIETY' : 'BALANCED'}</span>
-                            <span>FAIRNESS</span>
-                        </div>
-                        <input type="range" min="0" max="10" step="1" value="${StateStore.get('fairnessMultiplier') ?? 5}" 
-                               style="width:100%; accent-color:var(--accent);" 
-                               onchange="StateStore.set('fairnessMultiplier', parseInt(this.value)); showSessionToast('Algorithm Updated 🧠');">
-                    </div>
-                </div>
-
-                <div class="sh-section">
                     <div class="session-live-card">
                         <div class="session-live-top">
                             <span class="session-live-dot"></span>
@@ -1111,23 +1134,50 @@ function renderDirectorHub() {
     const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
     const waiting = squad.filter(p => p.active && !onCourt.has(p.uuid || p.name));
 
-    // 1. Longest Wait
-    const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
+    // 1. Predicted Next Matchup
+    let nextLineup = 'Waiting for players';
+    let lineupNames = '—';
+    if (typeof pullNextFromQueue === 'function') {
+        const next4 = pullNextFromQueue(onCourt);
+        if (next4.length === 4) {
+            // Build a stable preview match (sorting prevents UI jumping)
+            const sorted4 = [...next4].sort((a,b) => (a.uuid || a.name).localeCompare(b.uuid || b.name));
+            const tempMatch = buildMatchFromPlayers(sorted4);
+            const tA = tempMatch.teams[0].map(u => findP(u)?.name || 'Unknown').join(' & ');
+            const tB = tempMatch.teams[1].map(u => findP(u)?.name || 'Unknown').join(' & ');
+            lineupNames = `${tA} <span style="color:var(--accent); font-style:italic; font-size:0.6rem;">vs</span> ${tB}`;
+            nextLineup = 'Predicted Match';
+        } else if (next4.length > 0) {
+            lineupNames = next4.map(p => p.name).join(', ');
+            nextLineup = `${next4.length} / 4 Ready`;
+        }
+    }
+
     // 2. King of the Hill (Current high streak)
     const king = squad.length ? [...squad].sort((a,b) => b.streak - a.streak)[0] : null;
+
     // 3. Iron Man (Most games in session)
     const ironMan = squad.length ? [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] : null;
 
-    const renderItem = (label, player, val, icon) => `
+    const renderItem = (label, player, val, icon) => {
+        const avatar = player ? Avatar.html(player.name, player.spiritAnimal) : `<div class="avatar" style="background:var(--bg2); border:1px dashed var(--border); font-style:normal;">${icon}</div>`;
+        const waitBadge = (player && player.waitRounds > 0) ? `<span class="wait-round-badge ${player.waitRounds >= 3 ? 'high-priority' : ''}" style="width:14px; height:14px; font-size:0.5rem; top:-2px; right:-2px;">${player.waitRounds}</span>` : '';
+        
+        return `
         <div class="sh-insight-item">
-            <div class="sh-insight-label">${icon} ${label}</div>
-            <div class="sh-insight-val">${player ? escapeHTML(player.name) : '—'}</div>
-            <div class="sh-insight-meta">${val || ''}</div>
+            <div class="sh-insight-label">${label}</div>
+            <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                <div style="position:relative; flex-shrink:0;">${avatar}${waitBadge}</div>
+                <div class="sh-insight-val" style="white-space: normal; overflow: visible; text-overflow: unset; line-height: 1.1;">
+                    ${player ? escapeHTML(player.name) : val}
+                </div>
+            </div>
+            <div class="sh-insight-meta">${player ? (val || '') : nextLineup}</div>
         </div>
-    `;
+    `};
 
     grid.innerHTML = `
-        ${renderItem('Waiting Longest', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'), '⏳')}
+        ${renderItem('Next Lineup', null, lineupNames, '⏭️')}
         ${renderItem('King of Hill', king, (king?.streak > 0 ? `${king.streak} streak` : 'No wins'), '🔥')}
         ${renderItem('Iron Man', ironMan, (ironMan?.sessionPlayCount > 0 ? `${ironMan.sessionPlayCount} games` : '0 games'), '💪')}
     `;
@@ -1188,7 +1238,7 @@ function _calculateFinalRecapData() {
     const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
     const sport = StateStore.get('sport') || 'Badminton';
     
-    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins || getSkillIndex(b) - getSkillIndex(a));
+    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins);
     const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
     
     const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
@@ -1580,7 +1630,7 @@ function renderStatsTab(tab) {
     `;
 
     if (tab === 'performance') {
-        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins);
+        const sorted   = [...StateStore.squad].sort((a, b) => b.wins - a.wins);
         const topCount = Math.max(1, Math.ceil(StateStore.squad.length * 0.3));
         const peak     = sorted.slice(0, topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
         const active   = sorted.slice(topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
@@ -1639,7 +1689,6 @@ function renderStatsTab(tab) {
         const cWins  = career.wins || 0;
         const cGames = career.games || 0;
         const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-        const skillLevel = passport.skillLevel || (me ? me.skillLevel : 'Intermediate') || 'Intermediate';
         
         let sWins = 0, sGames = 0, sWr = 0;
         if (me) {
@@ -1667,14 +1716,6 @@ function renderStatsTab(tab) {
                             <div class="sl-card-key">WIN RATE</div>
                         </div>
                     </div>` : `<div class="sl-card-empty">Not in squad</div>`}
-                </div>
-                <div class="sl-stat-card" style="margin-top:12px; cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
-                    <div class="sl-card-label">SKILL LEVEL</div>
-                    <div style="margin-top: 4px;">
-                        <span class="skill-badge skill-${(skillLevel || 'Intermediate').toLowerCase()}" style="font-size:1rem; padding:4px 12px; border-radius:6px;">
-                            ${(skillLevel === 'Novice' ? '🌱 NOVICE' : skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
-                        </span>
-                    </div>
                 </div>
                 <div class="sl-stat-card">
                     <div class="sl-card-label">CAREER RECORD</div>
@@ -2039,15 +2080,6 @@ async function openPlayerCard(idx) {
                 <div class="pc-stat-val">${wr}%</div>
                 <div class="pc-stat-label">Win Rate</div>
             </div>
-            <div class="pc-stat-divider"></div>
-            <div class="pc-stat" style="cursor:pointer;" onclick="openSetSkillLevelForCard(${idx})">
-                <div class="pc-stat-val" style="font-size:0.75rem; margin-top:4px;">
-                    <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}">
-                        ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
-                    </span>
-                </div>
-                <div class="pc-stat-label">Skill</div>
-            </div>
         </div>
         <div style="display:flex; justify-content:space-between; margin-bottom:16px; padding:0 10px;">
             <div style="text-align:left;">
@@ -2406,24 +2438,25 @@ async function pollPlayRequests() {
                 const existing = _isPlayerAlreadyInSession(r);
 
                 if (existing) {
-                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad)`);
+                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad). Reconciling UUID/Name.`);
                     let changed = false;
+                    const existingIdx = StateStore.squad.findIndex(p => p.uuid === existing.uuid);
+                    let updatedPlayer = { ...existing }; // Create a new object for immutable update
 
-                    // UUID Correction: If manually added by host, adopt the player's real UUID
-                    // so memberApprove() and future syncs use the correct canonical ID.
-                    if (r.player_uuid && existing.uuid !== r.player_uuid) {
-                        existing.uuid = r.player_uuid;
+                    if (r.player_uuid && updatedPlayer.uuid !== r.player_uuid) {
+                        updatedPlayer.uuid = r.player_uuid;
                         changed = true;
                     }
-
-                    if (r.name && existing.name !== r.name) {
-                        existing.name = r.name;
+                    if (r.name && updatedPlayer.name !== r.name) {
+                        updatedPlayer.name = r.name;
                         changed = true;
                     }
 
                     if (changed) {
+                        const newSquad = [...StateStore.squad];
+                        newSquad[existingIdx] = updatedPlayer;
+                        StateStore.set('squad', newSquad);
                         renderSquad();
-                        saveToDisk();
                     }
 
                     if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
@@ -2558,34 +2591,24 @@ function closePlayRequests() {
 
 function _resolvePlayerForSession(name, incomingUUID) {
     const validUUID = incomingUUID && incomingUUID.trim().length > 0 ? incomingUUID : null;
-    let player = null;
     let finalName = name;
 
     // 1. Priority: UUID (Canonical Identity)
     if (validUUID) {
-        player = StateStore.squad.find(p => p.uuid === validUUID);
-        if (player) {
-            // Update name if changed
-            if (player.name !== name) {
-                console.log(`[CourtSide] Updating name for ${player.uuid}: ${player.name} -> ${name}`);
-                player.name = name;
-            }
-            return player;
+        const existing = StateStore.squad.find(p => p.uuid === validUUID);
+        if (existing) {
+            // Return a clone to maintain immutability
+            return { ...existing, name: name }; 
         }
     }
 
     // 2. If not found by UUID, treat as NEW.
-    // 2. Secondary: Name-based lookup (Smart Recognition)
-    // If UUID didn't match but the name does, assume it's the same person
-    // ONLY if the squad entry has no UUID (Legacy/Guest).
-    player = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
-    if (player && (!player.uuid || player.uuid === incomingUUID)) {
-        if (validUUID && !player.uuid) player.uuid = validUUID; // Adopt canonical ID
-        return player;
+    const byName = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (byName && (!byName.uuid || byName.uuid === incomingUUID)) {
+        return { ...byName, uuid: validUUID || byName.uuid }; 
     }
 
     // 3. Truly NEW player — handle collisions
-    //    Check for name collisions and auto-rename.
     let collision = StateStore.squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
     let counter = 1;
     while (collision) {
@@ -2594,13 +2617,10 @@ function _resolvePlayerForSession(name, incomingUUID) {
         counter++;
     }
 
-    // 3. Create new player
-    player = migratePlayer({
+    return migratePlayer({
         name: finalName,
         uuid: validUUID || _generateUUID(),
     });
-
-    return player;
 }
 window._resolvePlayerForSession = _resolvePlayerForSession;
 
@@ -2608,28 +2628,40 @@ window._resolvePlayerForSession = _resolvePlayerForSession;
  * Handles a player joining via Open Party (no approval required).
  * Reuses logic from approvePlayRequest without the deletion step.
  */
-let _autoJoinBuffer = [];
-let _autoJoinTimer = null;
-
-function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null) {
+function handleAutoJoin(name, playerUUID, spiritAnimal = null) {
     if (!window.isOperator) return;
+    if (!playerUUID) return;
+
+    // RACE PROTECTION: Ignore if already processing this player via another sync path
+    if (_processingPlayerUUIDs.has(playerUUID)) return;
+    _processingPlayerUUIDs.add(playerUUID);
+    setTimeout(() => _processingPlayerUUIDs.delete(playerUUID), 2000);
     
     // SNAPPINESS: Host adopts the player immediately to StateStore
-    const existing = StateStore.squad.find(p => p.uuid === playerUUID);
-    if (!existing) {
+    const existingIdx = StateStore.squad.findIndex(p => p.uuid === playerUUID);
+    const newQueue = [...StateStore.playerQueue.filter(u => u !== playerUUID), playerUUID];
+    
+    if (existingIdx === -1) {
         const player = migratePlayer({
             name: name,
             uuid: playerUUID,
             spiritAnimal: spiritAnimal,
-            skillLevel: skillLevel || 'Intermediate',
             active: true
         });
         const newSquad = [...StateStore.squad, player];
-        const newQueue = [...StateStore.playerQueue.filter(u => u !== playerUUID), playerUUID];
         
         StateStore.setState({ squad: newSquad, playerQueue: newQueue });
         renderSquad();
         if (typeof renderQueueStrip === 'function') renderQueueStrip();
+        
+        // Use throttled broadcast to avoid flooding clients during rapid joins
+        if (typeof broadcastGameState === 'function') broadcastGameState(false);
+    } else {
+        // If already in squad, ensure they are active and in the queue
+        const updatedP = { ...StateStore.squad[existingIdx], active: true };
+        const newSquad = [...StateStore.squad];
+        newSquad[existingIdx] = updatedP;
+        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
     }
 
     showSessionToast(`🔓 ${name} joined instantly`);
@@ -2637,10 +2669,17 @@ function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null
 }
 
 let _processingRequestIds = new Set();
+let _processingPlayerUUIDs = new Set();
 
 async function approvePlayRequest(name, id, playerUUID = null, skipSync = false, skipAPI = false) {
     if (!id || _processingRequestIds.has(id)) return;
+    if (playerUUID && _processingPlayerUUIDs.has(playerUUID)) return;
+
     _processingRequestIds.add(id);
+    if (playerUUID) {
+        _processingPlayerUUIDs.add(playerUUID);
+        setTimeout(() => _processingPlayerUUIDs.delete(playerUUID), 2000);
+    }
 
     console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
     
@@ -2653,17 +2692,20 @@ async function approvePlayRequest(name, id, playerUUID = null, skipSync = false,
     const existing = StateStore.squad.find(p => (playerUUID && p.uuid === playerUUID) || (p.name.toLowerCase() === name.toLowerCase()));
     const oldName = existing ? existing.name : null;
 
-    const player = _resolvePlayerForSession(name, playerUUID);
-    const finalName = player.name;
+    let player = _resolvePlayerForSession(name, playerUUID);
     const validUUID = player.uuid;
+    
+    // Metadata reconciliation
+    if (initialEmoji) player.spiritAnimal = initialEmoji;
+    player.active = true;
 
     let newSquad = [...StateStore.squad];
-    // Identity Integrity: Ensure the player is in the squad array
-    if (!newSquad.find(p => p.uuid === validUUID)) {
+    const squadIdx = newSquad.findIndex(p => p.uuid === validUUID);
+    if (squadIdx === -1) {
         newSquad.push(player);
+    } else {
+        newSquad[squadIdx] = player;
     }
-
-    if (initialEmoji) player.spiritAnimal = initialEmoji;
 
     // BACKGROUND ACHIEVEMENT FETCHING (Prevent Race Condition)
     // We move this to an async block so StateStore.setState happens immediately.
@@ -2671,21 +2713,21 @@ async function approvePlayRequest(name, id, playerUUID = null, skipSync = false,
     if (player.uuid && window.fetchPlayerAchievements) {
         (async () => {
             try {
-                let achievementIds = [];
-                if (Array.isArray(reconciledAchievements)) {
-                    achievementIds = reconciledAchievements;
-                } else {
-                    const fetched = await window.fetchPlayerAchievements(player.uuid);
-                    achievementIds = fetched.map(a => a.achievement_id);
+                const fetched = Array.isArray(reconciledAchievements) 
+                    ? reconciledAchievements 
+                    : (await window.fetchPlayerAchievements(player.uuid)).map(a => a.achievement_id);
+                
+                const newSquad = [...StateStore.squad];
+                const pIdx = newSquad.findIndex(s => s.uuid === player.uuid);
+                if (pIdx !== -1) {
+                    const currentSet = new Set(newSquad[pIdx].achievements || []); 
+                    fetched.forEach(id => currentSet.add(id));
+                    newSquad[pIdx] = { ...newSquad[pIdx], achievements: Array.from(currentSet) };
+                    StateStore.set('squad', newSquad);
                 }
-                const currentSet = new Set(player.achievements || []); 
-                achievementIds.forEach(id => currentSet.add(id));
-                player.achievements = Array.from(currentSet);
-                StateStore.set('squad', [...StateStore.squad]); // Signal update
             } catch (e) { console.error(`Failed to fetch achievements for ${player.name}`, e); }
         })();
     }
-    player.active = true;
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};
     if (validUUID) window._sessionUUIDMap[player.name] = validUUID;
@@ -2703,13 +2745,9 @@ async function approvePlayRequest(name, id, playerUUID = null, skipSync = false,
     if (!skipSync) {
         StateStore.setState({ squad: newSquad, playerQueue: newQueue });
     } else {
-        // Update internal references silently.
-        if (StateStore.squad !== newSquad) {
-            StateStore.squad.length = 0;
-            StateStore.squad.push(...newSquad);
-        }
-        // Update property directly to avoid triggering cloud sync during batch loop
-        StateStore.playerQueue = newQueue; 
+        // Update local state without triggering the Store's reactive setter/sync
+        StateStore.squad = newSquad;
+        StateStore.playerQueue = newQueue;
     }
 
     renderSquad();
@@ -2728,9 +2766,7 @@ async function approvePlayRequest(name, id, playerUUID = null, skipSync = false,
         broadcastApproval(validUUID, player.name, token);
     }
 
-    if (!skipAPI) {
-        await denyPlayRequest(id);
-    }
+    if (!skipAPI) denyPlayRequest(id); // Non-blocking cleanup
     } catch (e) {
         console.error('[approvePlayRequest] Failed', e);
     } finally {
@@ -2790,6 +2826,10 @@ async function denyPlayRequest(id) {
 // Called by sync.js when a Realtime INSERT event occurs on play_requests table
 window.onPlayRequestInsert = async function(record) {
     if (!record) return;
+
+    // LOCK CHECK: If Edge function already activated this player, ignore the request insertion
+    if (record.player_uuid && _processingPlayerUUIDs.has(record.player_uuid)) return;
+
     if (!_lastSeenRequestIds.has(record.id)) {
         // Track immediately to prevent duplicate processing
         _trackRequestId(record.id);
@@ -2805,10 +2845,12 @@ window.onPlayRequestInsert = async function(record) {
         const existing = _isPlayerAlreadyInSession(record);
 
         if (existing) {
-            // Adopt real UUID for manual additions triggered by realtime events
+            // Adopt real UUID for manual additions triggered by realtime events (immutable update)
             if (record.player_uuid && existing.uuid !== record.player_uuid) {
-                existing.uuid = record.player_uuid;
-                renderSquad();
+                const existingIdx = StateStore.squad.findIndex(p => p.uuid === existing.uuid);
+                const newSquad = [...StateStore.squad];
+                newSquad[existingIdx] = { ...existing, uuid: record.player_uuid };
+                StateStore.set('squad', newSquad); // Explicitly update StateStore
             }
 
             if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
@@ -2946,32 +2988,34 @@ const _startPolling = () => {
                 
                 const data = await res.json();
                 const activeInDB = data.requests || [];
-                let anyMetadataChanged = false;
+                let updatedSquad = [...StateStore.squad];
+                let anyChanged = false;
 
                 for (const dbPlayer of activeInDB) {
-                    const localP = StateStore.squad.find(p => p.uuid === dbPlayer.player_uuid);
-                    if (!localP) {
+                    const idx = updatedSquad.findIndex(p => p.uuid === dbPlayer.player_uuid);
+                    if (idx === -1) {
                         console.log(`[CourtSide] Reconciliation: Recovering missed player ${dbPlayer.name}`);
-                        handleAutoJoin(dbPlayer.name, dbPlayer.player_uuid, dbPlayer.spirit_animal, dbPlayer.skill_level);
+                        handleAutoJoin(dbPlayer.name, dbPlayer.player_uuid, dbPlayer.spirit_animal);
                     } else {
-                        // Full Metadata Sync: Ensure Host sees correct avatar/skill
-                        let changed = false;
-                        if (localP.name !== dbPlayer.name) { localP.name = dbPlayer.name; changed = true; }
-                        if (dbPlayer.spirit_animal !== undefined && localP.spiritAnimal !== dbPlayer.spirit_animal) { 
-                            localP.spiritAnimal = (dbPlayer.spirit_animal === '' ? null : dbPlayer.spirit_animal); 
-                            changed = true; 
-                        }
-                        if (dbPlayer.skill_level && localP.skillLevel !== dbPlayer.skill_level) { localP.skillLevel = dbPlayer.skill_level; changed = true; }
+                        const localP = updatedSquad[idx];
+                        let pChanged = false;
+                        let updatedP = { ...localP };
 
-                        if (changed) {
-                            console.log(`[CourtSide] Reconciliation: Profile updated for ${localP.name}`);
-                            anyMetadataChanged = true;
+                        if (updatedP.name !== dbPlayer.name) { updatedP.name = dbPlayer.name; pChanged = true; }
+                        if (dbPlayer.spirit_animal !== undefined && updatedP.spiritAnimal !== dbPlayer.spirit_animal) { 
+                            updatedP.spiritAnimal = (dbPlayer.spirit_animal === '' ? null : dbPlayer.spirit_animal); 
+                            pChanged = true; 
+                        }
+
+                        if (pChanged) {
+                            updatedSquad[idx] = updatedP;
+                            anyChanged = true;
                         }
                     }
                 }
 
-                if (anyMetadataChanged) {
-                    StateStore.set('squad', [...StateStore.squad]);
+                if (anyChanged) {
+                    StateStore.set('squad', updatedSquad);
                     renderSquad();
                 }
             } catch (e) {}
@@ -3583,14 +3627,6 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
                 <div class="ps-stat-val">${wr}%</div>
                 <div class="ps-stat-label">WIN RATE</div>
             </div>
-            <div class="ps-stat-card" style="cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
-                <div class="ps-stat-val" style="font-size:0.85rem; margin-top:4px;">
-                    <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" style="font-size:0.75rem; padding:4px 10px; border-radius:6px;">
-                        ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
-                    </span>
-                </div>
-                <div class="ps-stat-label">SKILL LEVEL</div>
-            </div>
         </div>
 
         <div class="ps-section">
@@ -3642,7 +3678,7 @@ window.joinFromLobby = function() {
 };
 
 function _startHostTimerTick() {
-    if (window._hostTickTimer) clearInterval(window._hostHostTickTimer);
+    if (window._hostTickTimer) clearInterval(window._hostTickTimer);
     window._hostTickTimer = setInterval(() => {
         const matches = StateStore.currentMatches || [];
         matches.forEach((m, i) => {
@@ -3689,7 +3725,12 @@ async function initApp() {
     // ── PLAYER MODE BOOT ─────────────────────────────────────────────────────
     const urlParams = new URLSearchParams(window.location.search);
     const joinCode = urlParams.get('join');
-    const role = urlParams.get('role');
+    let role = urlParams.get('role');
+
+    // ROLE PERSISTENCE: If no role in URL, check localStorage to stay in player view on refresh
+    if (!role && localStorage.getItem('cs_user_role') === 'player') {
+        role = 'player';
+    }
 
     // --- HOST OVERRIDE CHECK ---
     // A host rejoining their own session via an invite link should be treated as a host.
@@ -3700,6 +3741,7 @@ async function initApp() {
     // ── PLAYER MODE BOOT ─────────────────────────────────────────────────────
     // If role=player is requested, respect it even if the user is the host.
     if (role === 'player') {
+        localStorage.setItem('cs_user_role', 'player');
         document.body.classList.add('player-mode');
         
         // Clean URL immediately
@@ -3712,6 +3754,7 @@ async function initApp() {
         // We are the host, but clicked a player link. Clean the URL and proceed with host boot.
         const cleanUrl = window.location.origin + window.location.pathname;
         window.history.replaceState({}, document.title, cleanUrl);
+        localStorage.setItem('cs_user_role', 'host');
     }
 
     try {
