@@ -68,10 +68,6 @@ const StateStore = {
         if (a === b) return true;
         if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return a === b;
         
-        // PERFORMANCE: If both objects have a lastUpdated metadata, compare that first
-        if (a.lastUpdated && b.lastUpdated && a.lastUpdated !== b.lastUpdated) return false;
-        if (a._metadata?.lastUpdated && b._metadata?.lastUpdated && a._metadata.lastUpdated !== b._metadata.lastUpdated) return false;
-
         // PERFORMANCE: Faster check for arrays (most common state type)
         if (Array.isArray(a) && Array.isArray(b)) {
             if (a.length !== b.length) return false;
@@ -263,6 +259,7 @@ function addPlayer() {
     checkNextButtonState();
     if (window.Haptic) Haptic.success();
 }
+window.addPlayer = addPlayer;
 
 function editPlayerName() {
     const p = StateStore.squad[selectedPlayerIndex];
@@ -291,6 +288,7 @@ function editPlayerName() {
         }
     });
 }
+window.editPlayerName = editPlayerName;
 
 let _isProcessingOpenPartyBatch = false;
 
@@ -429,6 +427,71 @@ function toggleRestingState() {
     closeMenu();
     togglePlayerActive(p.uuid);
 }
+function openSetSkillLevel() {
+    const p = StateStore.squad[selectedPlayerIndex];
+    if (!p) return;
+    closeMenu();
+    const pId = p.uuid || p.name;
+    UIManager.confirm({
+        title: `Set Skill Level for ${p.name}`,
+        message: `
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Novice'); UIManager.hide();">Novice</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Intermediate'); UIManager.hide();">Intermediate</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Advanced'); UIManager.hide();">Advanced</button>
+            </div>
+        `,
+        confirmText: 'Cancel', // Renamed to cancel as buttons handle action
+        onConfirm: () => {}, // No action on confirm, buttons handle it
+        isDestructive: false,
+        showCancel: false, // Hide default cancel button
+    });
+}
+window.openSetSkillLevel = openSetSkillLevel;
+
+/** Opens the skill level picker specifically from the Player Card context. */
+function openSetSkillLevelForCard(idx) {
+    const p = StateStore.squad[idx];
+    if (!p) return;
+    
+    const pId = p.uuid || p.name;
+    UIManager.confirm({
+        title: `Set Skill Level for ${p.name}`,
+        message: `
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
+                        onclick="setPlayerSkillLevel('${pId}', 'Novice'); UIManager.hide(); openPlayerCard(${idx});">Novice</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
+                        onclick="setPlayerSkillLevel('${pId}', 'Intermediate'); UIManager.hide(); openPlayerCard(${idx});">Intermediate</button>
+                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
+                        onclick="setPlayerSkillLevel('${pId}', 'Advanced'); UIManager.hide(); openPlayerCard(${idx});">Advanced</button>
+            </div>
+        `,
+        confirmText: 'Cancel',
+        showCancel: false,
+    });
+}
+window.openSetSkillLevelForCard = openSetSkillLevelForCard;
+
+function setPlayerSkillLevel(id, level) {
+    // Find by UUID or Name (to support both Passport holders and Guests)
+    const p = StateStore.squad.find(x => x.uuid === id || x.name === id);
+    const pIdx = StateStore.squad.findIndex(x => x.uuid === id || x.name === id);
+    if (!p || pIdx === -1 || p.skillLevel === level) return;
+
+    const newSquad = [...StateStore.squad];
+    newSquad[pIdx] = { ...p, skillLevel: level }; // Immutable update
+
+    const hasChanged = StateStore.set('squad', newSquad);
+    if (hasChanged) {
+        renderSquad();
+        if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [id]);
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
+        showSessionToast(`${p.name} is now ${level}`);
+        Haptic.success();
+    }
+}
+window.setPlayerSkillLevel = setPlayerSkillLevel;
 
 function _autoAddHostToSquad() {
     // This function runs on app start for the host.
@@ -657,15 +720,15 @@ function renderSquad() {
 
         const isMatch = !query || p.name.toLowerCase().includes(query);
 
-        const isHighPriority = p.active && p.waitRounds >= 3;
         const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
+        const skillBadge = `<span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" title="${p.skillLevel || 'Intermediate'}">${(p.skillLevel || 'Intermediate').charAt(0)}</span>`;
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
-            <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${skillBadge}${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
             ${waitBadge}
         `;
         const isSwapping = pId === swapSourceUUID;
-        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''} ${isHighPriority ? 'high-priority' : ''}`;
+        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''}`;
 
         let chip = existingChips.get(pId);
 
@@ -1134,50 +1197,23 @@ function renderDirectorHub() {
     const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
     const waiting = squad.filter(p => p.active && !onCourt.has(p.uuid || p.name));
 
-    // 1. Predicted Next Matchup
-    let nextLineup = 'Waiting for players';
-    let lineupNames = '—';
-    if (typeof pullNextFromQueue === 'function') {
-        const next4 = pullNextFromQueue(onCourt);
-        if (next4.length === 4) {
-            // Build a stable preview match (sorting prevents UI jumping)
-            const sorted4 = [...next4].sort((a,b) => (a.uuid || a.name).localeCompare(b.uuid || b.name));
-            const tempMatch = buildMatchFromPlayers(sorted4);
-            const tA = tempMatch.teams[0].map(u => findP(u)?.name || 'Unknown').join(' & ');
-            const tB = tempMatch.teams[1].map(u => findP(u)?.name || 'Unknown').join(' & ');
-            lineupNames = `${tA} <span style="color:var(--accent); font-style:italic; font-size:0.6rem;">vs</span> ${tB}`;
-            nextLineup = 'Predicted Match';
-        } else if (next4.length > 0) {
-            lineupNames = next4.map(p => p.name).join(', ');
-            nextLineup = `${next4.length} / 4 Ready`;
-        }
-    }
-
+    // 1. Longest Wait
+    const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
     // 2. King of the Hill (Current high streak)
     const king = squad.length ? [...squad].sort((a,b) => b.streak - a.streak)[0] : null;
-
     // 3. Iron Man (Most games in session)
     const ironMan = squad.length ? [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] : null;
 
-    const renderItem = (label, player, val, icon) => {
-        const avatar = player ? Avatar.html(player.name, player.spiritAnimal) : `<div class="avatar" style="background:var(--bg2); border:1px dashed var(--border); font-style:normal;">${icon}</div>`;
-        const waitBadge = (player && player.waitRounds > 0) ? `<span class="wait-round-badge ${player.waitRounds >= 3 ? 'high-priority' : ''}" style="width:14px; height:14px; font-size:0.5rem; top:-2px; right:-2px;">${player.waitRounds}</span>` : '';
-        
-        return `
+    const renderItem = (label, player, val, icon) => `
         <div class="sh-insight-item">
-            <div class="sh-insight-label">${label}</div>
-            <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
-                <div style="position:relative; flex-shrink:0;">${avatar}${waitBadge}</div>
-                <div class="sh-insight-val" style="white-space: normal; overflow: visible; text-overflow: unset; line-height: 1.1;">
-                    ${player ? escapeHTML(player.name) : val}
-                </div>
-            </div>
-            <div class="sh-insight-meta">${player ? (val || '') : nextLineup}</div>
+            <div class="sh-insight-label">${icon} ${label}</div>
+            <div class="sh-insight-val">${player ? escapeHTML(player.name) : '—'}</div>
+            <div class="sh-insight-meta">${val || ''}</div>
         </div>
-    `};
+    `;
 
     grid.innerHTML = `
-        ${renderItem('Next Lineup', null, lineupNames, '⏭️')}
+        ${renderItem('Waiting Longest', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'), '⏳')}
         ${renderItem('King of Hill', king, (king?.streak > 0 ? `${king.streak} streak` : 'No wins'), '🔥')}
         ${renderItem('Iron Man', ironMan, (ironMan?.sessionPlayCount > 0 ? `${ironMan.sessionPlayCount} games` : '0 games'), '💪')}
     `;
@@ -1238,7 +1274,7 @@ function _calculateFinalRecapData() {
     const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
     const sport = StateStore.get('sport') || 'Badminton';
     
-    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins);
+    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins || getSkillIndex(b) - getSkillIndex(a));
     const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
     
     const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
@@ -1630,7 +1666,7 @@ function renderStatsTab(tab) {
     `;
 
     if (tab === 'performance') {
-        const sorted   = [...StateStore.squad].sort((a, b) => b.wins - a.wins);
+        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins);
         const topCount = Math.max(1, Math.ceil(StateStore.squad.length * 0.3));
         const peak     = sorted.slice(0, topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
         const active   = sorted.slice(topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
@@ -1689,6 +1725,7 @@ function renderStatsTab(tab) {
         const cWins  = career.wins || 0;
         const cGames = career.games || 0;
         const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+        const skillLevel = passport.skillLevel || (me ? me.skillLevel : 'Intermediate') || 'Intermediate';
         
         let sWins = 0, sGames = 0, sWr = 0;
         if (me) {
@@ -1716,6 +1753,14 @@ function renderStatsTab(tab) {
                             <div class="sl-card-key">WIN RATE</div>
                         </div>
                     </div>` : `<div class="sl-card-empty">Not in squad</div>`}
+                </div>
+                <div class="sl-stat-card" style="margin-top:12px; cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
+                    <div class="sl-card-label">SKILL LEVEL</div>
+                    <div style="margin-top: 4px;">
+                        <span class="skill-badge skill-${(skillLevel || 'Intermediate').toLowerCase()}" style="font-size:1rem; padding:4px 12px; border-radius:6px;">
+                            ${(skillLevel === 'Novice' ? '🌱 NOVICE' : skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
+                        </span>
+                    </div>
                 </div>
                 <div class="sl-stat-card">
                     <div class="sl-card-label">CAREER RECORD</div>
@@ -2079,6 +2124,15 @@ async function openPlayerCard(idx) {
             <div class="pc-stat">
                 <div class="pc-stat-val">${wr}%</div>
                 <div class="pc-stat-label">Win Rate</div>
+            </div>
+            <div class="pc-stat-divider"></div>
+            <div class="pc-stat" style="cursor:pointer;" onclick="openSetSkillLevelForCard(${idx})">
+                <div class="pc-stat-val" style="font-size:0.75rem; margin-top:4px;">
+                    <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}">
+                        ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
+                    </span>
+                </div>
+                <div class="pc-stat-label">Skill</div>
             </div>
         </div>
         <div style="display:flex; justify-content:space-between; margin-bottom:16px; padding:0 10px;">
@@ -2452,11 +2506,13 @@ async function pollPlayRequests() {
                         changed = true;
                     }
 
+                    const newSquad = [...StateStore.squad];
+                    newSquad[existingIdx] = updatedPlayer;
+                    StateStore.set('squad', newSquad); // Explicitly update StateStore
+
                     if (changed) {
-                        const newSquad = [...StateStore.squad];
-                        newSquad[existingIdx] = updatedPlayer;
-                        StateStore.set('squad', newSquad);
                         renderSquad();
+                        saveToDisk();
                     }
 
                     if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
@@ -2591,24 +2647,34 @@ function closePlayRequests() {
 
 function _resolvePlayerForSession(name, incomingUUID) {
     const validUUID = incomingUUID && incomingUUID.trim().length > 0 ? incomingUUID : null;
+    let player = null;
     let finalName = name;
 
     // 1. Priority: UUID (Canonical Identity)
     if (validUUID) {
-        const existing = StateStore.squad.find(p => p.uuid === validUUID);
-        if (existing) {
-            // Return a clone to maintain immutability
-            return { ...existing, name: name }; 
+        player = StateStore.squad.find(p => p.uuid === validUUID);
+        if (player) {
+            // Update name if changed
+            if (player.name !== name) {
+                console.log(`[CourtSide] Updating name for ${player.uuid}: ${player.name} -> ${name}`);
+                player.name = name;
+            }
+            return player;
         }
     }
 
     // 2. If not found by UUID, treat as NEW.
-    const byName = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
-    if (byName && (!byName.uuid || byName.uuid === incomingUUID)) {
-        return { ...byName, uuid: validUUID || byName.uuid }; 
+    // 2. Secondary: Name-based lookup (Smart Recognition)
+    // If UUID didn't match but the name does, assume it's the same person
+    // ONLY if the squad entry has no UUID (Legacy/Guest).
+    player = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (player && (!player.uuid || player.uuid === incomingUUID)) {
+        if (validUUID && !player.uuid) player.uuid = validUUID; // Adopt canonical ID
+        return player;
     }
 
     // 3. Truly NEW player — handle collisions
+    //    Check for name collisions and auto-rename.
     let collision = StateStore.squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
     let counter = 1;
     while (collision) {
@@ -2617,10 +2683,13 @@ function _resolvePlayerForSession(name, incomingUUID) {
         counter++;
     }
 
-    return migratePlayer({
+    // 3. Create new player
+    player = migratePlayer({
         name: finalName,
         uuid: validUUID || _generateUUID(),
     });
+
+    return player;
 }
 window._resolvePlayerForSession = _resolvePlayerForSession;
 
@@ -2628,7 +2697,7 @@ window._resolvePlayerForSession = _resolvePlayerForSession;
  * Handles a player joining via Open Party (no approval required).
  * Reuses logic from approvePlayRequest without the deletion step.
  */
-function handleAutoJoin(name, playerUUID, spiritAnimal = null) {
+function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null) {
     if (!window.isOperator) return;
     if (!playerUUID) return;
 
@@ -2638,17 +2707,17 @@ function handleAutoJoin(name, playerUUID, spiritAnimal = null) {
     setTimeout(() => _processingPlayerUUIDs.delete(playerUUID), 2000);
     
     // SNAPPINESS: Host adopts the player immediately to StateStore
-    const existingIdx = StateStore.squad.findIndex(p => p.uuid === playerUUID);
-    const newQueue = [...StateStore.playerQueue.filter(u => u !== playerUUID), playerUUID];
-    
-    if (existingIdx === -1) {
+    const existing = StateStore.squad.find(p => p.uuid === playerUUID);
+    if (!existing) {
         const player = migratePlayer({
             name: name,
             uuid: playerUUID,
             spiritAnimal: spiritAnimal,
+            skillLevel: skillLevel || 'Intermediate',
             active: true
         });
         const newSquad = [...StateStore.squad, player];
+        const newQueue = [...StateStore.playerQueue.filter(u => u !== playerUUID), playerUUID];
         
         StateStore.setState({ squad: newSquad, playerQueue: newQueue });
         renderSquad();
@@ -2656,16 +2725,10 @@ function handleAutoJoin(name, playerUUID, spiritAnimal = null) {
         
         // Use throttled broadcast to avoid flooding clients during rapid joins
         if (typeof broadcastGameState === 'function') broadcastGameState(false);
-    } else {
-        // If already in squad, ensure they are active and in the queue
-        const updatedP = { ...StateStore.squad[existingIdx], active: true };
-        const newSquad = [...StateStore.squad];
-        newSquad[existingIdx] = updatedP;
-        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
-    }
 
-    showSessionToast(`🔓 ${name} joined instantly`);
-    if (window.Haptic) Haptic.success();
+        showSessionToast(`🔓 ${name} joined instantly`);
+        if (window.Haptic) Haptic.success();
+    }
 }
 
 let _processingRequestIds = new Set();
@@ -2692,20 +2755,17 @@ async function approvePlayRequest(name, id, playerUUID = null, skipSync = false,
     const existing = StateStore.squad.find(p => (playerUUID && p.uuid === playerUUID) || (p.name.toLowerCase() === name.toLowerCase()));
     const oldName = existing ? existing.name : null;
 
-    let player = _resolvePlayerForSession(name, playerUUID);
+    const player = _resolvePlayerForSession(name, playerUUID);
+    const finalName = player.name;
     const validUUID = player.uuid;
-    
-    // Metadata reconciliation
-    if (initialEmoji) player.spiritAnimal = initialEmoji;
-    player.active = true;
 
     let newSquad = [...StateStore.squad];
-    const squadIdx = newSquad.findIndex(p => p.uuid === validUUID);
-    if (squadIdx === -1) {
+    // Identity Integrity: Ensure the player is in the squad array
+    if (!newSquad.find(p => p.uuid === validUUID)) {
         newSquad.push(player);
-    } else {
-        newSquad[squadIdx] = player;
     }
+
+    if (initialEmoji) player.spiritAnimal = initialEmoji;
 
     // BACKGROUND ACHIEVEMENT FETCHING (Prevent Race Condition)
     // We move this to an async block so StateStore.setState happens immediately.
@@ -2713,21 +2773,21 @@ async function approvePlayRequest(name, id, playerUUID = null, skipSync = false,
     if (player.uuid && window.fetchPlayerAchievements) {
         (async () => {
             try {
-                const fetched = Array.isArray(reconciledAchievements) 
-                    ? reconciledAchievements 
-                    : (await window.fetchPlayerAchievements(player.uuid)).map(a => a.achievement_id);
-                
-                const newSquad = [...StateStore.squad];
-                const pIdx = newSquad.findIndex(s => s.uuid === player.uuid);
-                if (pIdx !== -1) {
-                    const currentSet = new Set(newSquad[pIdx].achievements || []); 
-                    fetched.forEach(id => currentSet.add(id));
-                    newSquad[pIdx] = { ...newSquad[pIdx], achievements: Array.from(currentSet) };
-                    StateStore.set('squad', newSquad);
+                let achievementIds = [];
+                if (Array.isArray(reconciledAchievements)) {
+                    achievementIds = reconciledAchievements;
+                } else {
+                    const fetched = await window.fetchPlayerAchievements(player.uuid);
+                    achievementIds = fetched.map(a => a.achievement_id);
                 }
+                const currentSet = new Set(player.achievements || []); 
+                achievementIds.forEach(id => currentSet.add(id));
+                player.achievements = Array.from(currentSet);
+                StateStore.set('squad', [...StateStore.squad]); // Signal update
             } catch (e) { console.error(`Failed to fetch achievements for ${player.name}`, e); }
         })();
     }
+    player.active = true;
 
     window._sessionUUIDMap = window._sessionUUIDMap || {};
     if (validUUID) window._sessionUUIDMap[player.name] = validUUID;
@@ -2988,34 +3048,32 @@ const _startPolling = () => {
                 
                 const data = await res.json();
                 const activeInDB = data.requests || [];
-                let updatedSquad = [...StateStore.squad];
-                let anyChanged = false;
+                let anyMetadataChanged = false;
 
                 for (const dbPlayer of activeInDB) {
-                    const idx = updatedSquad.findIndex(p => p.uuid === dbPlayer.player_uuid);
-                    if (idx === -1) {
+                    const localP = StateStore.squad.find(p => p.uuid === dbPlayer.player_uuid);
+                    if (!localP) {
                         console.log(`[CourtSide] Reconciliation: Recovering missed player ${dbPlayer.name}`);
-                        handleAutoJoin(dbPlayer.name, dbPlayer.player_uuid, dbPlayer.spirit_animal);
+                        handleAutoJoin(dbPlayer.name, dbPlayer.player_uuid, dbPlayer.spirit_animal, dbPlayer.skill_level);
                     } else {
-                        const localP = updatedSquad[idx];
-                        let pChanged = false;
-                        let updatedP = { ...localP };
-
-                        if (updatedP.name !== dbPlayer.name) { updatedP.name = dbPlayer.name; pChanged = true; }
-                        if (dbPlayer.spirit_animal !== undefined && updatedP.spiritAnimal !== dbPlayer.spirit_animal) { 
-                            updatedP.spiritAnimal = (dbPlayer.spirit_animal === '' ? null : dbPlayer.spirit_animal); 
-                            pChanged = true; 
+                        // Full Metadata Sync: Ensure Host sees correct avatar/skill
+                        let changed = false;
+                        if (localP.name !== dbPlayer.name) { localP.name = dbPlayer.name; changed = true; }
+                        if (dbPlayer.spirit_animal !== undefined && localP.spiritAnimal !== dbPlayer.spirit_animal) { 
+                            localP.spiritAnimal = (dbPlayer.spirit_animal === '' ? null : dbPlayer.spirit_animal); 
+                            changed = true; 
                         }
+                        if (dbPlayer.skill_level && localP.skillLevel !== dbPlayer.skill_level) { localP.skillLevel = dbPlayer.skill_level; changed = true; }
 
-                        if (pChanged) {
-                            updatedSquad[idx] = updatedP;
-                            anyChanged = true;
+                        if (changed) {
+                            console.log(`[CourtSide] Reconciliation: Profile updated for ${localP.name}`);
+                            anyMetadataChanged = true;
                         }
                     }
                 }
 
-                if (anyChanged) {
-                    StateStore.set('squad', updatedSquad);
+                if (anyMetadataChanged) {
+                    StateStore.set('squad', [...StateStore.squad]);
                     renderSquad();
                 }
             } catch (e) {}
@@ -3627,6 +3685,14 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
                 <div class="ps-stat-val">${wr}%</div>
                 <div class="ps-stat-label">WIN RATE</div>
             </div>
+            <div class="ps-stat-card" style="cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
+                <div class="ps-stat-val" style="font-size:0.85rem; margin-top:4px;">
+                    <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" style="font-size:0.75rem; padding:4px 10px; border-radius:6px;">
+                        ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
+                    </span>
+                </div>
+                <div class="ps-stat-label">SKILL LEVEL</div>
+            </div>
         </div>
 
         <div class="ps-section">
@@ -3678,7 +3744,7 @@ window.joinFromLobby = function() {
 };
 
 function _startHostTimerTick() {
-    if (window._hostTickTimer) clearInterval(window._hostTickTimer);
+    if (window._hostTickTimer) clearInterval(window._hostHostTickTimer);
     window._hostTickTimer = setInterval(() => {
         const matches = StateStore.currentMatches || [];
         matches.forEach((m, i) => {
