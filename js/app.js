@@ -8,81 +8,6 @@
 let passport  = null;
 let supabase  = null;
 
-// ---------------------------------------------------------------------------
-// STATE STORE — Centralized data management with deep change detection
-// Used to prevent redundant cloud syncs and improve performance.
-// ---------------------------------------------------------------------------
-const StateStore = {
-    squad: [],
-    currentMatches: [],
-    roundHistory: [],
-    playerQueue: [],
-    _metadata: {
-        activeCourts: 1,
-        courtNames: {},
-        isOpenParty: false,
-        fairnessMultiplier: 5,
-        sport: 'Badminton',
-        guestList: [],
-        lastUpdated: Date.now()
-    },
-
-    get(key) { return this._metadata[key]; },
-
-    set(key, val) {
-        const isRootKey = ['squad', 'currentMatches', 'roundHistory', 'playerQueue'].includes(key);
-        const current = isRootKey ? this[key] : this._metadata[key];
-
-        // Deep comparison to prevent unnecessary triggers and network traffic
-        if (this._isEqual(current, val)) return false;
-
-        if (isRootKey) this[key] = val;
-        else this._metadata[key] = val;
-
-        this._metadata.lastUpdated = Date.now();
-        if (typeof saveToDisk === 'function') saveToDisk();
-        return true;
-    },
-
-    setState(updates) {
-        let changed = false;
-        for (const [key, val] of Object.entries(updates)) {
-            const isRootKey = ['squad', 'currentMatches', 'roundHistory', 'playerQueue'].includes(key);
-            const current = isRootKey ? this[key] : this._metadata[key];
-
-            if (!this._isEqual(current, val)) {
-                if (isRootKey) this[key] = val;
-                else this._metadata[key] = val;
-                changed = true;
-            }
-        }
-
-        if (changed) {
-            this._metadata.lastUpdated = Date.now();
-            if (typeof saveToDisk === 'function') saveToDisk();
-        }
-        return changed; // Inform caller if UI needs to be updated
-    },
-
-    _isEqual(a, b) {
-        if (a === b) return true;
-        if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return a === b;
-        
-        // PERFORMANCE: Faster check for arrays (most common state type)
-        if (Array.isArray(a) && Array.isArray(b)) {
-            if (a.length !== b.length) return false;
-            // For squad/queue, if lengths match, check first and last element as a heuristic
-            // before falling back to stringify.
-            if (a.length > 10) {
-                if (JSON.stringify(a[0]) !== JSON.stringify(b[0])) return false;
-                if (JSON.stringify(a[a.length-1]) !== JSON.stringify(b[b.length-1])) return false;
-            }
-        }
-
-        // Fallback for robust deep comparison
-        return JSON.stringify(a) === JSON.stringify(b);
-    }
-};
 window.SPORT_ICONS  = { 'Badminton': '🏸', 'Tennis': '🎾', 'Pickleball': '🏓' };
 
 // Global state is now managed by StateStore
@@ -3744,7 +3669,7 @@ window.joinFromLobby = function() {
 };
 
 function _startHostTimerTick() {
-    if (window._hostTickTimer) clearInterval(window._hostHostTickTimer);
+    if (window._hostTickTimer) clearInterval(window._hostTickTimer);
     window._hostTickTimer = setInterval(() => {
         const matches = StateStore.currentMatches || [];
         matches.forEach((m, i) => {
