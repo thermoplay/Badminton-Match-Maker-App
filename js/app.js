@@ -1697,7 +1697,7 @@ function renderStatsTab(tab) {
                         </div>
                     </div>` : `<div class="sl-card-empty">Not in squad</div>`}
                 </div>
-                <div class="sl-stat-card" style="margin-top:12px; cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
+                <div class="sl-stat-card" style="margin-top:12px;">
                     <div class="sl-card-label">SKILL LEVEL</div>
                     <div style="margin-top: 4px;">
                         <span class="skill-badge skill-${(skillLevel || 'Intermediate').toLowerCase()}" style="font-size:1rem; padding:4px 12px; border-radius:6px;">
