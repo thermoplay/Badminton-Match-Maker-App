@@ -581,6 +581,24 @@ async function removePlayerFromSession(playerUUID, playerName) {
     Haptic.bump();
 }
 
+// ---------------------------------------------------------------------------
+// SKILL HELPERS
+// ---------------------------------------------------------------------------
+
+/** Converts skill level string to numeric index for sorting (0-2). */
+function getSkillIndex(p) {
+    const levels = { 'Novice': 0, 'Intermediate': 1, 'Advanced': 2 };
+    return levels[p?.skillLevel] ?? 1; // Default to Intermediate
+}
+window.getSkillIndex = getSkillIndex;
+
+/** Returns the power weight for a skill level used in match balancing. */
+function getSkillWeight(p) {
+    const weights = { 'Novice': 1, 'Intermediate': 2, 'Advanced': 4 };
+    return weights[p?.skillLevel] ?? 2;
+}
+window.getSkillWeight = getSkillWeight;
+
 window.removePlayerFromSession = removePlayerFromSession;
 
 // ---------------------------------------------------------------------------
