@@ -39,19 +39,9 @@ function findP(id) {
 // SKILL ENGINE
 // ---------------------------------------------------------------------------
 
-// Calculates match odds based on sum of skill weights
 function calculateOdds(teamA, teamB) {
-    const getWeight = p => window.getSkillWeight ? window.getSkillWeight(p) : 2;
-    const sumA = teamA.reduce((s, p) => s + getWeight(p), 0);
-    const sumB = teamB.reduce((s, p) => s + getWeight(p), 0);
-
-    if (sumA === sumB) return [50, 50];
-    
-    // Simple probability based on relative strength.
-    // Higher sum means stronger team.
-    const totalWeight = sumA + sumB;
-    const probA = Math.round((sumA / totalWeight) * 100);
-    return [probA, 100 - probA];
+    // Skill-based balancing removed. All matches are considered 50/50.
+    return [50, 50];
 }
 
 // ---------------------------------------------------------------------------
@@ -582,8 +572,8 @@ function pullNextFromQueue(onCourt) {
 
 // Build a match object from 4 player objects, applying best-split pairing.
 function buildMatchFromPlayers(p4) {
-    // Sort by skill level (Advanced > Intermediate > Novice) for a structured snake draft
-    p4.sort((a, b) => (window.getSkillIndex?.(b) - window.getSkillIndex?.(a)) || Math.random() - 0.5);
+    // Randomize player order for team splitting
+    p4.sort(() => Math.random() - 0.5);
 
     // All 3 team splits — pick the freshest
     const splits = [
@@ -592,19 +582,9 @@ function buildMatchFromPlayers(p4) {
         { tA: [p4[0], p4[1]], tB: [p4[2], p4[3]] },
     ];
 
-    // Balance-First Sort: Prioritize splits where the weight difference is smallest.
-    // Tie-break with Variety (freshest matchup).
-    const fMult = StateStore.get('fairnessMultiplier') ?? 5;
-
-    splits.sort((a, b) => {
-        const balanceA = Math.abs(calculateOdds(a.tA, a.tB)[0] - 50);
-        const balanceB = Math.abs(calculateOdds(b.tA, b.tB)[0] - 50);
-
-        const scoreA = (balanceA * fMult) + scoreSplit(a.tA, a.tB);
-        const scoreB = (balanceB * fMult) + scoreSplit(b.tA, b.tB);
-        
-        return scoreA - scoreB;
-    });
+    // Splits are now chosen based purely on variety (variety engine/scoreSplit).
+    // This ensures the freshest possible matchup within the group of four.
+    splits.sort((a, b) => scoreSplit(a.tA, a.tB) - scoreSplit(b.tA, b.tB));
 
     const { tA, tB } = splits[0];
     const odds = calculateOdds(tA, tB);

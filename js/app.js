@@ -352,72 +352,6 @@ function toggleRestingState() {
     closeMenu();
     togglePlayerActive(p.uuid);
 }
-function openSetSkillLevel() {
-    const p = StateStore.squad[selectedPlayerIndex];
-    if (!p) return;
-    closeMenu();
-    const pId = p.uuid || p.name;
-    UIManager.confirm({
-        title: `Set Skill Level for ${p.name}`,
-        message: `
-            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Novice'); UIManager.hide();">Novice</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Intermediate'); UIManager.hide();">Intermediate</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" onclick="setPlayerSkillLevel('${pId}', 'Advanced'); UIManager.hide();">Advanced</button>
-            </div>
-        `,
-        confirmText: 'Cancel', // Renamed to cancel as buttons handle action
-        onConfirm: () => {}, // No action on confirm, buttons handle it
-        isDestructive: false,
-        showCancel: false, // Hide default cancel button
-    });
-}
-window.openSetSkillLevel = openSetSkillLevel;
-
-/** Opens the skill level picker specifically from the Player Card context. */
-function openSetSkillLevelForCard(idx) {
-    const p = StateStore.squad[idx];
-    if (!p) return;
-    
-    const pId = p.uuid || p.name;
-    UIManager.confirm({
-        title: `Set Skill Level for ${p.name}`,
-        message: `
-            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
-                        onclick="setPlayerSkillLevel('${pId}', 'Novice'); UIManager.hide(); openPlayerCard(${idx});">Novice</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
-                        onclick="setPlayerSkillLevel('${pId}', 'Intermediate'); UIManager.hide(); openPlayerCard(${idx});">Intermediate</button>
-                <button class="btn-main" style="background:var(--bg2); color:var(--text); border:1px solid var(--border);" 
-                        onclick="setPlayerSkillLevel('${pId}', 'Advanced'); UIManager.hide(); openPlayerCard(${idx});">Advanced</button>
-            </div>
-        `,
-        confirmText: 'Cancel',
-        showCancel: false,
-    });
-}
-window.openSetSkillLevelForCard = openSetSkillLevelForCard;
-
-function setPlayerSkillLevel(id, level) {
-    // Find by UUID or Name (to support both Passport holders and Guests)
-    const p = StateStore.squad.find(x => x.uuid === id || x.name === id);
-    const pIdx = StateStore.squad.findIndex(x => x.uuid === id || x.name === id);
-    if (!p || pIdx === -1 || p.skillLevel === level) return;
-
-    const newSquad = [...StateStore.squad];
-    newSquad[pIdx] = { ...p, skillLevel: level }; // Immutable update
-
-    const hasChanged = StateStore.set('squad', newSquad);
-    if (hasChanged) {
-        renderSquad();
-        if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [id]);
-        if (typeof broadcastGameState === 'function') broadcastGameState(true);
-        showSessionToast(`${p.name} is now ${level}`);
-        Haptic.success();
-    }
-}
-window.setPlayerSkillLevel = setPlayerSkillLevel;
-
 function _autoAddHostToSquad() {
     // This function runs on app start for the host.
     // If the host has a player passport from a previous session,
@@ -580,24 +514,6 @@ async function removePlayerFromSession(playerUUID, playerName) {
     await _removePlayerFromRemoteDB(removedUUID);
     Haptic.bump();
 }
-
-// ---------------------------------------------------------------------------
-// SKILL HELPERS
-// ---------------------------------------------------------------------------
-
-/** Converts skill level string to numeric index for sorting (0-2). */
-function getSkillIndex(p) {
-    const levels = { 'Novice': 0, 'Intermediate': 1, 'Advanced': 2 };
-    return levels[p?.skillLevel] ?? 1; // Default to Intermediate
-}
-window.getSkillIndex = getSkillIndex;
-
-/** Returns the power weight for a skill level used in match balancing. */
-function getSkillWeight(p) {
-    const weights = { 'Novice': 1, 'Intermediate': 2, 'Advanced': 4 };
-    return weights[p?.skillLevel] ?? 2;
-}
-window.getSkillWeight = getSkillWeight;
 
 window.removePlayerFromSession = removePlayerFromSession;
 
@@ -2069,7 +1985,7 @@ async function openPlayerCard(idx) {
                 <div class="pc-stat-label">Win Rate</div>
             </div>
             <div class="pc-stat-divider"></div>
-            <div class="pc-stat" style="cursor:pointer;" onclick="openSetSkillLevelForCard(${idx})">
+            <div class="pc-stat">
                 <div class="pc-stat-val" style="font-size:0.75rem; margin-top:4px;">
                     <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}">
                         ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
@@ -3628,7 +3544,7 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
                 <div class="ps-stat-val">${wr}%</div>
                 <div class="ps-stat-label">WIN RATE</div>
             </div>
-            <div class="ps-stat-card" style="cursor:pointer;" onclick="PlayerMode.openSkillLevelPicker()">
+                <div class="ps-stat-card">
                 <div class="ps-stat-val" style="font-size:0.85rem; margin-top:4px;">
                     <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" style="font-size:0.75rem; padding:4px 10px; border-radius:6px;">
                         ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
