@@ -1334,10 +1334,9 @@ function applyRemoteState(session) {
     // round_history is no longer synced to DB — keep local undo history intact
     // roundHistory stays as-is on rejoin
 
-    // Migrate: remote squad rows may come from an older client that didn't
-    // save skillLevel / consecutiveGames / forcedRest. migratePlayer() is defined
-    // in app.js and backfills any missing fields so calculateOdds never sees
-    // undefined.skillLevel regardless of where the data came from.
+    // Migrate: remote squad rows may come from an older client that had legacy
+    // fields like skillLevel or rating. migratePlayer() is defined in app.js
+    // and purges these fields to ensure the local state remains clean.
     if (typeof migratePlayer === 'function') StateStore.squad.forEach(migratePlayer);
     window._sessionUUIDMap  = session.uuid_map         || {};
     window._approvedPlayers = session.approved_players || {};

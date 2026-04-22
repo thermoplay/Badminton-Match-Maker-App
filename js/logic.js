@@ -1,6 +1,6 @@
 // =============================================================================
 // COURTSIDE PRO — logic.js
-// Responsibilities: Match generation, ELO calculation, match rendering,
+// Responsibilities: Match generation, stat calculation, match rendering,
 //                  winner selection, round processing, team builder.
 // Depends on: app.js (must be loaded before this file)
 // =============================================================================
@@ -38,12 +38,6 @@ function findP(id) {
 // ---------------------------------------------------------------------------
 // ROUND PROCESSING
 // ---------------------------------------------------------------------------
-
-// ABOLISHED: ELO is no longer used. This function is now applyStatsForMatch.
-// It updates wins, games, streaks, and form, but not ELO.
-// The name is kept for now to minimize diff, but its purpose has changed.
-// The `rating` field on players will become deprecated and eventually removed.
-
 // ---------------------------------------------------------------------------
 // PER-COURT ADVANCEMENT — fires when host taps "Next Game" on one court
 // ---------------------------------------------------------------------------
@@ -274,7 +268,7 @@ function processAndNext() {
     generateMatches();
 }
 window.processAndNext = processAndNext;
-function applyStatsForMatch(m) { // Renamed from applyELOForMatch
+function applyStatsForMatch(m) {
     if (m.winnerTeamIndex === null) return;
     const winIdx  = m.winnerTeamIndex;
     const loseIdx = winIdx === 0 ? 1 : 0;
@@ -302,7 +296,7 @@ function applyStatsForMatch(m) { // Renamed from applyELOForMatch
         }
     }
     winners.forEach(p => {
-        // No ELO update: only update wins, games, streak, form
+        // Update wins, games, streak, form
         p.wins++; p.games++; p.streak++;
         p.form = (p.form || []).concat('W').slice(-5);
     });
@@ -324,7 +318,7 @@ function applyStatsForMatch(m) { // Renamed from applyELOForMatch
         }
     }
     losers.forEach(p => {
-        // No ELO update: only update games, reset streak, update form
+        // Update games, reset streak, update form
         p.games++; p.streak = 0;
         p.form = (p.form || []).concat('L').slice(-5);
     });
@@ -1065,7 +1059,7 @@ function builderSwapFromSideline(sidelineUUID) {
 
 /**
  * Shuffles only this game's 4 players into new balanced teams.
- * Keeps the same 4 players, re-runs the snake-draft logic.
+ * Keeps the same 4 players, re-runs the variety engine logic.
  */
 function builderShuffle() {
     const allPlayers = [...builderTeams[0], ...builderTeams[1]]

@@ -118,12 +118,12 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     ctx.stroke();
 
     // ── VERSUS layout ────────────────────────────────────────────────────────
-    const midY = H * 0.46;
+    const midY = H * 0.5;
 
     // Team A
     ctx.save();
     ctx.textAlign = 'center';
-    _drawTeamBlock(ctx, W/2, midY - 260, teamA, '#ffffff', W);
+    _drawTeamBlock(ctx, W/2, midY - 240, teamA, '#ffffff', W);
     ctx.restore();
 
     // VS badge
@@ -161,7 +161,7 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     // Team B
     ctx.save();
     ctx.textAlign = 'center';
-    _drawTeamBlock(ctx, W/2, midY + 170, teamB, '#ffffff', W);
+    _drawTeamBlock(ctx, W/2, midY + 132, teamB, '#ffffff', W);
     ctx.restore();
 
     // ── Bottom branding strip ─────────────────────────────────────────────────
