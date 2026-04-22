@@ -87,6 +87,11 @@ function migratePlayer(p) {
     if (p.achievements     == null) p.achievements     = [];
     if (p.matchHistory     == null) p.matchHistory     = [];
     if (p.spiritAnimal     == null) p.spiritAnimal     = null;
+
+    // Explicitly remove deprecated tracking fields
+    delete p.skillLevel;
+    delete p.rating;
+
     return p;
 }
 
@@ -115,7 +120,6 @@ function loadFromDisk() {
                 activeCourts: loadedCourts,
                 courtNames: data.courtNames || {},
                 isOpenParty: data.isOpenParty || false,
-            fairnessMultiplier: data.fairnessMultiplier ?? 5, // Default mid-point
             sport: data.sport || 'Badminton',
                 guestList: data.guestList || [],
                 lastUpdated: data.lastUpdated || Date.now(),
@@ -2556,7 +2560,7 @@ window._resolvePlayerForSession = _resolvePlayerForSession;
  * Handles a player joining via Open Party (no approval required).
  * Reuses logic from approvePlayRequest without the deletion step.
  */
-function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null) {
+function handleAutoJoin(name, playerUUID, spiritAnimal = null) {
     if (!window.isOperator) return;
     if (!playerUUID) return;
 
@@ -2572,7 +2576,6 @@ function handleAutoJoin(name, playerUUID, spiritAnimal = null, skillLevel = null
             name: name,
             uuid: playerUUID,
             spiritAnimal: spiritAnimal,
-            skillLevel: skillLevel || 'Intermediate',
             active: true
         });
         const newSquad = [...StateStore.squad, player];
@@ -2913,7 +2916,7 @@ const _startPolling = () => {
                     const localP = StateStore.squad.find(p => p.uuid === dbPlayer.player_uuid);
                     if (!localP) {
                         console.log(`[CourtSide] Reconciliation: Recovering missed player ${dbPlayer.name}`);
-                        handleAutoJoin(dbPlayer.name, dbPlayer.player_uuid, dbPlayer.spirit_animal, dbPlayer.skill_level);
+                        handleAutoJoin(dbPlayer.name, dbPlayer.player_uuid, dbPlayer.spirit_animal);
                     } else {
                         // Full Metadata Sync: Ensure Host sees correct avatar/skill
                         let changed = false;

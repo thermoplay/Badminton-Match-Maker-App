@@ -32,7 +32,6 @@
     --info:         #60a5fa;
     --warning:      #facc15;
     --danger:       #ef4444;
-    --slate:        #334155;
     --red:          #ff3b5c;
     --safe-bottom:  env(safe-area-inset-bottom, 0px);
 
@@ -491,46 +490,6 @@ input:focus {
     min-width: unset;
     max-width: unset;
 }
-
-.player-chip {
-    padding: 11px 8px;
-    border-radius: 10px;
-    font-family: var(--font-body);
-    font-size: 0.78rem;
-    font-weight: 600;
-    text-align: center;
-    cursor: pointer;
-    border: 1.5px solid transparent;
-    transition: transform 0.18s ease, opacity 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
-    will-change: transform, opacity, border-color, background, box-shadow;
-    user-select: none;
-    -webkit-user-select: none;
-    letter-spacing: 0.2px;
-    position: relative;
-    animation: chipIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
-    contain: layout style; /* Performance: allows painting badges outside bounds */
-}
-
-/* Skill Level Badges in Squad List */
-.skill-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: var(--font-display);
-    font-size: 0.5rem;
-    font-weight: 900;
-    margin-right: 8px;
-    color: #fff;
-    vertical-align: middle;
-    letter-spacing: 0.5px;
-    line-height: 1;
-    white-space: nowrap;
-}
-.skill-novice { background: var(--info); }
-.skill-intermediate { background: var(--warning); color: #000 !important; }
-.skill-advanced { background: var(--danger); }
 
 @keyframes chipIn {
     from { opacity: 0; transform: scale(0.8) translateY(10px); }

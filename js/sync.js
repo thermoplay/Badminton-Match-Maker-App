@@ -685,7 +685,6 @@ function broadcastGameState(immediate = false, lastResolvedTS = null) {
     // Stripping deep stats from the broadcast reduces WebSocket frame size by ~60%.
     const safeMatches = StateStore.currentMatches.map(m => ({
         ...m,
-        odds: m.odds,
         storyBadges: m.storyBadges,
         teams: m.teams ? [ [...(m.teams[0] || [])], [...(m.teams[1] || [])] ] : [[], []]
     }));
@@ -1830,6 +1829,12 @@ updateSessionUI = function() {
 async function archiveRoundToSupabase(snapshot) {
     if (!currentRoomCode || !isOperator) return;
     
+    // Cleanup matches: remove deprecated 'odds' field before archival
+    const cleanMatches = (snapshot.matches || []).map(m => {
+        const { odds, ...rest } = m;
+        return rest;
+    });
+
     // USE apiCall for retries and resilience on critical data archival
     const res = await apiCall('match-history', {
         method: 'POST',
@@ -1838,7 +1843,7 @@ async function archiveRoundToSupabase(snapshot) {
                 room_code: currentRoomCode,
                 operator_key: operatorKey,
                 timestamp: snapshot.timestamp,
-                matches:   snapshot.matches,
+                matches:   cleanMatches,
                 achievements: snapshot.achievements || [],
                 squad:     snapshot.squadSnapshot || [],
         }

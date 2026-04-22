@@ -196,7 +196,7 @@ function _finalizeCourtResultUpdate(lastResolvedTS = Date.now(), playerUUIDs = n
     checkNextButtonState();
     updateUndoButton();
     if (typeof renderSquad === 'function') renderSquad();
-    // Trigger sync for both matches and squad since ratings/history updated
+    // Trigger sync for both matches and squad since stats/history updated
     StateStore.setState({
         currentMatches: [...StateStore.currentMatches],
         squad: [...StateStore.squad]
@@ -1103,8 +1103,7 @@ function builderShuffle() {
     // Shuffle randomly first
     allPlayers.sort(() => Math.random() - 0.5); // Randomize for fairness within the builder
 
-    if (allPlayers.length === 4) {
-        // Use the main engine to ensure the shuffle respects Fairness vs Variety settings
+        // Use the main engine to ensure the shuffle respects Variety settings
         const tempMatch = buildMatchFromPlayers(allPlayers);
         builderTeams = tempMatch.teams;
     }
