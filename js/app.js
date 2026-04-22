@@ -1132,8 +1132,8 @@ function _calculateFinalRecapData() {
     const history = StateStore.roundHistory || [];
     const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
     const sport = StateStore.get('sport') || 'Badminton';
-    
-    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins || getSkillIndex(b) - getSkillIndex(a));
+
+    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins); // Sort only by wins
     const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
     
     const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
@@ -2922,7 +2922,6 @@ const _startPolling = () => {
                             localP.spiritAnimal = (dbPlayer.spirit_animal === '' ? null : dbPlayer.spirit_animal); 
                             changed = true; 
                         }
-                        if (dbPlayer.skill_level && localP.skillLevel !== dbPlayer.skill_level) { localP.skillLevel = dbPlayer.skill_level; changed = true; }
 
                         if (changed) {
                             console.log(`[CourtSide] Reconciliation: Profile updated for ${localP.name}`);

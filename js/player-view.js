@@ -2029,7 +2029,6 @@ const PlayerMode = {
                     name:        passport.playerName,
                     player_uuid: passport.playerUUID,
                     spirit_animal: passport.spiritAnimal,
-                    skill_level: passport.skillLevel,
                     force:       force,
                 }),
             });
