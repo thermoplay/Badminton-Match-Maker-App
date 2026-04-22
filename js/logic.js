@@ -36,15 +36,6 @@ function findP(id) {
 }
 
 // ---------------------------------------------------------------------------
-// SKILL ENGINE
-// ---------------------------------------------------------------------------
-
-function calculateOdds(teamA, teamB) {
-    // Skill-based balancing removed. All matches are considered 50/50.
-    return [50, 50];
-}
-
-// ---------------------------------------------------------------------------
 // ROUND PROCESSING
 // ---------------------------------------------------------------------------
 
@@ -177,7 +168,7 @@ function _generateAndRenderNextMatchForCourt(mIdx, next4) {
     const tB = newMatch.teams[1].map(u => findP(u)).filter(Boolean);
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
-        const newCardEl = buildMatchCard(mIdx, tA, tB, newMatch.odds, newMatch.startedAt, newMatch.storyBadges);
+        const newCardEl = buildMatchCard(mIdx, tA, tB, newMatch.startedAt, newMatch.storyBadges);
         newCardEl.classList.add('card-replace');
         newCardEl.classList.remove('card-entering');
         cardEl.replaceWith(newCardEl);
@@ -587,15 +578,12 @@ function buildMatchFromPlayers(p4) {
     splits.sort((a, b) => scoreSplit(a.tA, a.tB) - scoreSplit(b.tA, b.tB));
 
     const { tA, tB } = splits[0];
-    const odds = calculateOdds(tA, tB);
-
     const storyBadges = determineStoryBadges(tA, tB);
 
     return {
         teams:           [tA.map(p => p.uuid || p.name), tB.map(p => p.uuid || p.name)],
         winnerTeamIndex: null,
         storyBadges,
-        odds,
         startedAt: Date.now(),
     };
 }
@@ -606,7 +594,6 @@ function rebuildMatchCardIndices() {
         idx: i,
         tA: m.teams[0].map(u => findP(u)).filter(Boolean),
         tB: m.teams[1].map(u => findP(u)).filter(Boolean),
-        odds: m.odds,
         startedAt: m.startedAt,
         storyBadges: m.storyBadges,
         winnerTeamIndex: m.winnerTeamIndex
@@ -683,7 +670,7 @@ function _createMatchesForCourts(courtCount) {
 
         const tA = match.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = match.teams[1].map(n => findP(n)).filter(Boolean);
-        matchData.push({ idx: i, tA, tB, odds: match.odds, startedAt: match.startedAt, storyBadges: match.storyBadges });
+        matchData.push({ idx: i, tA, tB, startedAt: match.startedAt, storyBadges: match.storyBadges });
     }
     return matchData;
 }
@@ -817,8 +804,8 @@ function renderAllMatchCards(matchData, skipAnimation = false) {
     container.innerHTML = ''; // Clear existing content
 
     const fragment = document.createDocumentFragment();
-    matchData.forEach(({ idx, tA, tB, odds, startedAt, storyBadges, winnerTeamIndex }) => {
-        const cardElement = buildMatchCard(idx, tA, tB, odds, startedAt, storyBadges);
+    matchData.forEach(({ idx, tA, tB, startedAt, storyBadges, winnerTeamIndex }) => {
+        const cardElement = buildMatchCard(idx, tA, tB, startedAt, storyBadges);
         if (skipAnimation) cardElement.classList.remove('card-entering');
         
         if (winnerTeamIndex !== null && winnerTeamIndex !== undefined) {
@@ -839,12 +826,12 @@ function renderAllMatchCards(matchData, skipAnimation = false) {
 
 // Note: Other functions like _generateAndRenderNextMatchForCourt, rebuildMatchCardIndices, and confirmTeamBuilder
 // should also be updated to use `appendChild` or `replaceWith(buildMatchCard(...))` instead of innerHTML/outerHTML.
-function renderMatchCard(idx, tA, tB, odds) {
+function renderMatchCard(idx, tA, tB) {
     const container = document.getElementById('matchContainer');
-    container.appendChild(buildMatchCard(idx, tA, tB, odds));
+    container.appendChild(buildMatchCard(idx, tA, tB));
 }
 
-function buildMatchCard(idx, tA, tB, odds, startedAt = Date.now(), storyBadges = []) {
+function buildMatchCard(idx, tA, tB, startedAt = Date.now(), storyBadges = []) {
     const template = document.getElementById('matchCardTemplate');
     if (!template) {
         console.error('Match Card Template not found in DOM!');
@@ -955,21 +942,6 @@ function renderTeamBuilder() {
     // --- UX IMPROVEMENT: Live Odds in Team Builder ---
     const tAObjs = builderTeams[0].map(u => findP(u)).filter(Boolean);
     const tBObjs = builderTeams[1].map(u => findP(u)).filter(Boolean);
-    const odds = calculateOdds(tAObjs, tBObjs);
-
-    let oddsEl = document.getElementById('builderLiveOdds');
-    if (!oddsEl) {
-        oddsEl = document.createElement('div');
-        oddsEl.id = 'builderLiveOdds';
-        oddsEl.className = 'prob-container';
-        oddsEl.style.cssText = 'display:flex; justify-content:center; margin: 0 auto 16px; width:fit-content;';
-        const teamsLayout = document.querySelector('.builder-teams');
-        if (teamsLayout) teamsLayout.parentNode.insertBefore(oddsEl, teamsLayout);
-    }
-    oddsEl.innerHTML = `
-        <div class="prob-pill ${odds[0] >= 50 ? 'highlight' : ''}">${odds[0]}%</div>
-        <div class="prob-pill ${odds[1] > 50 ? 'highlight' : ''}">${odds[1]}%</div>
-    `;
 
     // All names currently in this game
     const inGame = new Set([...builderTeams[0], ...builderTeams[1]]);
@@ -1109,7 +1081,7 @@ function builderShuffle() {
     }
     builderSelected = null;
     renderTeamBuilder();
-}
+
 window.confirmTeamBuilder = confirmTeamBuilder;
 
 /**
@@ -1140,12 +1112,10 @@ function confirmTeamBuilder() {
     }
 
     // Update the match in state
-    const newOdds = calculateOdds(tAObjs, tBObjs);
     StateStore.currentMatches[mIdx].teams = [
         builderTeams[0],
         builderTeams[1]
     ];
-    StateStore.currentMatches[mIdx].odds = newOdds;
     StateStore.currentMatches[mIdx].winnerTeamIndex = null; // Reset winner since teams changed
 
     const newBadges = determineStoryBadges(tAObjs, tBObjs);
@@ -1157,7 +1127,7 @@ function confirmTeamBuilder() {
     // Re-render just this card by replacing it in the DOM
     const cardEl = document.getElementById(`match-${mIdx}`);
     if (cardEl) {
-        const newCardEl = buildMatchCard(mIdx, tAObjs, tBObjs, newOdds, originalStartTime, newBadges);
+        const newCardEl = buildMatchCard(mIdx, tAObjs, tBObjs, originalStartTime, newBadges);
         cardEl.replaceWith(newCardEl);
     } else {
         rebuildMatchCardIndices();
@@ -1282,11 +1252,9 @@ function swapActivePlayers(uuidA, uuidB) {
         m.winnerTeamIndex = null;
         const tA = m.teams[0].map(n => findP(n)).filter(Boolean);
         const tB = m.teams[1].map(n => findP(n)).filter(Boolean);
-        m.odds = calculateOdds(tA, tB);
-        // Re-render to show updated odds and potentially new badges
         const cardEl = document.getElementById(`match-${idx}`);
         if (cardEl) {
-            const newCardEl = buildMatchCard(idx, tA, tB, m.odds, m.startedAt, m.storyBadges);
+            const newCardEl = buildMatchCard(idx, tA, tB, m.startedAt, m.storyBadges);
             cardEl.replaceWith(newCardEl);
         }
     };

@@ -31,8 +31,7 @@
     --border-accent: rgba(0, 255, 163, 0.25);
     --info:         #60a5fa;
     --warning:      #facc15;
-    --danger:       #ef4444;
-    --red:          #ff3b5c;
+    --danger:       #ff3b5c;
     --safe-bottom:  env(safe-area-inset-bottom, 0px);
 
     /* Z-Index Scale (Maintainability) */
@@ -647,7 +646,7 @@ input:focus {
 /* ── Per-Court Next Game button ─────────────────────────────────────────── */
 
 .court-next-row {
-    grid-column: 1 / -1;
+    width: 100%;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -818,10 +817,8 @@ input:focus {
 .match-card {
     background: var(--surface);
     border-radius: 14px;
-    display: grid;
-    /* Header spans full width; teams + VS below */
-    grid-template-columns: 1fr 44px 1fr;
-    grid-template-rows: auto 1fr;
+    display: flex;
+    flex-wrap: wrap;
     align-items: stretch;
     margin-bottom: 8px;
     overflow: hidden;
@@ -834,7 +831,7 @@ input:focus {
 
 /* Game label + odds row — spans all 3 columns, centered */
 .match-header {
-    grid-column: 1 / -1;
+    width: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -906,38 +903,13 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
     display: inline-block;
 }
 
-.prob-container {
-    background: rgba(0,0,0,0.3);
-    display: inline-flex;
-    border-radius: 20px;
-    padding: 3px;
-    gap: 2px;
-    border: 1px solid var(--border);
-}
-
-.prob-pill {
-    font-family: var(--font-display);
-    font-size: 0.65rem;
-    font-weight: 900;
-    padding: 3px 10px;
-    border-radius: 16px;
-    opacity: 0.3;
-    letter-spacing: 0.5px;
-    transition: opacity 0.2s;
-}
-
-.prob-pill.highlight {
-    color: var(--accent);
-    opacity: 1;
-    background: var(--accent-dim);
-}
-
 @keyframes cardDrop {
     from { opacity: 0; transform: translateY(24px) scale(0.97); }
     to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .team-box {
+    flex: 1;
     padding: 14px 10px;
     text-align: center;
     cursor: pointer;
@@ -1007,6 +979,7 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
 .vs-badge {
     font-family: var(--font-display);
     font-weight: 900;
+    flex: 0 0 44px;
     font-style: italic;
     font-size: 0.9rem;
     letter-spacing: 1px;
@@ -1015,9 +988,10 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
     align-items: center;
     justify-content: center;
     background: var(--bg2);
-    border-left: 1px solid var(--border);
-    border-right: 1px solid var(--border);
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
     position: relative;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
 
 /* VS top/bottom pip lines */
@@ -1029,10 +1003,24 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
     transform: translateX(-50%);
     width: 1px;
     height: 10px;
-    background: var(--border);
+    background: rgba(255, 255, 255, 0.12);
+    transition: background 0.2s;
 }
 .vs-badge::before { top: 6px; }
 .vs-badge::after  { bottom: 6px; }
+
+/* VS badge winner state — matches team-box highlight */
+.match-card:has(.team-box.selected) .vs-badge {
+    background: var(--accent);
+    color: var(--bg);
+    border-left-color: rgba(0, 0, 0, 0.15);
+    border-right-color: rgba(0, 0, 0, 0.15);
+}
+
+.match-card:has(.team-box.selected) .vs-badge::before,
+.match-card:has(.team-box.selected) .vs-badge::after {
+    background: rgba(0, 0, 0, 0.15);
+}
 
 /* ---------------------------------------------------------------------------
    NAV BAR — FROSTED GLASS BROADCAST STYLE
@@ -1314,9 +1302,9 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
 }
 
 .btn-danger {
-    background: rgba(255, 59, 92, 0.12) !important;
-    color: var(--red) !important;
-    border: 1.5px solid rgba(255, 59, 92, 0.3) !important;
+    background: color-mix(in srgb, var(--danger) 12%, transparent) !important;
+    color: var(--danger) !important;
+    border: 1.5px solid color-mix(in srgb, var(--danger) 30%, transparent) !important;
 }
 
 .btn-cancel {
@@ -2796,28 +2784,8 @@ header {
     text-shadow: 0 0 20px rgba(0,255,163,0.6);
 }
 
-.aura-odds-row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-top: 32px;
-    z-index: 1;
-}
 
-.aura-odd {
-    font-size: 28px;
-    font-weight: 900;
-    font-style: italic;
-    color: var(--accent);
-}
 
-.aura-odd-label {
-    font-size: 9px;
-    font-weight: 900;
-    letter-spacing: 3px;
-    color: rgba(255,255,255,0.3);
-    text-transform: uppercase;
-}
 
 .aura-footer {
     position: absolute;
@@ -4367,23 +4335,6 @@ button:active,
 .sl-team-won  { color: var(--accent); }
 .sl-team-lost { color: var(--text-muted); text-decoration: line-through; text-decoration-color: rgba(107,114,128,0.5); }
 
-.sl-odds-pill {
-    font-size: 0.58rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    color: var(--text-muted);
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 2px 8px;
-    white-space: nowrap;
-}
-
-.sl-odds-pill.sl-odds-fav {
-    color: var(--accent);
-    border-color: var(--border-accent);
-    background: var(--accent-dim);
-}
 
 .sl-vs {
     font-family: var(--font-display);
@@ -4392,6 +4343,25 @@ button:active,
     letter-spacing: 2px;
     color: var(--accent);
     text-align: center;
+    transition: background 0.2s, color 0.2s;
+    border-radius: 4px;
+}
+
+.sl-match-card.sl-match-decided .sl-vs {
+    background: var(--accent);
+    color: var(--bg);
+    padding: 2px 0;
+}
+
+@keyframes sl-vs-winner-pulse {
+    0%   { transform: scale(1);   box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
+    50%  { transform: scale(1.08); box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.4); }
+    100% { transform: scale(1);   box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
+}
+
+.sl-match-card.sl-match-won .sl-vs {
+    animation: sl-vs-winner-pulse 2s infinite ease-in-out;
+    z-index: 1;
 }
 
 .sl-winner-banner {

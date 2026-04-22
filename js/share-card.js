@@ -164,21 +164,6 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     _drawTeamBlock(ctx, W/2, midY + 170, teamB, '#ffffff', W);
     ctx.restore();
 
-    // ── "Who you got?" CTA ───────────────────────────────────────────────────
-    const ctaY = H * 0.76;
-    ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    _roundRect(ctx, 120, ctaY - 52, W - 240, 80, 16);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.font = '500 32px Arial, sans-serif';
-    ctx.letterSpacing = '3px';
-    ctx.textAlign = 'center';
-    ctx.fillText('WHO YOU GOT? 🏸', W/2, ctaY + 8);
-
     // ── Bottom branding strip ─────────────────────────────────────────────────
     const botY = H - 180;
     const stripGrad = ctx.createLinearGradient(0, botY, 0, H);

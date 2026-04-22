@@ -161,7 +161,7 @@ function addPlayer() {
     }
 
     const newUUID = _generateUUID();
-    // Use migratePlayer to ensure all required logic fields (skillLevel, stats) are initialized
+    // Use migratePlayer to ensure all required logic fields (stats, history) are initialized
     const newPlayer = migratePlayer({
         name: name,
         uuid: newUUID,
@@ -584,10 +584,9 @@ function renderSquad() {
         const isMatch = !query || p.name.toLowerCase().includes(query);
 
         const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
-        const skillBadge = `<span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" title="${p.skillLevel || 'Intermediate'}">${(p.skillLevel || 'Intermediate').charAt(0)}</span>`;
         const chipContent = `
             ${Avatar.html(p.name, p.spiritAnimal)}
-            <span class="chip-name">${skillBadge}${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
             ${waitBadge}
         `;
         const isSwapping = pId === swapSourceUUID;
@@ -1588,7 +1587,6 @@ function renderStatsTab(tab) {
         const cWins  = career.wins || 0;
         const cGames = career.games || 0;
         const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-        const skillLevel = passport.skillLevel || (me ? me.skillLevel : 'Intermediate') || 'Intermediate';
         
         let sWins = 0, sGames = 0, sWr = 0;
         if (me) {
@@ -1616,14 +1614,6 @@ function renderStatsTab(tab) {
                             <div class="sl-card-key">WIN RATE</div>
                         </div>
                     </div>` : `<div class="sl-card-empty">Not in squad</div>`}
-                </div>
-                <div class="sl-stat-card" style="margin-top:12px;">
-                    <div class="sl-card-label">SKILL LEVEL</div>
-                    <div style="margin-top: 4px;">
-                        <span class="skill-badge skill-${(skillLevel || 'Intermediate').toLowerCase()}" style="font-size:1rem; padding:4px 12px; border-radius:6px;">
-                            ${(skillLevel === 'Novice' ? '🌱 NOVICE' : skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
-                        </span>
-                    </div>
                 </div>
                 <div class="sl-stat-card">
                     <div class="sl-card-label">CAREER RECORD</div>
@@ -1987,15 +1977,6 @@ async function openPlayerCard(idx) {
             <div class="pc-stat">
                 <div class="pc-stat-val">${wr}%</div>
                 <div class="pc-stat-label">Win Rate</div>
-            </div>
-            <div class="pc-stat-divider"></div>
-            <div class="pc-stat">
-                <div class="pc-stat-val" style="font-size:0.75rem; margin-top:4px;">
-                    <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}">
-                        ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
-                    </span>
-                </div>
-                <div class="pc-stat-label">Skill</div>
             </div>
         </div>
         <div style="display:flex; justify-content:space-between; margin-bottom:16px; padding:0 10px;">
@@ -2918,7 +2899,7 @@ const _startPolling = () => {
                         console.log(`[CourtSide] Reconciliation: Recovering missed player ${dbPlayer.name}`);
                         handleAutoJoin(dbPlayer.name, dbPlayer.player_uuid, dbPlayer.spirit_animal);
                     } else {
-                        // Full Metadata Sync: Ensure Host sees correct avatar/skill
+                        // Full Metadata Sync: Ensure Host sees correct avatar/metadata
                         let changed = false;
                         if (localP.name !== dbPlayer.name) { localP.name = dbPlayer.name; changed = true; }
                         if (dbPlayer.spirit_animal !== undefined && localP.spiritAnimal !== dbPlayer.spirit_animal) { 
@@ -3545,14 +3526,6 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
             <div class="ps-stat-card">
                 <div class="ps-stat-val">${wr}%</div>
                 <div class="ps-stat-label">WIN RATE</div>
-            </div>
-                <div class="ps-stat-card">
-                <div class="ps-stat-val" style="font-size:0.85rem; margin-top:4px;">
-                    <span class="skill-badge skill-${(p.skillLevel || 'Intermediate').toLowerCase()}" style="font-size:0.75rem; padding:4px 10px; border-radius:6px;">
-                        ${(p.skillLevel === 'Novice' ? '🌱 NOVICE' : p.skillLevel === 'Advanced' ? '👑 PRO' : '⚔️ INTER')}
-                    </span>
-                </div>
-                <div class="ps-stat-label">SKILL LEVEL</div>
             </div>
         </div>
 

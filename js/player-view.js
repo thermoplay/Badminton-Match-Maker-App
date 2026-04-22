@@ -256,6 +256,7 @@ const SidelineView = {
             const winIdx = m.winnerTeamIndex;
             const courtName = courtNames[i] || `COURT ${i + 1}`;
             const hasWinner = winIdx !== null && winIdx !== undefined;
+            const won = hasWinner && teams[winIdx]?.includes(myUUID);
             const safeNames = (uuids) => uuids.map(u => this._esc(findP(u)?.name || 'Unknown')).join(' &amp; ');
             const timerHTML = m.startedAt ? `<span class="sl-court-timer" data-timer-id="${i}">⏱ 0:00</span>` : '';
             const winnerBanner = hasWinner ? `<div class="sl-winner-banner">🏆 ${safeNames(teams[winIdx] || [])} won</div>` : '';
@@ -283,7 +284,7 @@ const SidelineView = {
                     📲 Share this matchup
                 </button>` : ''}
             `;
-            const cardClasses = `sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''}`;
+            const cardClasses = `sl-match-card ${playing ? 'sl-match-mine' : ''} ${hasWinner ? 'sl-match-decided' : ''} ${won ? 'sl-match-won' : ''}`;
 
             let card = existingMatchCards.get(i);
             if (card) {
@@ -328,7 +329,6 @@ const SidelineView = {
         const tB = match.teams[1];
         const statsA = getStats(tA);
         const statsB = getStats(tB);
-        const odds = match.odds || [50, 50];
 
         const renderNames = (arr) => arr.map(uuid => {
             const p = squadMap.get(uuid);
@@ -347,12 +347,6 @@ const SidelineView = {
                     <div class="sl-tape-team">
                         <div class="sl-tape-name">${renderNames(tB)}</div>
                     </div>
-                </div>
-
-                <div class="sl-tape-row">
-                    <div class="sl-tape-val ${odds[0] > odds[1] ? 'win' : ''}">${odds[0]}%</div>
-                    <div class="sl-tape-label">Win Probability</div>
-                    <div class="sl-tape-val ${odds[1] > odds[0] ? 'win' : ''}">${odds[1]}%</div>
                 </div>
 
                 <div class="sl-tape-row">

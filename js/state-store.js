@@ -13,6 +13,7 @@ const StateStore = (() => {
         roundHistory: [],
         selectedPlayerIndex: null,
         courtNames: {},
+        sport: 'Badminton',
         isOpenParty: false,
         guestList: [],
         batterySaver: false,
