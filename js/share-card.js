@@ -67,7 +67,7 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     ctx.shadowColor = 'rgba(0,255,163,0.6)';
     ctx.shadowBlur  = 28;
     ctx.fillStyle   = '#00ffa3';
-    ctx.font        = 'bold 52px "Arial Narrow", Arial, sans-serif';
+    ctx.font        = '900 52px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '10px';
     ctx.textAlign   = 'center';
     ctx.fillText('THE COURTSIDE', W/2, 168);
@@ -98,7 +98,7 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     ctx.lineWidth   = 2;
     ctx.stroke();
     ctx.fillStyle   = 'rgba(255,255,255,0.45)';
-    ctx.font        = '500 26px Arial, sans-serif';
+    ctx.font        = '500 26px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '4px';
     ctx.textAlign   = 'left';
     ctx.fillText(title, liveTextX, liveY);
@@ -147,7 +147,7 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     ctx.stroke();
     // VS text
     ctx.fillStyle = '#00ffa3';
-    ctx.font = 'bold 56px "Arial Narrow", Arial, sans-serif';
+    ctx.font = '900 56px "Barlow Condensed", sans-serif';
     ctx.textAlign = 'center';
     ctx.letterSpacing = '4px';
     ctx.fillText('VS', vsCX, vsCY + 20);
@@ -173,13 +173,13 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     ctx.fillRect(0, botY, W, H - botY);
 
     ctx.fillStyle = 'rgba(0,255,163,0.7)';
-    ctx.font = 'bold 30px "Arial Narrow", Arial, sans-serif';
+    ctx.font = '700 30px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '6px';
     ctx.textAlign = 'center';
     ctx.fillText('THECOURTSIDEPRO.VERCEL.APP', W/2, H - 100);
 
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.font = '22px Arial, sans-serif';
+    ctx.font = '400 22px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '2px';
     ctx.fillText('thecourtsidepro.vercel.app', W/2, H - 58);
 
@@ -229,13 +229,13 @@ async function generateMVPPoster(name, wins, totalSessionGames) {
 
     // Trophy Icon Shadow
     ctx.fillStyle = 'rgba(0,255,163,0.05)';
-    ctx.font = '400px Arial';
+    ctx.font = '400px "Barlow Condensed", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('🏆', W/2, H/2 + 100);
 
     // Top Branding
     ctx.fillStyle = '#00ffa3';
-    ctx.font = 'bold 44px "Arial Narrow", Arial, sans-serif';
+    ctx.font = '900 44px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '12px';
     ctx.fillText('SESSION RECAP', W/2, 180);
 
@@ -244,14 +244,14 @@ async function generateMVPPoster(name, wins, totalSessionGames) {
     ctx.shadowColor = 'rgba(0,255,163,0.5)';
     ctx.shadowBlur = 30;
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 120px "Arial Narrow", Arial, sans-serif';
+    ctx.font = '900 120px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '4px';
     ctx.fillText('SESSION MVP', W/2, H*0.35);
     ctx.restore();
 
     // Player Name
     ctx.fillStyle = '#00ffa3';
-    ctx.font = 'italic 900 180px "Arial Narrow", Arial, sans-serif';
+    ctx.font = 'italic 900 180px "Barlow Condensed", sans-serif';
     ctx.fillText(name.toUpperCase(), W/2, H*0.48);
 
     // Stats Box
@@ -265,10 +265,10 @@ async function generateMVPPoster(name, wins, totalSessionGames) {
 
     // Stat 1: Wins
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 100px Arial';
+    ctx.font = '900 100px "Barlow Condensed", sans-serif';
     ctx.fillText(wins, W/2 - 180, boxY + 140);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.font = 'bold 30px Arial';
+    ctx.font = '700 30px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '4px';
     ctx.fillText('WINS', W/2 - 180, boxY + 200);
 
@@ -278,16 +278,16 @@ async function generateMVPPoster(name, wins, totalSessionGames) {
 
     // Stat 2: Total Session Games
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 100px Arial';
+    ctx.font = '900 100px "Barlow Condensed", sans-serif';
     ctx.fillText(totalSessionGames, W/2 + 180, boxY + 140);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.font = 'bold 30px Arial';
+    ctx.font = '700 30px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '4px';
     ctx.fillText('GAMES', W/2 + 180, boxY + 200);
 
     // Footer
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = 'bold 32px Arial';
+    ctx.font = '700 32px "Barlow Condensed", sans-serif';
     ctx.letterSpacing = '6px';
     ctx.fillText('THECOURTSIDEPRO.VERCEL.APP', W/2, H - 120);
 
@@ -345,21 +345,21 @@ function _drawTeamBlock(ctx, cx, y, names, color, W) {
 
     if (parts.length >= 2) {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.font = 'bold 72px "Arial Narrow", Arial, sans-serif';
+        ctx.font = '900 72px "Barlow Condensed", sans-serif';
         ctx.letterSpacing = '2px';
         ctx.textAlign = 'center';
         ctx.fillText(parts[0].toUpperCase(), cx, y);
         ctx.fillStyle = 'rgba(0,255,163,0.6)';
-        ctx.font = '500 34px Arial, sans-serif';
+        ctx.font = '700 34px "Barlow Condensed", sans-serif';
         ctx.letterSpacing = '4px';
         ctx.fillText('&', cx, y + 54);
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.font = 'bold 72px "Arial Narrow", Arial, sans-serif';
+        ctx.font = '900 72px "Barlow Condensed", sans-serif';
         ctx.letterSpacing = '2px';
         ctx.fillText(parts[1].toUpperCase(), cx, y + 108);
     } else {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.font = 'bold 72px "Arial Narrow", Arial, sans-serif';
+        ctx.font = '900 72px "Barlow Condensed", sans-serif';
         ctx.letterSpacing = '2px';
         ctx.textAlign = 'center';
         const text = parts[0] || String(names);

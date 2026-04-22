@@ -543,7 +543,7 @@ function renderSquad() {
     if (!searchInput) {
         const searchWrap = document.createElement('div');
         searchWrap.className = 'input-row search-wrap';
-        searchWrap.style.cssText = 'margin-bottom: 12px; position: relative;';
+        searchWrap.style.cssText = 'margin-bottom: 16px; position: relative;';
         searchWrap.innerHTML = ` 
             <input type="text" id="squadSearchInput" placeholder="Search players..." 
                    style="flex:1; padding-right: 35px;" oninput="window.handleSquadSearch(this.value)">
@@ -1062,22 +1062,22 @@ function renderDirectorHub() {
     // 1. Longest Wait
     const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
     // 2. King of the Hill (Current high streak)
-    const king = squad.length ? [...squad].sort((a,b) => b.streak - a.streak)[0] : null;
+    const king = squad.filter(p => p.streak > 0).sort((a,b) => b.streak - a.streak)[0] : null;
     // 3. Iron Man (Most games in session)
-    const ironMan = squad.length ? [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] : null;
+    const ironMan = squad.filter(p => p.sessionPlayCount > 0).sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] : null;
 
     const renderItem = (label, player, val, icon) => `
         <div class="sh-insight-item">
-            <div class="sh-insight-label">${icon} ${label}</div>
+            <div class="sh-insight-label">${label}</div>
             <div class="sh-insight-val">${player ? escapeHTML(player.name) : '—'}</div>
             <div class="sh-insight-meta">${val || ''}</div>
         </div>
     `;
 
     grid.innerHTML = `
-        ${renderItem('Waiting Longest', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'), '⏳')}
-        ${renderItem('King of Hill', king, (king?.streak > 0 ? `${king.streak} streak` : 'No wins'), '🔥')}
-        ${renderItem('Iron Man', ironMan, (ironMan?.sessionPlayCount > 0 ? `${ironMan.sessionPlayCount} games` : '0 games'), '💪')}
+        ${renderItem('⌛ LONGEVITY', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'))}
+        ${renderItem('⚡ WIN STREAK', king, (king?.streak > 0 ? `${king.streak} streak` : 'No streaks'))}
+        ${renderItem('🎮 TOTAL GAMES', ironMan, (ironMan?.sessionPlayCount > 0 ? `${ironMan.sessionPlayCount} games` : '0 games'))}
     `;
 }
 window.renderDirectorHub = renderDirectorHub;

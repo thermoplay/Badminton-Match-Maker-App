@@ -30,8 +30,8 @@
     <div id="hostRoot">
     <div class="app-container">
         <header>
-            <div class="subtitle">Matchmaking Made Easy</div>
-            <h1>THE COURT<span>SIDE</span></h1>
+            <div class="subtitle">ELITE MANAGEMENT</div>
+            <h1>THE COURTSIDE <span>PRO</span></h1>
         </header>
 
         <section class="panel">
@@ -74,29 +74,29 @@
     </template>
 
     <nav class="nav-bar" id="hostNav">
-        <button class="btn-icon" onclick="showOverlay('sync')" aria-label="Sync">📲</button>
-        <div class="court-selector">
-            <span class="court-selector-label">COURTS</span>
-            <div class="court-input-row">
-                <input
-                    type="number"
-                    id="courtCountInput"
-                    class="court-count-input"
-                    value="1"
-                    min="1"
-                    max="99"
-                    onkeydown="if(event.key==='Enter') setCourts(parseInt(this.value)||1)"
-                >
-                <button class="court-set-btn" onclick="setCourts(parseInt(document.getElementById('courtCountInput').value)||1)">✓</button>
+       <div class="nav-item" onclick="showOverlay('history')" style="display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;">
+            <span style="font-size:1.2rem; color:var(--text-muted);">📜</span>
+            <span style="font-family:var(--font-display); font-size:0.55rem; font-weight:800; letter-spacing:1px; color:var(--text-muted);">HISTORY</span>
+        </div>
+        
+        <div class="nav-item active" style="display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;">
+            <span style="font-size:1.4rem; color:var(--accent); text-shadow: 0 0 10px var(--accent-glow);">🏸</span>
+            <span style="font-family:var(--font-display); font-size:0.55rem; font-weight:900; letter-spacing:1px; color:var(--accent);">LIVE SCORE</span>
+        </div>
+
+        <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()" style="flex:0 0 120px; height:44px; min-height:44px; font-size:0.85rem;">START</button>
+
+        <div class="nav-item" onclick="showOverlay('stats')" style="display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;">
+            <span style="font-size:1.2rem; color:var(--text-muted);">🏆</span>
+            <span style="font-family:var(--font-display); font-size:0.55rem; font-weight:800; letter-spacing:1px; color:var(--text-muted);">LEADERBOARD</span>
+        </div>
+        
+        <div class="nav-item" onclick="showOverlay('sync')" style="display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;">
+            <span style="font-size:1.2rem; color:var(--text-muted);">📲</span>
+            <span style="font-family:var(--font-display); font-size:0.55rem; font-weight:800; letter-spacing:1px; color:var(--text-muted);">SYNC</span>
             </div>
         </div>
-        <button class="btn-icon" id="modeToggleBtn" onclick="toggleGameMode()" style="font-size:0.75rem; font-weight:900; letter-spacing:1px; width:44px; min-width:44px;">2v2</button>
-        <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()">Start Session</button>
-        <button class="btn-icon undo-btn" id="undoRoundBtn" onclick="undoLastRound()" aria-label="Undo" style="display:none;">
-            <span class="undo-icon">↩</span>
-            <span class="undo-label">Undo</span>
-        </button>
-        <button class="btn-icon" onclick="showOverlay('stats')" aria-label="Stats">🏆</button>
+       
     </nav>
 
     <div id="overlay" role="dialog" aria-modal="true">
