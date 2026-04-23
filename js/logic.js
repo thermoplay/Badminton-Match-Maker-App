@@ -255,6 +255,7 @@ async function processCourtResult(mIdx) {
     next4.forEach(p => p.waitRounds = 0);
 
     _generateAndRenderNextMatchForCourt(mIdx, next4);
+    _announceMatch(mIdx, next4.slice(0, 2), next4.slice(2, 4));
     _finalizeCourtResultUpdate(resolutionTS, matchPlayerUUIDs);
 }
 
@@ -712,9 +713,28 @@ function _renderAndFinalizeGeneration(matchData) {
     renderQueueStrip();
     checkNextButtonState();
     renderSquad();
+     
+    if (localStorage.getItem('cs_host_audio_announce') === 'true') {
+        window.speechSynthesis.cancel(); // Clear any pending speech
+        matchData.forEach(m => _announceMatch(m.idx, m.tA, m.tB));
+    }
     StateStore.set('currentMatches', [...StateStore.currentMatches]);
     if (typeof broadcastGameState === 'function') broadcastGameState(true);
     Haptic.bump();
+}
+
+function _announceMatch(courtIdx, teamA, teamB) {
+    if (localStorage.getItem('cs_host_audio_announce') !== 'true' || !('speechSynthesis' in window)) return;
+
+    const courtNames = StateStore.get('courtNames') || {};
+    const courtName = courtNames[courtIdx] || `Court ${courtIdx + 1}`;
+    const namesA = teamA.map(p => p.name).join(' and ');
+    const namesB = teamB.map(p => p.name).join(' and ');
+    
+    const msg = new SpeechSynthesisUtterance();
+    msg.text = `${courtName}: ${namesA} versus ${namesB}.`;
+    msg.rate = 0.85; // Stadium announcer pace
+    window.speechSynthesis.speak(msg);
 }
 
 function generateMatches() {
