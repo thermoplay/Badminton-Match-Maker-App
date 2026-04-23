@@ -1097,6 +1097,7 @@ function renderDirectorHub() {
             <div class="sh-insight-meta">${val || ''}</div>
         </div>
     `;
+        };
 
     grid.innerHTML = `
         ${renderItem('⌛ LONGEVITY', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'))}

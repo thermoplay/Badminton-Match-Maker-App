@@ -470,6 +470,18 @@ function scoreSplit(tA, tB) {
     return totalScore;
 }
 
+/** Helper to identify players needing integration. */
+function _getIntegrationStats() {
+    const squad = StateStore.squad;
+    if (!squad.length) return { avg: 0 };
+    const total = squad.reduce((sum, p) => sum + (p.sessionPlayCount || 0), 0);
+    return { avg: total / squad.length };
+}
+
+function _isNewPlayer(p, avg) {
+    return (p.sessionPlayCount || 0) <= (avg - 3);
+}
+
 // Score a group of 4 — best possible split score for this combination
 function scoreGroup(g) {
     const splits = [
