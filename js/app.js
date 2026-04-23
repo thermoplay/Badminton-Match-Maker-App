@@ -1087,8 +1087,11 @@ function renderDirectorHub() {
     // 3. Iron Man (Most games in session)
     const ironMan = squad.filter(p => p.sessionPlayCount > 0).sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] || null;
 
-    const renderItem = (label, player, val, icon) => `
-        <div class="sh-insight-item">
+    const renderItem = (label, player, val, icon) => {
+        const sqIdx = player ? StateStore.squad.indexOf(player) : -1;
+        const clickable = player && sqIdx >= 0;
+        return `
+        <div class="sh-insight-item ${clickable ? 'clickable' : ''}" ${clickable ? `onclick="openPlayerCard(${sqIdx})"` : ''}>
             <div class="sh-insight-label">${label}</div>
             <div class="sh-insight-val">${player ? escapeHTML(player.name) : '—'}</div>
             <div class="sh-insight-meta">${val || ''}</div>
@@ -2049,6 +2052,8 @@ async function openPlayerCard(idx) {
         }
     }
 }
+
+window.openPlayerCard = openPlayerCard;
 
 function closePlayerCard() {
     document.getElementById('playerCardModal').style.display = 'none';

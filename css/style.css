@@ -6178,6 +6178,16 @@ body.session-ended #nextUpTicker {
     transition: all 0.2s ease;
 }
 
+.sh-insight-item.clickable {
+    cursor: pointer;
+}
+
+.sh-insight-item.clickable:hover {
+    background: linear-gradient(145deg, rgba(255,255,255,0.06), transparent);
+    border-color: rgba(255,255,255,0.06);
+    transform: translateY(-1px);
+}
+
 .sh-insight-label {
     font-size: 0.5rem;
     font-weight: 800;

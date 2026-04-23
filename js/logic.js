@@ -531,16 +531,26 @@ function getCandidatePool(onCourt) {
 // Pick the best group of 4 from the candidate pool using the variety matrix.
 // Returns the 4 player objects, or fewer if the pool is too small.
 function pickBestGroup(pool) {
+    const { avg } = _getIntegrationStats();
     if (pool.length <= 4) return pool; // no choice to make
 
-    const combos = combinations4(pool);
+    let combos = combinations4(pool);
+
+    // THE 'ONE-SLOT' CAP: Only allow a maximum of two 'New Players' per match
+    const filtered = combos.filter(group => {
+        const newCount = group.filter(p => _isNewPlayer(p, avg)).length;
+        return newCount <= 2;
+    });
+
+    // Fallback to all combos if filtering is too restrictive for the current pool
+    const finalCandidates = filtered.length > 0 ? filtered : combos;
 
     // Add small random jitter so equal-score combos don't always resolve
     // the same way (keeps things feeling fresh even with zero history)
-    combos.sort(() => Math.random() - 0.5);
-    combos.sort((a, b) => scoreGroup(a) - scoreGroup(b));
+    finalCandidates.sort(() => Math.random() - 0.5);
+    finalCandidates.sort((a, b) => scoreGroup(a) - scoreGroup(b));
 
-    return combos[0];
+    return finalCandidates[0];
 }
 
 // Pull the best 4 from the queue front for one court.
