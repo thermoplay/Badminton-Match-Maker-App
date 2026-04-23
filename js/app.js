@@ -935,11 +935,11 @@ function showOverlay(type) {
     document.getElementById('overlay').classList.add('open');
 
     if (type === 'stats') {
-        title.innerText = 'Stats';
+        title.innerText = 'Stats & Leaderboard';
         renderStatsTab('performance');
 
     } else {
-        title.innerText = 'Session Hub';
+        title.innerText = 'Menu & Options';
         const syncMsg = window._lastSyncTime ? `Cloud Sync Active (Last: ${window._lastSyncTime})` : 'Syncing with cloud...';
         
         let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
