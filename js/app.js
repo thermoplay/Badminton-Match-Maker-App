@@ -17,6 +17,10 @@ let pressTimer = null;
 let isLongPress = false;
 let swapSourceUUID = null;
 
+// Early Global Exposure for UI functions that might be called from HTML
+window.showOverlay = showOverlay;
+window.closeOverlay = closeOverlay;
+
 // ---------------------------------------------------------------------------
 // ACHIEVEMENT PRESS HANDLERS
 // ---------------------------------------------------------------------------
@@ -519,6 +523,23 @@ async function removePlayerFromSession(playerUUID, playerName) {
     Haptic.bump();
 }
 
+// ---------------------------------------------------------------------------
+// GLOBAL EXPOSURE — Ensures HTML onclick handlers can find these functions
+// ---------------------------------------------------------------------------
+window.addPlayer               = addPlayer;
+window.editPlayerName          = editPlayerName;
+window.deletePlayer            = deletePlayer;
+window.openCourtRename         = openCourtRename;
+window.renderOpenPartyToggle   = renderOpenPartyToggle;
+window.renderDirectorHub       = renderDirectorHub;
+window.showPlayRequests        = showPlayRequests;
+window.closePlayRequests       = closePlayRequests;
+window.notifApprove            = notifApprove;
+window.notifDecline            = notifDecline;
+window.toggleRestingState      = toggleRestingState;
+window.toggleOpenParty         = toggleOpenParty;
+window.resyncQueue             = resyncQueue;
+window.movePlayerToFront       = movePlayerToFront;
 window.removePlayerFromSession = removePlayerFromSession;
 
 // ---------------------------------------------------------------------------
@@ -1062,9 +1083,9 @@ function renderDirectorHub() {
     // 1. Longest Wait
     const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
     // 2. King of the Hill (Current high streak)
-    const king = squad.filter(p => p.streak > 0).sort((a,b) => b.streak - a.streak)[0] : null;
+    const king = squad.filter(p => p.streak > 0).sort((a,b) => b.streak - a.streak)[0] || null;
     // 3. Iron Man (Most games in session)
-    const ironMan = squad.filter(p => p.sessionPlayCount > 0).sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] : null;
+    const ironMan = squad.filter(p => p.sessionPlayCount > 0).sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] || null;
 
     const renderItem = (label, player, val, icon) => `
         <div class="sh-insight-item">
@@ -2252,15 +2273,18 @@ async function submitIWantToPlay() {
 
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
+    const playerUUID = p ? p.playerUUID : null;
+    const spiritAnimal = p ? p.spiritAnimal : null;
+
     try {
         const res = await fetch('/api/play-request', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ 
-                room_code: currentRoomCode, 
-                name,
-                player_uuid: p?.playerUUID || null,
-                spirit_animal: p?.spiritAnimal || null
+            body:    JSON.stringify({
+                room_code: currentRoomCode,
+                name: name,
+                player_uuid: playerUUID,
+                spirit_animal: spiritAnimal
             }),
         });
 
@@ -2374,7 +2398,9 @@ async function pollPlayRequests() {
                     continue;
                 }
                 trulyPending.push(r);
-                showJoinNotification(r.name, r.id, r.player_uuid || null, r.spirit_animal || null);
+                const requestIdUUID = r.player_uuid || null;
+                const requestIdEmoji = r.spirit_animal || null;
+                showJoinNotification(r.name, r.id, requestIdUUID, requestIdEmoji);
             } else {
                 // If we've seen it but it's still in the fetch, it's pending unless it's an auto-join
                 if (!isOpen) trulyPending.push(r);
@@ -2775,7 +2801,9 @@ window.onPlayRequestInsert = async function(record) {
             return;
         }
 
-        showJoinNotification(record.name, record.id, record.player_uuid || null, record.spirit_animal || null);
+        const recordIdUUID = record.player_uuid || null;
+        const recordIdEmoji = record.spirit_animal || null;
+        showJoinNotification(record.name, record.id, recordIdUUID, recordIdEmoji);
     }
     if (!_isProcessingOpenPartyBatch) pollPlayRequests(); // Fetch full list to ensure badge count is accurate
 };
@@ -2885,7 +2913,6 @@ const _startPolling = () => {
             
             // Self-Healing: Check for players who are 'active' in DB but missing in local squad
             if (!_isProcessingOpenPartyBatch) try {
-                // Optimization: Tell the server who we already have to reduce payload size
                 const knownUuids = StateStore.squad.map(p => p.uuid).filter(id => id && id.length > 10).join(',');
                 const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}&status=active&exclude=${encodeURIComponent(knownUuids)}`);
                 
@@ -3193,11 +3220,18 @@ async function submitPassportJoinRequest(name, uuid) {
 
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
+    const animal = p ? p.spiritAnimal : null;
+
     try {
         const res = await fetch('/api/play-request', {
-            method:  'POST',
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ room_code: currentRoomCode, name, player_uuid: uuid, spirit_animal: p?.spiritAnimal || null }),
+            body: JSON.stringify({
+                room_code: currentRoomCode,
+                name: name,
+                player_uuid: uuid,
+                spirit_animal: animal
+            })
         });
 
         if (res.ok) {
@@ -3700,4 +3734,4 @@ window.addEventListener('error', (event) => {
     if (typeof showSessionToast === 'function' && document.body) {
         showSessionToast('⚠️ An error occurred. Please refresh if issues persist.');
     }
-});
+});                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             

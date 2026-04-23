@@ -648,10 +648,11 @@ function broadcastApproval(playerUUID, playerName, token) {
  */
 function broadcastAutoJoin(playerUUID, playerName) {
     const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
+    const animal = p ? p.spiritAnimal : null;
     _broadcast('player_auto_joined', { 
-        playerUUID, 
-        playerName, 
-        spiritAnimal: p?.spiritAnimal || null,
+        playerUUID: playerUUID, 
+        playerName: playerName, 
+        spiritAnimal: animal,
     });
 }
 window.broadcastAutoJoin = broadcastAutoJoin;
@@ -1039,7 +1040,9 @@ function _applyNameUpdate(playerUUID, oldName, newName) {
             const req = window.playRequests.find(r => r.player_uuid === playerUUID || r.name === oldName);
             if (req) {
                 req.name = trimmed;
-                if (typeof window.updatePendingRequestUI === 'function') window.updatePendingRequestUI(playerUUID, trimmed, null);
+                if (typeof window.updatePendingRequestUI === 'function') {
+                    window.updatePendingRequestUI(playerUUID, trimmed, null);
+                }
             }
         }
         return;
@@ -1108,7 +1111,9 @@ function _applySpiritAnimalUpdate(playerUUID, emoji) {
             const req = window.playRequests.find(r => r.player_uuid === playerUUID);
             if (req) {
                 req.spirit_animal = emoji;
-                if (typeof window.updatePendingRequestUI === 'function') window.updatePendingRequestUI(playerUUID, null, emoji);
+                if (typeof window.updatePendingRequestUI === 'function') {
+                    window.updatePendingRequestUI(playerUUID, null, emoji);
+                }
             }
         }
         return;
