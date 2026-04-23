@@ -935,11 +935,11 @@ function showOverlay(type) {
     document.getElementById('overlay').classList.add('open');
 
     if (type === 'stats') {
-        title.innerText = 'Stats & Leaderboard';
+        title.innerText = 'Leaderboard & History';
         renderStatsTab('performance');
 
     } else {
-        title.innerText = 'Menu & Options';
+        title.innerText = 'Menu';
         const syncMsg = window._lastSyncTime ? `Cloud Sync Active (Last: ${window._lastSyncTime})` : 'Syncing with cloud...';
         
         let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
@@ -1532,15 +1532,21 @@ function undoLastRound() {
 // STATS OVERLAY — TABS
 // ---------------------------------------------------------------------------
 
+/** Calculates a weighted skill index for sorting players. */
+function getSkillIndex(p) {
+    if (!p || p.games === 0) return 0;
+    const winRate = p.wins / p.games;
+    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
+    return (winRate * 100) + (p.wins * 2);
+}
+
 function renderStatsTab(tab) {
     const content = document.getElementById('overlayContent');
 
     const tabs = `
         <div class="stats-tabs">
             <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
-                onclick="renderStatsTab('performance')">Performance</button>
-            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
-                onclick="renderStatsTab('history')">History</button>
+                onclick="renderStatsTab('performance')">Leaderboard & History</button>
             <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
                 onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
             <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
@@ -1573,13 +1579,51 @@ function renderStatsTab(tab) {
             `;
         };
 
-        content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
+        let historyHtml = '';
+        if (StateStore.roundHistory.length > 0) {
+            const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
+                const roundNum = StateStore.roundHistory.length - i;
+                const games = (round.matches || []).map((m, gi) => {
+                    const winIdx = m.winnerTeamIndex;
+                    if (winIdx == null) return '';
+                    const squadLookup = round.squadSnapshot || [];
+                    const getName = (id) => {
+                        let p = squadLookup.find(s => s.uuid === id || s.name === id);
+                        if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
+                        return p ? p.name : id;
+                    };
+                    const winners = (m.teams[winIdx] || []).map(getName).join(' & ');
+                    const losers = (m.teams[winIdx === 0 ? 1 : 0] || []).map(getName).join(' & ');
+                    return `
+                        <div class="history-game" style="font-size:0.75rem; padding:6px 0; border-bottom:1px solid var(--border);">
+                            <div class="history-matchup">
+                                <span class="history-winner" style="color:var(--accent); font-weight:800;">${escapeHTML(winners)}</span>
+                                <span class="history-vs" style="opacity:0.5; margin:0 4px;">def.</span>
+                                <span class="history-loser" style="opacity:0.8;">${escapeHTML(losers)}</span>
+                            </div>
+                        </div>`;
+                }).join('');
+                return `
+                    <div class="history-round" style="margin-bottom:12px;">
+                        <div class="history-round-label" style="font-size:0.6rem; font-weight:900; color:var(--text-muted); letter-spacing:1px;">ROUND ${roundNum}</div>
+                        ${games}
+                    </div>`;
+            }).join('');
+            historyHtml = `
+                <div class="stats-group" style="margin-top:24px;">
+                    <div class="stats-header">Recent Match History</div>
+                    <div class="history-list" style="background:var(--bg2); border-radius:12px; padding:16px; border:1px solid var(--border);">${rounds}</div>
+                </div>`;
+        }
+
+        content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active) + historyHtml;
+
+    } else if (tab === 'history') {
+        // Redirect history tab calls to the combined view
+        renderStatsTab('performance');
+        return;
 
     } else if (tab === 'profile') {
-        if (!passport) {
-             content.innerHTML = tabs + `<div class="sl-empty" style="padding:40px 0;">No passport found.</div>`;
-             return;
-        }
         const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
         
         // 1. Identity Header
