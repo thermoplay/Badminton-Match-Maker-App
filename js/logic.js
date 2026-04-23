@@ -500,6 +500,7 @@ function combinations4(arr) {
 // Get the candidate pool for one court — front of the queue, excluding
 // players already assigned to another court this round.
 function getCandidatePool(onCourt) {
+    const { avg } = _getIntegrationStats();
     const pool     = [];
     const poolSet  = new Set();
     const poolSize = 4 * POOL_FACTOR;
@@ -512,9 +513,6 @@ function getCandidatePool(onCourt) {
     const sanitizedQueue = StateStore.playerQueue.filter(id => 
         squadIds.has(String(id).toLowerCase())
     );
-    if (sanitizedQueue.length !== StateStore.playerQueue.length) {
-               StateStore.playerQueue = sanitizedQueue;
-    }
 
     for (const uuid of sanitizedQueue) {
         if (pool.length >= poolSize) break;
@@ -522,9 +520,23 @@ function getCandidatePool(onCourt) {
         if (poolSet.has(uuid))  continue;
         const p = findP(uuid);
         if (!p || !p.active) continue;
+
+        // GRADUAL INTEGRATION: New players strictly prohibited from playing back-to-back
+        if (_isNewPlayer(p, avg) && (p.consecutiveGames || 0) > 0) continue;
+
         pool.push(p);
         poolSet.add(uuid);
     }
+
+    // WEIGHTED SELECTION: Move integration-eligible players (+25% priority) to top of sub-list
+    pool.sort((a, b) => {
+        const aNew = _isNewPlayer(a, avg);
+        const bNew = _isNewPlayer(b, avg);
+        if (aNew && !bNew) return -1;
+        if (!aNew && bNew) return 1;
+        return 0;
+    });
+
     return pool;
 }
 
@@ -1079,12 +1091,12 @@ function builderShuffle() {
     // Shuffle randomly first
     allPlayers.sort(() => Math.random() - 0.5); // Randomize for fairness within the builder
 
-        // Use the main engine to ensure the shuffle respects Variety settings
-        const tempMatch = buildMatchFromPlayers(allPlayers);
-        builderTeams = tempMatch.teams;
-    }
+    // Use the main engine to ensure the shuffle respects Variety settings
+    const tempMatch = buildMatchFromPlayers(allPlayers);
+    builderTeams = tempMatch.teams;
     builderSelected = null;
     renderTeamBuilder();
+}
 
 window.confirmTeamBuilder = confirmTeamBuilder;
 

@@ -1584,8 +1584,7 @@ function renderStatsTab(tab) {
             `;
         };
 
-              content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
-
+        content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
 
     } else if (tab === 'profile') {
         const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
