@@ -1021,35 +1021,67 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
     bottom: 0;
     left: 0;
     right: 0;
-    padding: 1rem 1.5rem calc(1rem + var(--safe-bottom));
     display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    justify-content: space-between;
-    align-items: stretch;
-    gap: 12px;
+    justify-content: center;
     z-index: var(--z-nav);
-    isolation: isolate;
-    background: rgba(18, 18, 18, 0.8);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    background: rgba(10, 10, 15, 0.75);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
     border-top: 1px solid var(--border);
-    box-shadow: 0 -10px 40px rgba(0,0,0,0.4);
+    padding: 1rem 1.5rem calc(1.2rem + var(--safe-bottom));
 }
 
-/* Hero: Next Round — centered, large, never shrinks below readable */
-#nextRoundBtn {
-    flex: 1 1 auto;
-    max-width: 400px;
-    min-width: 120px;
-    min-height: 3.5rem;
-    font-size: 1.15rem;
-    padding: 1rem 1.5rem;
-    letter-spacing: 2px;
-    box-shadow: 0 0 32px var(--accent-glow);
+.nav-content {
+    width: 100%;
+    max-width: 500px;
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 40px; /* Consistent 40px spacing between elements */
+}
+
+.nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    flex: 0 0 60px;
+}
+
+.nav-icon {
+    font-size: 1.25rem;
+    opacity: 0.8;
+    filter: grayscale(1) brightness(1.5); /* Matching icon weight to button text thickness */
+}
+
+.nav-label {
+    font-family: var(--font-display);
+    font-size: 0.55rem;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.nav-item:active { opacity: 0.6; }
+
+/* Hero: Next Round — centered, large, never shrinks below readable */
+#nextRoundBtn {
+    flex: 0 1 180px;
+    background: var(--accent);
+    color: #000;
+    border-radius: 12px;
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-style: italic;
+    font-size: 1rem;
+    letter-spacing: 1px;
+    height: 52px;
+    min-height: 52px;
+    border: 1px solid rgba(0,0,0,0.1);
+    box-shadow: 0 0 25px var(--accent-glow);
 }
 
 .btn-main {

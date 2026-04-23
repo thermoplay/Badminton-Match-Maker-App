@@ -74,16 +74,18 @@
     </template>
 
     <nav class="nav-bar" id="hostNav">
-        <div class="nav-item" onclick="showOverlay('sync')" style="display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;">
-            <span style="font-size:1.2rem; color:var(--text-muted);">⚙️</span>
-            <span style="font-family:var(--font-display); font-size:0.55rem; font-weight:800; letter-spacing:1px; color:var(--text-muted);">OPTIONS</span>
-        </div>
+        <div class="nav-content">
+            <div class="nav-item" onclick="showOverlay('sync')">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-label">OPTIONS</span>
+            </div>
 
-        <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()" style="flex:0 0 130px; height:44px; min-height:44px; font-size:0.85rem;">START SESSION</button>
+            <button class="btn-main" id="nextRoundBtn" onclick="processAndNext()">START SESSION</button>
 
-        <div class="nav-item" onclick="showOverlay('stats')" style="display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;">
-            <span style="font-size:1.2rem; color:var(--text-muted);">🏆</span>
-            <span style="font-family:var(--font-display); font-size:0.55rem; font-weight:800; letter-spacing:1px; color:var(--text-muted);">LEADERBOARD</span>
+            <div class="nav-item" onclick="showOverlay('stats')">
+                <span class="nav-icon">🏆</span>
+                <span class="nav-label">LEADERBOARD</span>
+            </div>
         </div>
     </nav>
 
