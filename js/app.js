@@ -541,6 +541,8 @@ window.toggleOpenParty         = toggleOpenParty;
 window.resyncQueue             = resyncQueue;
 window.movePlayerToFront       = movePlayerToFront;
 window.removePlayerFromSession = removePlayerFromSession;
+window.setCourts               = setCourts;
+window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
 
 // ---------------------------------------------------------------------------
 // RENDERING
@@ -682,37 +684,76 @@ function checkNextButtonState() {
 function setCourts(n) {
     const val = Math.max(1, parseInt(n) || 1);
     const input = document.getElementById('courtCountInput');
+    const row = input ? input.closest('.court-input-row') : null;
+    
+    const triggerFeedback = () => {
+        if (row) {
+            row.classList.remove('success-pulse');
+            void row.offsetWidth; // trigger reflow
+            row.classList.add('success-pulse');
+        }
+        if (typeof showSessionToast === 'function') showSessionToast(`🏀 ${val} court${val > 1 ? 's' : ''} active`);
+        if (window.Haptic) Haptic.success();
+    };
+
     if (input) input.value = val;
-    if (StateStore.get('activeCourts') === val) return;
-    StateStore.set('activeCourts', val);
-    saveToDisk();
+    if (StateStore.get('activeCourts') === val) {
+        triggerFeedback();
+        return;
+    }
 
     if (StateStore.currentMatches.length === 0) {
-        if (typeof showSessionToast === 'function') showSessionToast(`🏀 ${val} court${val > 1 ? 's' : ''} set`);
+        StateStore.set('activeCourts', val);
+        saveToDisk();
+        triggerFeedback();
         return;
     }
 
     UIManager.confirm({
         title: 'Change Courts?',
-        message: `Apply ${val} court${val > 1 ? 's' : ''} now? This will reset the current round.`,
+        message: `Set to ${val} court${val > 1 ? 's' : ''}? This will reset all current matches.`,
         confirmText: 'Change & Reset',
         isDestructive: true,
         onConfirm: () => {
+            StateStore.set('activeCourts', val);
             StateStore.set('currentMatches', []);
             document.getElementById('matchContainer').innerHTML = '';
             const onCourt = StateStore.squad.filter(p => p.active);
             onCourt.forEach(p => {
-                if (!StateStore.playerQueue.includes(p.name)) StateStore.playerQueue.unshift(p.name);
+                const id = p.uuid || p.name;
+                if (!StateStore.playerQueue.includes(id)) StateStore.playerQueue.unshift(id);
             });
             generateMatches();
+            saveToDisk();
+            triggerFeedback();
         },
         onCancel: () => {
-            const restoredCourts = StateStore.currentMatches.length || 1;
-            StateStore.set('activeCourts', restoredCourts);
+            const restoredCourts = StateStore.get('activeCourts') || 1;
             if (input) input.value = restoredCourts;
-            saveToDisk();
         }
     });
+}
+
+function toggleHostAudioAnnounce() {
+    const current = localStorage.getItem('cs_host_audio_announce') === 'true';
+    const newVal = !current;
+    localStorage.setItem('cs_host_audio_announce', String(newVal));
+    if (typeof showSessionToast === 'function') showSessionToast(`🔊 Voice Alerts: ${newVal ? 'ON' : 'OFF'}`);
+    showOverlay('menu'); // Refresh overlay to show updated toggle state
+}
+
+function _preferencesSectionHTML() {
+    const isAudio = localStorage.getItem('cs_host_audio_announce') === 'true';
+    return `
+        <div class="sh-section">
+            <div class="sync-section-label">Preferences</div>
+            <div class="sh-grid">
+                <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="window.toggleHostAudioAnnounce()">
+                    🔊 VOICE ALERTS: ${isAudio ? 'ON' : 'OFF'}
+                </button>
+            </div>
+        </div>
+    `;
 }
 
 // ---------------------------------------------------------------------------
@@ -977,6 +1018,8 @@ function showOverlay(type) {
                     </div>
                 </div>
 
+                ${_preferencesSectionHTML()}
+
                 <div class="sh-section">
                     <div class="sync-section-label">Navigation</div>
                     <div class="sh-grid">
@@ -1021,6 +1064,8 @@ function showOverlay(type) {
                     <button class="btn-main btn-danger" style="width:auto; display:inline-flex; padding:8px 16px; font-size:0.7rem; height:auto; min-height:auto;"
                         onclick="confirmEraseAllData()">WIPE ALL LOCAL DATA</button>
                 </div>
+
+                ${_preferencesSectionHTML()}
 
                 <div class="sh-section">
                     <div class="sync-section-label">Navigation</div>
@@ -2195,11 +2240,15 @@ async function sharePlayerCard() {
 async function shareAuraPoster(matchIdx) {
     const m = StateStore.currentMatches[matchIdx];
     if (!m) return;
+    
+    const getName = (id) => {
+        return (typeof findP === 'function') ? (findP(id)?.name || id) : id;
+    };
 
     if (typeof generateShareableImage === 'function') {
         generateShareableImage({
-            teamA: (m.teams[0] || []).join(' & '),
-            teamB: (m.teams[1] || []).join(' & '),
+            teamA: (m.teams[0] || []).map(getName).join(' & '),
+            teamB: (m.teams[1] || []).map(getName).join(' & '),
             title: 'LIVE NOW'
         }).catch(e => {
             console.error('Aura poster failed:', e);
@@ -2860,6 +2909,24 @@ function ensureHostUI() {
         toggle.onclick = () => toggleOpenParty();
         dashboard.appendChild(toggle);
         renderOpenPartyToggle();
+    }
+
+    // Add Court Selector to Host Dashboard
+    if (!document.getElementById('courtCountInput')) {
+        const selector = document.createElement('div');
+        selector.className = 'panel';
+        selector.style.padding = '12px 16px';
+        selector.innerHTML = `
+            <div class="court-selector" style="flex-direction: row; justify-content: space-between; align-items: center;">
+                <div class="court-selector-label" style="margin-bottom: 0;">ACTIVE COURTS</div>
+                <div class="court-input-row">
+                    <input type="number" id="courtCountInput" class="court-count-input" 
+                           value="${StateStore.get('activeCourts') || 1}" min="1" max="10">
+                    <button class="court-set-btn" onclick="window.setCourts(document.getElementById('courtCountInput').value)">SET</button>
+                </div>
+            </div>
+        `;
+        dashboard.appendChild(selector);
     }
 
     // 1. Join Notification Toast (Popup)

@@ -34,21 +34,21 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
 
     // ── Background ────────────────────────────────────────────────────────────
     // Deep dark base
-    ctx.fillStyle = '#08080e';
+    ctx.fillStyle = '#1e1e26';
     ctx.fillRect(0, 0, W, H);
 
     // Subtle radial glow — top centre
     const glow1 = ctx.createRadialGradient(W/2, 380, 0, W/2, 380, 680);
-    glow1.addColorStop(0,   'rgba(0,255,163,0.13)');
-    glow1.addColorStop(0.5, 'rgba(0,255,163,0.04)');
+    glow1.addColorStop(0,   'rgba(0,255,163,0.25)');
+    glow1.addColorStop(0.5, 'rgba(0,255,163,0.08)');
     glow1.addColorStop(1,   'rgba(0,255,163,0)');
     ctx.fillStyle = glow1;
     ctx.fillRect(0, 0, W, H);
 
     // Bottom accent glow
     const glow2 = ctx.createRadialGradient(W/2, H-200, 0, W/2, H-200, 500);
-    glow2.addColorStop(0,   'rgba(0,200,120,0.10)');
-    glow2.addColorStop(1,   'rgba(0,200,120,0)');
+    glow2.addColorStop(0,   'rgba(0,255,163,0.15)');
+    glow2.addColorStop(1,   'rgba(0,255,163,0)');
     ctx.fillStyle = glow2;
     ctx.fillRect(0, 0, W, H);
 
@@ -168,7 +168,7 @@ async function generateShareableImage({ teamA, teamB, title = 'LIVE NOW' }) {
     const botY = H - 180;
     const stripGrad = ctx.createLinearGradient(0, botY, 0, H);
     stripGrad.addColorStop(0, 'rgba(0,0,0,0)');
-    stripGrad.addColorStop(1, 'rgba(0,255,163,0.07)');
+    stripGrad.addColorStop(1, 'rgba(0,255,163,0.15)');
     ctx.fillStyle = stripGrad;
     ctx.fillRect(0, botY, W, H - botY);
 
@@ -218,9 +218,9 @@ async function generateMVPPoster(name, wins, totalSessionGames) {
 
     // Background: Deep gradient
     const bg = ctx.createLinearGradient(0, 0, 0, H);
-    bg.addColorStop(0, '#0a0a1a');
-    bg.addColorStop(0.5, '#0a0a0f');
-    bg.addColorStop(1, '#1a0a0a');
+    bg.addColorStop(0, '#252535');
+    bg.addColorStop(0.5, '#1e1e26');
+    bg.addColorStop(1, '#2a1a1a');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
@@ -228,7 +228,7 @@ async function generateMVPPoster(name, wins, totalSessionGames) {
     _drawCourtLines(ctx, W, H);
 
     // Trophy Icon Shadow
-    ctx.fillStyle = 'rgba(0,255,163,0.05)';
+    ctx.fillStyle = 'rgba(0,255,163,0.12)';
     ctx.font = '400px "Barlow Condensed", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('🏆', W/2, H/2 + 100);

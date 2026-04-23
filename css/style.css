@@ -489,11 +489,14 @@ input:focus {
     color: var(--text);
  border: 1.5px solid var(--accent);
     box-shadow: 0 0 15px rgba(32, 255, 173, 0.2), inset 0 0 10px rgba(32, 255, 173, 0.1);
+    animation: statusPulseActive 0.5s ease-out;
 }
 
 .player-chip.active:hover {
    background: rgba(32, 255, 173, 0.08);
     transform: translateY(-2px) scale(1.02);
+        animation: statusPulseResting 0.5s ease-out;
+
 }
 
 .player-chip.player-acknowledged {
@@ -1705,6 +1708,8 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
     gap: 7px;
     padding: 8px 10px;
     text-align: left;
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform, opacity, background-color, border-color;
 }
 
 .chip-name {
@@ -2102,6 +2107,7 @@ header {
     box-shadow: 0 0 24px var(--accent-dim);
     position: relative; /* For pseudo-element */
     z-index: 1;
+    animation: statusPulseActive 0.5s ease-out;
 }
 
 /* Add a pseudo-element for the animated glow */
@@ -3956,8 +3962,8 @@ button:active,
     border-radius: 16px;
     border: 1px solid var(--border);
     background: linear-gradient(145deg, var(--surface), var(--bg2));
-    transition: border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
-    will-change: border-color, background, box-shadow;
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform, border-color, background, box-shadow, opacity;
     box-shadow: 0 4px 20px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
 }
 
@@ -3978,6 +3984,7 @@ button:active,
 .sl-status-card[data-state="on-deck"] {
     border-color: #facc15;
     background: rgba(250,204,21,0.06);
+    animation: statusPulseActive 0.5s ease-out;
 }
 .sl-status-card[data-state="playing"] {
     border-color: var(--accent);
@@ -4009,6 +4016,7 @@ button:active,
 .sl-status-card[data-state="resting"] {
     border-color: #60a5fa;
     background: rgba(96,165,250,0.06);
+    animation: statusPulseRestingPlayer 0.5s ease-out;
 }
 .sl-status-card[data-state="approved"] {
     border-color: var(--accent);
@@ -5252,7 +5260,7 @@ button:active,
 
 /* Pulse animation for on-deck status */
 .sl-status-card[data-state="on-deck"] {
-    animation: onDeckPulse 2s ease-in-out infinite;
+    animation: onDeckPulse 2s ease-in-out infinite, statusPulseActive 0.5s ease-out;
 }
 
 @keyframes onDeckPulse {
@@ -5528,19 +5536,22 @@ button:active,
     align-items: center;
     gap: 16px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
     margin-bottom: 20px;
     user-select: none;
+    will-change: transform, border-color, background-color, opacity;
 }
 
 .sl-status-toggle-card.active {
     border-color: var(--accent);
     background: linear-gradient(90deg, rgba(0,255,163,0.08), transparent);
+    animation: statusPulseActive 0.5s ease-out;
 }
 
 .sl-status-toggle-card.resting {
     border-color: var(--border);
-    opacity: 0.8;
+    opacity: 0.6;
+    animation: statusPulseRestingPlayer 0.5s ease-out;
 }
 
 .sl-toggle-icon { font-size: 1.5rem; }
@@ -6230,9 +6241,35 @@ body.session-ended #nextUpTicker {
     background: linear-gradient(135deg, var(--surface2), rgba(250, 204, 21, 0.05));
 }
 
+@keyframes statusPulseActive {
+    0% { transform: scale(0.9); box-shadow: 0 0 0 0 var(--accent); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(var(--accent-rgb), 0); }
+    100% { transform: scale(1); }
+}
+
+@keyframes statusPulseResting {
+    0% { transform: scale(1.1); opacity: 1; }
+    100% { transform: scale(1); opacity: 0.4; }
+}
+
+@keyframes statusPulseRestingPlayer {
+    0% { transform: scale(1.05); opacity: 1; }
+    100% { transform: scale(1); opacity: 0.6; }
+}
+
 .queue-item.high-priority {
     background: linear-gradient(90deg, rgba(250, 204, 21, 0.05), transparent);
     border-left: 3px solid var(--warning);
+}
+
+.success-pulse {
+    animation: courtSuccess 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes courtSuccess {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.04); filter: brightness(1.2); }
+    100% { transform: scale(1); }
 }
 
 @keyframes sl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
