@@ -22,6 +22,625 @@ let pressTimer = null;
 let isLongPress = false;
 let swapSourceUUID = null;
 
+// ---------------------------------------------------------------------------
+// PREFERENCES & SUPPORT SECTIONS (Moved to top for early access)
+// ---------------------------------------------------------------------------
+
+function _preferencesSectionHTML() {
+    const isAudio = localStorage.getItem('cs_host_audio_announce') === 'true';
+    return `
+        <div class="sh-section">
+            <div class="sync-section-label">Preferences</div>
+            <div class="sh-grid">
+                <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="window.toggleHostAudioAnnounce()">
+                    🔊 VOICE ALERTS: ${isAudio ? 'ON' : 'OFF'}
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function _supportSectionHTML() {
+    return `
+        <div style="margin-top: auto; padding-top: 24px;">
+            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
+
+            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">🐛 Report a Bug</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
+                    onclick="openBugReportModal()">
+                    🐛 Report a Bug
+                </button>
+            </div>
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">☕ Support the Dev</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
+                    If Courtside Pro saves you time, consider buying the dev a coffee.
+                </p>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
+                    <div style="text-align:center;">
+                            
+                    </div>
+                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
+                        style="display:inline-flex; align-items:center; gap:8px;
+                               background:#FF5E5B; color:#fff; font-weight:700;
+                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
+                               text-decoration:none; white-space:nowrap;">
+                        ☕ Ko-fi
+                    </a>
+                </div>
+            </div>
+
+            </div>
+        </div>
+    `;
+}
+
+// ---------------------------------------------------------------------------
+// STATS OVERLAY — TABS (Moved to top for early access)
+// ---------------------------------------------------------------------------
+
+/** Calculates a weighted skill index for sorting players. */
+function getSkillIndex(p) {
+    if (!p || p.games === 0) return 0;
+    const winRate = p.wins / p.games;
+    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
+    return (winRate * 100) + (p.wins * 2);
+}
+
+function renderStatsTab(tab) {
+    // UX FIX: Always fetch the latest passport data to ensure career stats 
+    // are up-to-date in the UI after a game ends.
+    if (typeof Passport !== 'undefined') passport = Passport.get();
+
+    const content = document.getElementById('overlayContent');
+
+    const tabs = `
+        <div class="stats-tabs">
+            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
+                onclick="renderStatsTab('performance')">Leaderboard</button>
+            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
+                onclick="renderStatsTab('history')">History</button>
+            <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
+                onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
+            <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
+                onclick="renderStatsTab('profile')">My Profile</button>
+        </div>
+    `;
+
+    if (tab === 'performance') {
+        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins || a.name.localeCompare(b.name));
+        const topCount = 3; // Podium layout expects exactly 3 players
+        const peakPerformers = sorted.slice(0, topCount);
+        const activeRoster   = sorted.slice(topCount);
+        const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+
+        const getRankIconClass = (rank) => {
+            if (rank === 1) return 'gold';
+            if (rank === 2) return 'silver';
+            if (rank === 3) return 'bronze';
+            return '';
+        };
+
+        const renderPlayerCard = (p, rank, isPeak = false) => {
+            const sqIdx = StateStore.squad.indexOf(p);
+            const wr = winRate(p);
+            const rankClass = `rank-${rank}`;
+
+            let rankIconHTML = '';
+            if (!isPeak) { // Only for active roster
+                const iconClass = getRankIconClass(rank);
+                if (iconClass) {
+                    rankIconHTML = `<div class="rank-icon ${iconClass}">${rank}</div>`;
+                } else {
+                    rankIconHTML = `<div class="rank-icon" style="background:var(--bg2); border:1px solid var(--border); color:var(--text-muted);">${rank}</div>`;
+                }
+            }
+
+            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' <span class="fire-emoji">🔥</span>' : ''}</div>`;
+            const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
+            const progressBarHTML = `
+                <div class="win-rate-progress">
+                    <div class="win-rate-progress-fill" style="width:${wr}%"></div>
+                </div>
+            `;
+
+            if (isPeak) {
+                return `
+                    <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); opacity: 0.6; margin-bottom:8px;">#${rank}</div>
+                        ${nameHTML}
+                        ${metaHTML}
+                        ${progressBarHTML}
+                    </div>`;
+            } else {
+                return `
+                    <div class="stats-card active-roster" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        ${rankIconHTML}
+                        ${nameHTML}
+                        ${metaHTML}
+                    </div>`;
+            }
+        };
+
+        let peakPerformersHTML = '';
+        if (peakPerformers.length > 0) {
+            peakPerformersHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">PEAK PERFORMERS</div>
+                    <div class="stats-grid peak-performers-grid">
+                        ${peakPerformers.map((p, i) => renderPlayerCard(p, i + 1, true)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        let activeRosterHTML = '';
+        if (activeRoster.length > 0) {
+            activeRosterHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">ACTIVE ROSTER</div>
+                    <div class="stats-grid">
+                        ${activeRoster.map((p, i) => renderPlayerCard(p, i + 4, false)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        content.innerHTML = tabs + peakPerformersHTML + activeRosterHTML;
+
+    } else if (tab === 'profile') {
+        const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
+        
+        // 1. Identity Header
+        const { title, icon } = me ? getPlayerTitle(me) : { title: 'Spectator', icon: '👀' };
+        const avatarColor = Avatar.color(passport.playerName);
+        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
+        
+        const headerHTML = `
+            <div class="sl-profile-card">
+                <div class="sl-profile-top-right">
+                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
+                </div>
+                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
+                    ${avatarInitial}
+                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
+                </div>
+                <div class="sl-profile-name-large">${escapeHTML(passport.playerName)}</div>
+                <div class="sl-profile-title-badge">
+                    <span>${icon}</span>
+                    <span>${title}</span>
+                </div>
+            </div>`;
+
+        // 2. Stats Deck
+        const career = passport.stats || { wins: 0, games: 0 };
+        const cWins  = career.wins || 0;
+        const cGames = career.games || 0;
+        const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+        
+        let sWins = 0, sGames = 0, sWr = 0;
+        if (me) {
+            sWins = me.wins;
+            sGames = me.games;
+            sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
+        }
+
+        const statsHTML = `
+            <div class="sl-stats-deck">
+                <div class="sl-stat-card ${!me ? 'inactive' : ''}">
+                    <div class="sl-card-label">CURRENT SESSION</div>
+                    ${me ? `
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>` : `<div class="sl-card-empty">Not in squad</div>`}
+                </div>
+                <div class="sl-stat-card">
+                    <div class="sl-card-label">CAREER RECORD</div>
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+        // Form & Analytics (New Section)
+        let analyticsHTML = '';
+        if (me) {
+            // Rival Logic
+            let rivalName = 'None yet';
+            let rivalCount = 0;
+            if (me.opponentHistory) {
+                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
+                if (rivals.length > 0) {
+                    const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
+                    rivalName = rivalP ? rivalP.name : 'Unknown';
+                    rivalCount = rivals[0][1];
+                }
+            }
+
+            // Form Logic
+            const formHTML = (me.form || []).map(r => 
+                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'#ef4444'}; color:${r==='W'?'#000':'#fff'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
+            ).join('');
+
+            analyticsHTML = `
+                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
+                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
+                    </div>
+                    <div style="width:1px; height:30px; background:var(--border);"></div>
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
+                        <div style="font-size:0.9rem; font-weight:700;">${escapeHTML(rivalName)}</div>
+                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
+                    </div>
+                </div>`;
+        }
+
+        // 3. Chemistry
+        let chemHTML = '';
+        if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
+            const partners = Object.entries(me.partnerStats);
+            partners.sort(([, a], [, b]) => {
+                if (b.wins !== a.wins) return b.wins - a.wins;
+                return b.games - a.games;
+            });
+            const best = partners[0];
+            if (best) {
+                const [uuid, stats] = best;
+                const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
+                const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+                chemHTML = `
+                    <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
+                    <div class="sl-chem-card">
+                        <div class="sl-chem-details">
+                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
+                            <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                        </div>
+                    </div>`;
+            }
+        }
+
+        // 4. Achievements
+        let achHTML = '';
+        if (window.Achievements) {
+            const sessionAch = me ? (me.achievements || []) : [];
+            const allTimeAch = passport.achievements || [];
+            const myAch = [...new Set([...sessionAch, ...allTimeAch])];
+            const list = Object.keys(window.Achievements).map(key => {
+                const data = window.getAchievementDisplay(key, myAch);
+                const unlocked = data.unlocked;
+                return `
+                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="${unlocked ? `border-left: 3px solid ${data.color}` : ''}">
+                        <div class="sl-ach-icon">${data.icon}</div>
+                        <div class="sl-ach-text">
+                            <div class="sl-ach-title">${data.name}</div>
+                            <div class="sl-ach-desc">${data.description}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            achHTML = `<div class="sl-achievements-list" style="margin-top:20px;">${list}</div>`;
+        }
+
+        content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
+
+    } else if (tab === 'hall-of-fame') {
+        const period = window._lbPeriod || 'all';
+        const subTabs = `
+            <div style="display:flex; gap:8px; margin-bottom:16px;">
+                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
+                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
+            </div>`;
+
+        content.innerHTML = tabs + subTabs + `
+            <div class="sl-searching" style="margin-top:20px;">
+                <div class="sl-searching-spinner"></div>
+                <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
+            </div>`;
+
+        fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
+            .then(res => res.json())
+            .then(data => {
+                // Guard: only render if user is still on the hall-of-fame tab
+                if (!document.querySelector('.stats-tab.active')?.textContent.toLowerCase().includes('hall')) return;
+                
+                const players = data.players || [];
+
+                // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
+                players.sort((a, b) => {
+                    // Support both snake_case (DB) and camelCase (Internal)
+                    const connA = Object.keys(a.partner_stats || a.partnerStats || {}).length;
+                    const connB = Object.keys(b.partner_stats || b.partnerStats || {}).length;
+                    if (connB !== connA) return connB - connA; // Most unique partners first
+
+                    const trophyA = (a.achievements || []).length;
+                    const trophyB = (b.achievements || []).length;
+                    if (trophyB !== trophyA) return trophyB - trophyA;
+
+                    const gamesA = a.total_games ?? a.totalGames ?? a.games ?? 0;
+                    const gamesB = b.total_games ?? b.totalGames ?? b.games ?? 0;
+                    return gamesB - gamesA;
+                });
+
+                const html = players.map((p, i) => {
+                    const connections = Object.keys(p.partner_stats || p.partnerStats || {}).length;
+                    return `
+                    <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
+                        <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
+                        <div style="flex:1;">
+                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
+                            <div class="stats-meta">${connections} Connections · ${p.total_games ?? p.totalGames ?? p.games ?? 0} Games</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
+                            <div style="font-size:0.5rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">INFLUENCE</div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                content.innerHTML = tabs + subTabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
+            })
+            .catch(() => {
+                content.innerHTML = tabs + subTabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
+            });
+
+    } else if (tab === 'history') {
+        if (StateStore.roundHistory.length === 0) {
+            content.innerHTML = tabs + `
+                <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
+                    No rounds played yet this session.
+                </div>`;
+            return;
+        }
+
+        const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
+            const roundNum = StateStore.roundHistory.length - i;
+            
+            let timeHtml = '';
+            if (round.timestamp) {
+                const t = new Date(round.timestamp);
+                const timeStr = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                timeHtml = `<div style="font-size:0.65rem; color:var(--text-muted); margin-left:auto;">${timeStr}</div>`;
+            }
+
+            const games = (round.matches || []).map((m, gi) => {
+                const winIdx  = m.winnerTeamIndex;
+                if (winIdx === null || winIdx === undefined) return '';
+                const loseIdx = winIdx === 0 ? 1 : 0;
+
+                const squadLookup = round.squadSnapshot || [];
+                const getName = (id) => {
+                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
+                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
+                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
+                    return p ? p.name : id;
+                };
+
+                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
+                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
+
+                const durationMs = (m.endedAt && m.startedAt) ? m.endedAt - m.startedAt : 0;
+                const durMin = Math.floor(durationMs / 60000);
+                const durSec = Math.floor((durationMs % 60000) / 1000);
+                const durStr = durationMs > 0 ? `<span style="opacity:0.5; margin-left:6px; font-size:0.6rem;">⏱ ${durMin}:${durSec.toString().padStart(2, '0')}</span>` : '';
+
+                return `
+                    <div class="history-game">
+                        <div class="history-game-label">Game ${gi + 1}</div>
+                        <div class="history-matchup">
+                            <span class="history-winner">${escapeHTML(winners)}</span>
+                            <span class="history-vs">def.</span>
+                            <span class="history-loser">${escapeHTML(losers)}</span>${durStr}
+                        </div>
+                        ${timeHtml}
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="history-round" style="animation-delay: ${i * 0.05}s">
+                    <div class="history-round-label">Round ${roundNum}</div>
+                    ${games}
+                </div>
+            `;
+        }).join('');
+
+        const searchBar = `
+            <div style="margin-bottom: 12px; position: relative;">
+                <input type="text" id="histSearchInput" placeholder="Search history..." 
+                    style="width:100%; padding-right: 32px;"
+                    oninput="window.filterHistory(this.value)">
+                <button id="histSearchClear" onclick="window.clearHistorySearch()" 
+                    style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1rem; padding: 8px;">
+                    ✕
+                </button>
+            </div>`;
+
+        content.innerHTML = tabs + searchBar + `<div class="history-list">${rounds}</div>`;
+    }
+}
+
+function closeOverlay() {
+    document.getElementById('overlay').classList.remove('open');
+}
+
+function showOverlay(type) {
+    const title   = document.getElementById('overlayTitle');
+    const content = document.getElementById('overlayContent');
+    document.getElementById('overlay').classList.add('open');
+
+    if (type === 'stats') {
+        title.innerText = type === 'history' ? 'Match History' : 'Leaderboard';
+        renderStatsTab(type === 'history' ? 'history' : 'performance');
+
+    } else {
+        title.innerText = 'Menu & Options';
+        const syncMsg = window._lastSyncTime ? `Cloud Sync Active (Last: ${window._lastSyncTime})` : 'Syncing with cloud...';
+        
+        let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
+
+        if (window.isOnlineSession) {
+            shContent += `
+                <div class="sh-section">
+                    <div class="session-live-card">
+                        <div class="session-live-top">
+                            <span class="session-live-dot"></span>
+                            <span class="session-live-label">LIVE SESSION</span>
+                        </div>
+                        <div class="session-room-code">${window.currentRoomCode}</div>
+                        <p style="font-size:0.7rem; color:var(--text-muted); margin-bottom:20px;">
+                            ${window.isOperator ? 'Share code or invite link to join' : 'Viewing as spectator'}
+                        </p>
+                        
+                        <div class="sh-qr-wrap">
+                            <div id="qrcode" style="display:flex;justify-content:center;margin:0 auto;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Broadcast Controls</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" onclick="copyInviteLink()">🔗 Invite Link</button>
+                        <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📋 Room Code</button>
+                        ${window.isOperator ? `
+                            <button class="btn-main sh-btn-sub" onclick="resyncQueue()">🔄 Resync Queue</button>
+                            <button class="btn-main btn-danger" style="font-size:0.8rem;" onclick="confirmEndSession()">🛑 End Session</button>
+                        ` : `
+                            <button class="btn-main btn-danger" style="grid-column: span 2;" onclick="leaveSession(); closeOverlay();">Leave Session</button>
+                        `}
+                    </div>
+                </div>
+
+                ${_preferencesSectionHTML()}
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Navigation</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
+                    </div>
+                </div>
+
+                ${_supportSectionHTML()}
+            `;
+        } else {
+            shContent += `
+                <div class="sh-section">
+                    <div class="sync-section-label">Go Live</div>
+                    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
+                        Start a live session to sync with players in real-time.
+                    </p>
+                    <button class="btn-main" style="width:100%; height:54px;" onclick="createOnlineSession()">🌐 Start Live Session</button>
+                </div>
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Join Session</div>
+                    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
+                        Enter a room code to watch a live session.
+                    </p>
+                    <input type="text" id="manualRoomCodeInput" placeholder="ENTER CODE"
+                        class="sl-code-input" style="margin-bottom:10px;"
+                        autocomplete="off" autocorrect="off" maxlength="9">
+                    <button id="joinManualCodeBtn" class="btn-main sh-btn-sub" style="width:100%;">Connect to Room</button>
+                </div>
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Backup & Migration</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📦 Export Data</button>
+                        <button class="btn-main sh-btn-sub" onclick="importSyncToken()">📥 Import Data</button>
+                    </div>
+                    <input type="text" id="syncInput" placeholder="Paste token here..."
+                        style="width:100%; margin-top:10px; font-size:0.8rem; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:10px;">
+                </div>
+
+                <div class="sh-section" style="text-align:center; padding-top:10px;">
+                    <button class="btn-main btn-danger" style="width:auto; display:inline-flex; padding:8px 16px; font-size:0.7rem; height:auto; min-height:auto;"
+                        onclick="confirmEraseAllData()">WIPE ALL LOCAL DATA</button>
+                </div>
+
+                ${_preferencesSectionHTML()}
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Navigation</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
+                    </div>
+                </div>
+
+                ${_supportSectionHTML()}
+            `;
+        }
+        content.innerHTML = shContent;
+
+        if (window.isOnlineSession) {
+            if (!window.currentRoomCode) {
+                console.error('[CourtSide] generateQR: currentRoomCode is null or undefined — QR not generated');
+                const qrDiv = document.getElementById('qrcode');
+                if (qrDiv) qrDiv.innerHTML = '<p style="color:#ef4444;font-size:12px;text-align:center;">Room code missing — try ending and restarting the session.</p>';
+            } else {
+                const joinUrl = window.location.origin + window.location.pathname + '?join=' + window.currentRoomCode + '&role=player';
+                console.log('[CourtSide] Generating QR for:', joinUrl);
+                const QRCtor = window.QRCodeConstructor || window.QRCode;
+                const qrDiv  = document.getElementById('qrcode');
+                if (qrDiv && QRCtor) {
+                    qrDiv.innerHTML = '';
+                    new QRCtor(qrDiv, {
+                        text:          joinUrl,
+                        width:         200,
+                        height:        200,
+                        colorDark:     '#000000',
+                        colorLight:    '#ffffff',
+                        correctLevel:  QRCtor.CorrectLevel?.H || 0,
+                    });
+                } else if (qrDiv) {
+                    console.warn('[CourtSide] QRCode library not loaded, showing plain URL');
+                    qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
+                }
+            }
+        }
+
+        // Attach event listeners for manual code entry to avoid global scope issues
+        if (!window.isOnlineSession) {
+            document.getElementById('joinManualCodeBtn')?.addEventListener('click', joinManualCode);
+            document.getElementById('manualRoomCodeInput')?.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') joinManualCode();
+            });
+        }
+    }
+}
+
 // Early Global Exposure for UI functions that might be called from HTML
 window.showOverlay = showOverlay;
 window.closeOverlay = closeOverlay;
@@ -767,19 +1386,6 @@ function toggleHostAudioAnnounce() {
     showOverlay('menu'); // Refresh overlay to show updated toggle state
 }
 
-function _preferencesSectionHTML() {
-    const isAudio = localStorage.getItem('cs_host_audio_announce') === 'true';
-    return `
-        <div class="sh-section">
-            <div class="sync-section-label">Preferences</div>
-            <div class="sh-grid">
-                <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="window.toggleHostAudioAnnounce()">
-                    🔊 VOICE ALERTS: ${isAudio ? 'ON' : 'OFF'}
-                </button>
-            </div>
-        </div>
-    `;
-}
 
 // ---------------------------------------------------------------------------
 // LONG-PRESS MENU
@@ -969,60 +1575,6 @@ function openCourtRename(courtIndex) {
     });
 }
 window.openCourtRename = openCourtRename;
-// ---------------------------------------------------------------------------
-// OVERLAYS — STATS & SYNC
-// ---------------------------------------------------------------------------
-
-/**
- * Displays a high-fidelity success modal after the host goes live.
- * Features the Room Code and a scannable QR code for easy sharing.
- */
-function showLiveSuccessModal(code) {
-    // Close any background overlays (like the sync settings menu)
-    if (typeof closeOverlay === 'function') closeOverlay();
-
-    const content = `
-        <div class="menu-card" style="padding:32px 24px; text-align:center; max-width:380px;">
-            <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:8px; text-transform:uppercase;">BROADCAST ACTIVE</div>
-            <h2 style="font-size:2.8rem; margin-bottom:12px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic; color:#fff;">LIVE NOW</h2>
-            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:24px; line-height:1.4;">Spectators and players can now join using the credentials below.</p>
-
-            <div style="background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:20px; margin-bottom:24px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);">
-                 <div style="font-size:0.55rem; color:var(--text-muted); letter-spacing:2px; margin-bottom:6px; font-weight:800; text-transform:uppercase;">ROOM CODE</div>
-                 <div style="font-family:var(--font-display); font-size:2.6rem; font-weight:900; font-style:italic; color:var(--accent); letter-spacing:4px; line-height:1; text-shadow:0 0 20px var(--accent-glow);">${code}</div>
-            </div>
-
-            <div style="background:#fff; padding:12px; border-radius:16px; width:fit-content; margin:0 auto 24px; box-shadow:0 10px 40px rgba(0,255,163,0.15);">
-                <div id="liveSuccessQR" style="display:flex; justify-content:center;"></div>
-            </div>
-
-            <button class="btn-main" style="width:100%; height:56px; box-shadow:0 0 30px var(--accent-dim);" onclick="UIManager.hide()">
-                READY TO PLAY
-            </button>
-        </div>
-    `;
-
-    UIManager.show(content, 'card');
-
-    // Generate the QR code within the success modal
-    setTimeout(() => {
-        const qrDiv = document.getElementById('liveSuccessQR');
-        if (qrDiv) {
-            const joinUrl = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
-            const QRCtor = window.QRCodeConstructor || window.QRCode;
-            if (QRCtor) {
-                qrDiv.innerHTML = '';
-                new QRCtor(qrDiv, {
-                    text: joinUrl,
-                    width: 180,
-                    height: 180,
-                    colorDark: '#000000',
-                    colorLight: '#ffffff'
-                });
-            }
-        }
-    }, 50);
-}
 
 function goToMainMenu() {
     const hasActiveSession = StateStore.squad.length > 0 || (typeof window.isOnlineSession !== 'undefined' && window.isOnlineSession);
@@ -1272,69 +1824,6 @@ function joinManualCode() {
     }
 }
 
-function _startHostTimerTick() {
-    if (window._hostTickTimer) clearInterval(window._hostTickTimer);
-    window._hostTickTimer = setInterval(() => {
-        const matches = StateStore.currentMatches || [];
-        matches.forEach((m, i) => {
-            if (!m.startedAt || m.winnerTeamIndex !== null) return;
-            const el = document.getElementById(`timer-${i}`);
-            if (!el) return;
-            
-            const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
-            const min = Math.floor(elapsed / 60);
-            const sec = elapsed % 60;
-            el.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
-            
-            // Use the same CSS classes defined for the court-timer
-            el.classList.toggle('timer-warn', min >= 10);
-            el.classList.toggle('timer-alert', min >= 15);
-        });
-    }, 1000);
-}
-
-function _supportSectionHTML() {
-    return `
-        <div style="margin-top: auto; padding-top: 24px;">
-            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
-
-            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
-
-            <div style="flex:1 1 0; min-width:140px;">
-                <div class="sync-section-label">🐛 Report a Bug</div>
-                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
-                    Something broken? Let the dev know.
-                </p>
-                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
-                    onclick="openBugReportModal()">
-                    🐛 Report a Bug
-                </button>
-            </div>
-
-            <div style="flex:1 1 0; min-width:140px;">
-                <div class="sync-section-label">☕ Support the Dev</div>
-                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
-                    If Courtside Pro saves you time, consider buying the dev a coffee.
-                </p>
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
-                    <div style="text-align:center;">
-                            
-                    </div>
-                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
-                        style="display:inline-flex; align-items:center; gap:8px;
-                               background:#FF5E5B; color:#fff; font-weight:700;
-                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
-                               text-decoration:none; white-space:nowrap;">
-                        ☕ Ko-fi
-                    </a>
-                </div>
-            </div>
-
-            </div>
-        </div>
-    `;
-}
-
 function openBugReportModal() {
     let modal = document.getElementById('bugReportModal');
     if (!modal) {
@@ -1477,412 +1966,6 @@ function undoLastRound() {
         }
     });
 }
-
-/** Calculates a weighted skill index for sorting players. */
-function getSkillIndex(p) {
-    if (!p || p.games === 0) return 0;
-    const winRate = p.wins / p.games;
-    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
-    return (winRate * 100) + (p.wins * 2);
-}
-
-function renderStatsTab(tab) {
-    // UX FIX: Always fetch the latest passport data to ensure career stats 
-    // are up-to-date in the UI after a game ends.
-    if (typeof Passport !== 'undefined') passport = Passport.get();
-
-    const content = document.getElementById('overlayContent');
-
-    const tabs = `
-        <div class="stats-tabs">
-            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
-                onclick="renderStatsTab('performance')">Leaderboard</button>
-            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
-                onclick="renderStatsTab('history')">History</button>
-            <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
-                onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
-            <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
-                onclick="renderStatsTab('profile')">My Profile</button>
-        </div>
-    `;
-
-    if (tab === 'performance') {
-        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins || a.name.localeCompare(b.name));
-        const topCount = 3; // Podium layout expects exactly 3 players
-        const peakPerformers = sorted.slice(0, topCount);
-        const activeRoster   = sorted.slice(topCount);
-        const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
-
-        const getRankIconClass = (rank) => {
-            if (rank === 1) return 'gold';
-            if (rank === 2) return 'silver';
-            if (rank === 3) return 'bronze';
-            return '';
-        };
-
-        const renderPlayerCard = (p, rank, isPeak = false) => {
-            const sqIdx = StateStore.squad.indexOf(p);
-            const wr = winRate(p);
-            const rankClass = `rank-${rank}`;
-
-            let rankIconHTML = '';
-            if (!isPeak) { // Only for active roster
-                const iconClass = getRankIconClass(rank);
-                if (iconClass) {
-                    rankIconHTML = `<div class="rank-icon ${iconClass}">${rank}</div>`;
-                } else {
-                    rankIconHTML = `<div class="rank-icon" style="background:var(--bg2); border:1px solid var(--border); color:var(--text-muted);">${rank}</div>`;
-                }
-            }
-
-            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' <span class="fire-emoji">🔥</span>' : ''}</div>`;
-            const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
-            const progressBarHTML = `
-                <div class="win-rate-progress">
-                    <div class="win-rate-progress-fill" style="width:${wr}%"></div>
-                </div>
-            `;
-
-            if (isPeak) {
-                return `
-                    <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
-                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); opacity: 0.6; margin-bottom:8px;">#${rank}</div>
-                        ${nameHTML}
-                        ${metaHTML}
-                        ${progressBarHTML}
-                    </div>`;
-            } else {
-                return `
-                    <div class="stats-card active-roster" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
-                        ${rankIconHTML}
-                        ${nameHTML}
-                        ${metaHTML}
-                    </div>`;
-            }
-        };
-
-        let peakPerformersHTML = '';
-        if (peakPerformers.length > 0) {
-            peakPerformersHTML = `
-                <div class="stats-group">
-                    <div class="stats-header">PEAK PERFORMERS</div>
-                    <div class="stats-grid peak-performers-grid">
-                        ${peakPerformers.map((p, i) => renderPlayerCard(p, i + 1, true)).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        let activeRosterHTML = '';
-        if (activeRoster.length > 0) {
-            activeRosterHTML = `
-                <div class="stats-group">
-                    <div class="stats-header">ACTIVE ROSTER</div>
-                    <div class="stats-grid">
-                        ${activeRoster.map((p, i) => renderPlayerCard(p, i + 4, false)).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        content.innerHTML = tabs + peakPerformersHTML + activeRosterHTML;
-
-    } else if (tab === 'profile') {
-        const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
-        
-        // 1. Identity Header
-        const { title, icon } = me ? getPlayerTitle(me) : { title: 'Spectator', icon: '👀' };
-        const avatarColor = Avatar.color(passport.playerName);
-        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
-        
-        const headerHTML = `
-            <div class="sl-profile-card">
-                <div class="sl-profile-top-right">
-                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
-                </div>
-                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
-                    ${avatarInitial}
-                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
-                </div>
-                <div class="sl-profile-name-large">${escapeHTML(passport.playerName)}</div>
-                <div class="sl-profile-title-badge">
-                    <span>${icon}</span>
-                    <span>${title}</span>
-                </div>
-            </div>`;
-
-        // 2. Stats Deck
-        const career = passport.stats || { wins: 0, games: 0 };
-        const cWins  = career.wins || 0;
-        const cGames = career.games || 0;
-        const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-        
-        let sWins = 0, sGames = 0, sWr = 0;
-        if (me) {
-            sWins = me.wins;
-            sGames = me.games;
-            sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
-        }
-
-        const statsHTML = `
-            <div class="sl-stats-deck">
-                <div class="sl-stat-card ${!me ? 'inactive' : ''}">
-                    <div class="sl-card-label">CURRENT SESSION</div>
-                    ${me ? `
-                    <div class="sl-card-grid">
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sWins}</div>
-                            <div class="sl-card-key">WINS</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sGames}</div>
-                            <div class="sl-card-key">GAMES</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sWr}%</div>
-                            <div class="sl-card-key">WIN RATE</div>
-                        </div>
-                    </div>` : `<div class="sl-card-empty">Not in squad</div>`}
-                </div>
-                <div class="sl-stat-card">
-                    <div class="sl-card-label">CAREER RECORD</div>
-                    <div class="sl-card-grid">
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cWins}</div>
-                            <div class="sl-card-key">WINS</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cGames}</div>
-                            <div class="sl-card-key">GAMES</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cWr}%</div>
-                            <div class="sl-card-key">WIN RATE</div>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
-
-        // Form & Analytics (New Section)
-        let analyticsHTML = '';
-        if (me) {
-            // Rival Logic
-            let rivalName = 'None yet';
-            let rivalCount = 0;
-            if (me.opponentHistory) {
-                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
-                if (rivals.length > 0) {
-                    const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
-                    rivalName = rivalP ? rivalP.name : 'Unknown';
-                    rivalCount = rivals[0][1];
-                }
-            }
-
-            // Form Logic
-            const formHTML = (me.form || []).map(r => 
-                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'#ef4444'}; color:${r==='W'?'#000':'#fff'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
-            ).join('');
-
-            analyticsHTML = `
-                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
-                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
-                    </div>
-                    <div style="width:1px; height:30px; background:var(--border);"></div>
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
-                        <div style="font-size:0.9rem; font-weight:700;">${escapeHTML(rivalName)}</div>
-                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
-                    </div>
-                </div>`;
-        }
-
-        // 3. Chemistry
-        let chemHTML = '';
-        if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
-            const partners = Object.entries(me.partnerStats);
-            partners.sort(([, a], [, b]) => {
-                if (b.wins !== a.wins) return b.wins - a.wins;
-                return b.games - a.games;
-            });
-            const best = partners[0];
-            if (best) {
-                const [uuid, stats] = best;
-                const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
-                const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
-                chemHTML = `
-                    <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
-                    <div class="sl-chem-card">
-                        <div class="sl-chem-details">
-                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
-                            <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
-                        </div>
-                    </div>`;
-            }
-        }
-
-        // 4. Achievements
-        let achHTML = '';
-        if (window.Achievements) {
-            const sessionAch = me ? (me.achievements || []) : [];
-            const allTimeAch = passport.achievements || [];
-            const myAch = [...new Set([...sessionAch, ...allTimeAch])];
-            const list = Object.keys(window.Achievements).map(key => {
-                const data = window.getAchievementDisplay(key, myAch);
-                const unlocked = data.unlocked;
-                return `
-                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="${unlocked ? `border-left: 3px solid ${data.color}` : ''}">
-                        <div class="sl-ach-icon">${data.icon}</div>
-                        <div class="sl-ach-text">
-                            <div class="sl-ach-title">${data.name}</div>
-                            <div class="sl-ach-desc">${data.description}</div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            achHTML = `<div class="sl-achievements-list" style="margin-top:20px;">${list}</div>`;
-        }
-
-        content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
-
-    } else if (tab === 'hall-of-fame') {
-        const period = window._lbPeriod || 'all';
-        const subTabs = `
-            <div style="display:flex; gap:8px; margin-bottom:16px;">
-                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
-                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
-            </div>`;
-
-        content.innerHTML = tabs + subTabs + `
-            <div class="sl-searching" style="margin-top:20px;">
-                <div class="sl-searching-spinner"></div>
-                <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
-            </div>`;
-
-        fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
-            .then(res => res.json())
-            .then(data => {
-                // Guard: only render if user is still on the hall-of-fame tab
-                if (!document.querySelector('.stats-tab.active')?.textContent.toLowerCase().includes('hall')) return;
-                
-                const players = data.players || [];
-
-                // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
-                players.sort((a, b) => {
-                    // Support both snake_case (DB) and camelCase (Internal)
-                    const connA = Object.keys(a.partner_stats || a.partnerStats || {}).length;
-                    const connB = Object.keys(b.partner_stats || b.partnerStats || {}).length;
-                    if (connB !== connA) return connB - connA; // Most unique partners first
-
-                    const trophyA = (a.achievements || []).length;
-                    const trophyB = (b.achievements || []).length;
-                    if (trophyB !== trophyA) return trophyB - a.trophyA;
-
-                    const gamesA = a.total_games ?? a.totalGames ?? a.games ?? 0;
-                    const gamesB = b.total_games ?? b.totalGames ?? b.games ?? 0;
-                    return gamesB - gamesA;
-                });
-
-                const html = players.map((p, i) => {
-                    const connections = Object.keys(p.partner_stats || p.partnerStats || {}).length;
-                    return `
-                    <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
-                        <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
-                        <div style="flex:1;">
-                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
-                            <div class="stats-meta">${connections} Connections · ${p.total_games ?? p.totalGames ?? p.games ?? 0} Games</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
-                            <div style="font-size:0.5rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">INFLUENCE</div>
-                        </div>
-                    </div>`;
-                }).join('');
-
-                content.innerHTML = tabs + subTabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
-            })
-            .catch(() => {
-                content.innerHTML = tabs + subTabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
-            });
-
-    } else if (tab === 'history') {
-        if (StateStore.roundHistory.length === 0) {
-            content.innerHTML = tabs + `
-                <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
-                    No rounds played yet this session.
-                </div>`;
-            return;
-        }
-
-        const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
-            const roundNum = StateStore.roundHistory.length - i;
-            
-            let timeHtml = '';
-            if (round.timestamp) {
-                const t = new Date(round.timestamp);
-                const timeStr = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                timeHtml = `<div style="font-size:0.65rem; color:var(--text-muted); margin-left:auto;">${timeStr}</div>`;
-            }
-
-            const games = (round.matches || []).map((m, gi) => {
-                const winIdx  = m.winnerTeamIndex;
-                if (winIdx === null || winIdx === undefined) return '';
-                const loseIdx = winIdx === 0 ? 1 : 0;
-
-                const squadLookup = round.squadSnapshot || [];
-                const getName = (id) => {
-                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
-                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
-                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
-                    return p ? p.name : id;
-                };
-
-                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
-                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
-
-                const durationMs = (m.endedAt && m.startedAt) ? m.endedAt - m.startedAt : 0;
-                const durMin = Math.floor(durationMs / 60000);
-                const durSec = Math.floor((durationMs % 60000) / 1000);
-                const durStr = durationMs > 0 ? `<span style="opacity:0.5; margin-left:6px; font-size:0.6rem;">⏱ ${durMin}:${durSec.toString().padStart(2, '0')}</span>` : '';
-
-                return `
-                    <div class="history-game">
-                        <div class="history-game-label">Game ${gi + 1}</div>
-                        <div class="history-matchup">
-                            <span class="history-winner">${escapeHTML(winners)}</span>
-                            <span class="history-vs">def.</span>
-                            <span class="history-loser">${escapeHTML(losers)}</span>${durStr}
-                        </div>
-                        ${timeHtml}
-                    </div>
-                `;
-            }).join('');
-
-            return `
-                <div class="history-round" style="animation-delay: ${i * 0.05}s">
-                    <div class="history-round-label">Round ${roundNum}</div>
-                    ${games}
-                </div>
-            `;
-        }).join('');
-
-        const searchBar = `
-            <div style="margin-bottom: 12px; position: relative;">
-                <input type="text" id="histSearchInput" placeholder="Search history..." 
-                    style="width:100%; padding-right: 32px;"
-                    oninput="window.filterHistory(this.value)">
-                <button id="histSearchClear" onclick="window.clearHistorySearch()" 
-                    style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1rem; padding: 8px;">
-                    ✕
-                </button>
-            </div>`;
-
-        content.innerHTML = tabs + searchBar + `<div class="history-list">${rounds}</div>`;
-    }
-}
-
 window.filterHistory = function(query) {
     const term = query.toLowerCase().trim();
     
@@ -3137,69 +3220,6 @@ function _recordTournamentMatchResult(winnerTeam, loserTeam) {
     }
 }
 
-function _startHostTimerTick() {
-    if (window._hostTickTimer) clearInterval(window._hostTickTimer);
-    window._hostTickTimer = setInterval(() => {
-        const matches = StateStore.currentMatches || [];
-        matches.forEach((m, i) => {
-            if (!m.startedAt || m.winnerTeamIndex !== null) return;
-            const el = document.getElementById(`timer-${i}`);
-            if (!el) return;
-            
-            const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
-            const min = Math.floor(elapsed / 60);
-            const sec = elapsed % 60;
-            el.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
-            
-            // Use the same CSS classes defined for the court-timer
-            el.classList.toggle('timer-warn', min >= 10);
-            el.classList.toggle('timer-alert', min >= 15);
-        });
-    }, 1000);
-}
-
-function _supportSectionHTML() {
-    return `
-        <div style="margin-top: auto; padding-top: 24px;">
-            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
-
-            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
-
-            <div style="flex:1 1 0; min-width:140px;">
-                <div class="sync-section-label">🐛 Report a Bug</div>
-                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
-                    Something broken? Let the dev know.
-                </p>
-                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
-                    onclick="openBugReportModal()">
-                    🐛 Report a Bug
-                </button>
-            </div>
-
-            <div style="flex:1 1 0; min-width:140px;">
-                <div class="sync-section-label">☕ Support the Dev</div>
-                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
-                    If Courtside Pro saves you time, consider buying the dev a coffee.
-                </p>
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
-                    <div style="text-align:center;">
-                            
-                    </div>
-                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
-                        style="display:inline-flex; align-items:center; gap:8px;
-                               background:#FF5E5B; color:#fff; font-weight:700;
-                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
-                               text-decoration:none; white-space:nowrap;">
-                        ☕ Ko-fi
-                    </a>
-                </div>
-            </div>
-
-            </div>
-        </div>
-    `;
-}
-
 function openBugReportModal() {
     let modal = document.getElementById('bugReportModal');
     if (!modal) {
@@ -3342,412 +3362,6 @@ function undoLastRound() {
         }
     });
 }
-
-/** Calculates a weighted skill index for sorting players. */
-function getSkillIndex(p) {
-    if (!p || p.games === 0) return 0;
-    const winRate = p.wins / p.games;
-    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
-    return (winRate * 100) + (p.wins * 2);
-}
-
-function renderStatsTab(tab) {
-    // UX FIX: Always fetch the latest passport data to ensure career stats 
-    // are up-to-date in the UI after a game ends.
-    if (typeof Passport !== 'undefined') passport = Passport.get();
-
-    const content = document.getElementById('overlayContent');
-
-    const tabs = `
-        <div class="stats-tabs">
-            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
-                onclick="renderStatsTab('performance')">Leaderboard</button>
-            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
-                onclick="renderStatsTab('history')">History</button>
-            <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
-                onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
-            <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
-                onclick="renderStatsTab('profile')">My Profile</button>
-        </div>
-    `;
-
-    if (tab === 'performance') {
-        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins || a.name.localeCompare(b.name));
-        const topCount = 3; // Podium layout expects exactly 3 players
-        const peakPerformers = sorted.slice(0, topCount);
-        const activeRoster   = sorted.slice(topCount);
-        const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
-
-        const getRankIconClass = (rank) => {
-            if (rank === 1) return 'gold';
-            if (rank === 2) return 'silver';
-            if (rank === 3) return 'bronze';
-            return '';
-        };
-
-        const renderPlayerCard = (p, rank, isPeak = false) => {
-            const sqIdx = StateStore.squad.indexOf(p);
-            const wr = winRate(p);
-            const rankClass = `rank-${rank}`;
-
-            let rankIconHTML = '';
-            if (!isPeak) { // Only for active roster
-                const iconClass = getRankIconClass(rank);
-                if (iconClass) {
-                    rankIconHTML = `<div class="rank-icon ${iconClass}">${rank}</div>`;
-                } else {
-                    rankIconHTML = `<div class="rank-icon" style="background:var(--bg2); border:1px solid var(--border); color:var(--text-muted);">${rank}</div>`;
-                }
-            }
-
-            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' <span class="fire-emoji">🔥</span>' : ''}</div>`;
-            const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
-            const progressBarHTML = `
-                <div class="win-rate-progress">
-                    <div class="win-rate-progress-fill" style="width:${wr}%"></div>
-                </div>
-            `;
-
-            if (isPeak) {
-                return `
-                    <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
-                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); opacity: 0.6; margin-bottom:8px;">#${rank}</div>
-                        ${nameHTML}
-                        ${metaHTML}
-                        ${progressBarHTML}
-                    </div>`;
-            } else {
-                return `
-                    <div class="stats-card active-roster" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
-                        ${rankIconHTML}
-                        ${nameHTML}
-                        ${metaHTML}
-                    </div>`;
-            }
-        };
-
-        let peakPerformersHTML = '';
-        if (peakPerformers.length > 0) {
-            peakPerformersHTML = `
-                <div class="stats-group">
-                    <div class="stats-header">PEAK PERFORMERS</div>
-                    <div class="stats-grid peak-performers-grid">
-                        ${peakPerformers.map((p, i) => renderPlayerCard(p, i + 1, true)).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        let activeRosterHTML = '';
-        if (activeRoster.length > 0) {
-            activeRosterHTML = `
-                <div class="stats-group">
-                    <div class="stats-header">ACTIVE ROSTER</div>
-                    <div class="stats-grid">
-                        ${activeRoster.map((p, i) => renderPlayerCard(p, i + 4, false)).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        content.innerHTML = tabs + peakPerformersHTML + activeRosterHTML;
-
-    } else if (tab === 'profile') {
-        const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
-        
-        // 1. Identity Header
-        const { title, icon } = me ? getPlayerTitle(me) : { title: 'Spectator', icon: '👀' };
-        const avatarColor = Avatar.color(passport.playerName);
-        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
-        
-        const headerHTML = `
-            <div class="sl-profile-card">
-                <div class="sl-profile-top-right">
-                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
-                </div>
-                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
-                    ${avatarInitial}
-                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
-                </div>
-                <div class="sl-profile-name-large">${escapeHTML(passport.playerName)}</div>
-                <div class="sl-profile-title-badge">
-                    <span>${icon}</span>
-                    <span>${title}</span>
-                </div>
-            </div>`;
-
-        // 2. Stats Deck
-        const career = passport.stats || { wins: 0, games: 0 };
-        const cWins  = career.wins || 0;
-        const cGames = career.games || 0;
-        const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-        
-        let sWins = 0, sGames = 0, sWr = 0;
-        if (me) {
-            sWins = me.wins;
-            sGames = me.games;
-            sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
-        }
-
-        const statsHTML = `
-            <div class="sl-stats-deck">
-                <div class="sl-stat-card ${!me ? 'inactive' : ''}">
-                    <div class="sl-card-label">CURRENT SESSION</div>
-                    ${me ? `
-                    <div class="sl-card-grid">
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sWins}</div>
-                            <div class="sl-card-key">WINS</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sGames}</div>
-                            <div class="sl-card-key">GAMES</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sWr}%</div>
-                            <div class="sl-card-key">WIN RATE</div>
-                        </div>
-                    </div>` : `<div class="sl-card-empty">Not in squad</div>`}
-                </div>
-                <div class="sl-stat-card">
-                    <div class="sl-card-label">CAREER RECORD</div>
-                    <div class="sl-card-grid">
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cWins}</div>
-                            <div class="sl-card-key">WINS</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cGames}</div>
-                            <div class="sl-card-key">GAMES</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cWr}%</div>
-                            <div class="sl-card-key">WIN RATE</div>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
-
-        // Form & Analytics (New Section)
-        let analyticsHTML = '';
-        if (me) {
-            // Rival Logic
-            let rivalName = 'None yet';
-            let rivalCount = 0;
-            if (me.opponentHistory) {
-                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
-                if (rivals.length > 0) {
-                    const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
-                    rivalName = rivalP ? rivalP.name : 'Unknown';
-                    rivalCount = rivals[0][1];
-                }
-            }
-
-            // Form Logic
-            const formHTML = (me.form || []).map(r => 
-                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'#ef4444'}; color:${r==='W'?'#000':'#fff'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
-            ).join('');
-
-            analyticsHTML = `
-                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
-                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
-                    </div>
-                    <div style="width:1px; height:30px; background:var(--border);"></div>
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
-                        <div style="font-size:0.9rem; font-weight:700;">${escapeHTML(rivalName)}</div>
-                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
-                    </div>
-                </div>`;
-        }
-
-        // 3. Chemistry
-        let chemHTML = '';
-        if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
-            const partners = Object.entries(me.partnerStats);
-            partners.sort(([, a], [, b]) => {
-                if (b.wins !== a.wins) return b.wins - a.wins;
-                return b.games - a.games;
-            });
-            const best = partners[0];
-            if (best) {
-                const [uuid, stats] = best;
-                const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
-                const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
-                chemHTML = `
-                    <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
-                    <div class="sl-chem-card">
-                        <div class="sl-chem-details">
-                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
-                            <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
-                        </div>
-                    </div>`;
-            }
-        }
-
-        // 4. Achievements
-        let achHTML = '';
-        if (window.Achievements) {
-            const sessionAch = me ? (me.achievements || []) : [];
-            const allTimeAch = passport.achievements || [];
-            const myAch = [...new Set([...sessionAch, ...allTimeAch])];
-            const list = Object.keys(window.Achievements).map(key => {
-                const data = window.getAchievementDisplay(key, myAch);
-                const unlocked = data.unlocked;
-                return `
-                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="${unlocked ? `border-left: 3px solid ${data.color}` : ''}">
-                        <div class="sl-ach-icon">${data.icon}</div>
-                        <div class="sl-ach-text">
-                            <div class="sl-ach-title">${data.name}</div>
-                            <div class="sl-ach-desc">${data.description}</div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            achHTML = `<div class="sl-achievements-list" style="margin-top:20px;">${list}</div>`;
-        }
-
-        content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
-
-    } else if (tab === 'hall-of-fame') {
-        const period = window._lbPeriod || 'all';
-        const subTabs = `
-            <div style="display:flex; gap:8px; margin-bottom:16px;">
-                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
-                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
-            </div>`;
-
-        content.innerHTML = tabs + subTabs + `
-            <div class="sl-searching" style="margin-top:20px;">
-                <div class="sl-searching-spinner"></div>
-                <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
-            </div>`;
-
-        fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
-            .then(res => res.json())
-            .then(data => {
-                // Guard: only render if user is still on the hall-of-fame tab
-                if (!document.querySelector('.stats-tab.active')?.textContent.toLowerCase().includes('hall')) return;
-                
-                const players = data.players || [];
-
-                // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
-                players.sort((a, b) => {
-                    // Support both snake_case (DB) and camelCase (Internal)
-                    const connA = Object.keys(a.partner_stats || a.partnerStats || {}).length;
-                    const connB = Object.keys(b.partner_stats || b.partnerStats || {}).length;
-                    if (connB !== connA) return connB - connA; // Most unique partners first
-
-                    const trophyA = (a.achievements || []).length;
-                    const trophyB = (b.achievements || []).length;
-                    if (trophyB !== trophyA) return trophyB - trophyA;
-
-                    const gamesA = a.total_games ?? a.totalGames ?? a.games ?? 0;
-                    const gamesB = b.total_games ?? b.totalGames ?? b.games ?? 0;
-                    return gamesB - gamesA;
-                });
-
-                const html = players.map((p, i) => {
-                    const connections = Object.keys(p.partner_stats || p.partnerStats || {}).length;
-                    return `
-                    <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
-                        <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
-                        <div style="flex:1;">
-                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
-                            <div class="stats-meta">${connections} Connections · ${p.total_games ?? p.totalGames ?? p.games ?? 0} Games</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
-                            <div style="font-size:0.5rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">INFLUENCE</div>
-                        </div>
-                    </div>`;
-                }).join('');
-
-                content.innerHTML = tabs + subTabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
-            })
-            .catch(() => {
-                content.innerHTML = tabs + subTabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
-            });
-
-    } else if (tab === 'history') {
-        if (StateStore.roundHistory.length === 0) {
-            content.innerHTML = tabs + `
-                <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
-                    No rounds played yet this session.
-                </div>`;
-            return;
-        }
-
-        const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
-            const roundNum = StateStore.roundHistory.length - i;
-            
-            let timeHtml = '';
-            if (round.timestamp) {
-                const t = new Date(round.timestamp);
-                const timeStr = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                timeHtml = `<div style="font-size:0.65rem; color:var(--text-muted); margin-left:auto;">${timeStr}</div>`;
-            }
-
-            const games = (round.matches || []).map((m, gi) => {
-                const winIdx  = m.winnerTeamIndex;
-                if (winIdx === null || winIdx === undefined) return '';
-                const loseIdx = winIdx === 0 ? 1 : 0;
-
-                const squadLookup = round.squadSnapshot || [];
-                const getName = (id) => {
-                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
-                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
-                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
-                    return p ? p.name : id;
-                };
-
-                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
-                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
-
-                const durationMs = (m.endedAt && m.startedAt) ? m.endedAt - m.startedAt : 0;
-                const durMin = Math.floor(durationMs / 60000);
-                const durSec = Math.floor((durationMs % 60000) / 1000);
-                const durStr = durationMs > 0 ? `<span style="opacity:0.5; margin-left:6px; font-size:0.6rem;">⏱ ${durMin}:${durSec.toString().padStart(2, '0')}</span>` : '';
-
-                return `
-                    <div class="history-game">
-                        <div class="history-game-label">Game ${gi + 1}</div>
-                        <div class="history-matchup">
-                            <span class="history-winner">${escapeHTML(winners)}</span>
-                            <span class="history-vs">def.</span>
-                            <span class="history-loser">${escapeHTML(losers)}</span>${durStr}
-                        </div>
-                        ${timeHtml}
-                    </div>
-                `;
-            }).join('');
-
-            return `
-                <div class="history-round" style="animation-delay: ${i * 0.05}s">
-                    <div class="history-round-label">Round ${roundNum}</div>
-                    ${games}
-                </div>
-            `;
-        }).join('');
-
-        const searchBar = `
-            <div style="margin-bottom: 12px; position: relative;">
-                <input type="text" id="histSearchInput" placeholder="Search history..." 
-                    style="width:100%; padding-right: 32px;"
-                    oninput="window.filterHistory(this.value)">
-                <button id="histSearchClear" onclick="window.clearHistorySearch()" 
-                    style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1rem; padding: 8px;">
-                    ✕
-                </button>
-            </div>`;
-
-        content.innerHTML = tabs + searchBar + `<div class="history-list">${rounds}</div>`;
-    }
-}
-
 window.filterHistory = function(query) {
     const term = query.toLowerCase().trim();
     
@@ -4218,20 +3832,6 @@ function fallbackCopy(text, msg = '📋 Token copied!') {
         alert('Could not copy automatically. Please copy the token manually.');
     }
     document.body.removeChild(ta);
-}
-
-function _preferencesSectionHTML() {
-    const isAudio = localStorage.getItem('cs_host_audio_announce') === 'true';
-    return `
-        <div class="sh-section">
-            <div class="sync-section-label">Preferences</div>
-            <div class="sh-grid">
-                <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="window.toggleHostAudioAnnounce()">
-                    🔊 VOICE ALERTS: ${isAudio ? 'ON' : 'OFF'}
-                </button>
-            </div>
-        </div>
-    `;
 }
 
 function closeOverlay() {
@@ -4767,412 +4367,6 @@ function undoLastRound() {
         }
     });
 }
-
-/** Calculates a weighted skill index for sorting players. */
-function getSkillIndex(p) {
-    if (!p || p.games === 0) return 0;
-    const winRate = p.wins / p.games;
-    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
-    return (winRate * 100) + (p.wins * 2);
-}
-
-function renderStatsTab(tab) {
-    // UX FIX: Always fetch the latest passport data to ensure career stats 
-    // are up-to-date in the UI after a game ends.
-    if (typeof Passport !== 'undefined') passport = Passport.get();
-
-    const content = document.getElementById('overlayContent');
-
-    const tabs = `
-        <div class="stats-tabs">
-            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
-                onclick="renderStatsTab('performance')">Leaderboard</button>
-            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
-                onclick="renderStatsTab('history')">History</button>
-            <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
-                onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
-            <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
-                onclick="renderStatsTab('profile')">My Profile</button>
-        </div>
-    `;
-
-    if (tab === 'performance') {
-        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins || a.name.localeCompare(b.name));
-        const topCount = 3; // Podium layout expects exactly 3 players
-        const peakPerformers = sorted.slice(0, topCount);
-        const activeRoster   = sorted.slice(topCount);
-        const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
-
-        const getRankIconClass = (rank) => {
-            if (rank === 1) return 'gold';
-            if (rank === 2) return 'silver';
-            if (rank === 3) return 'bronze';
-            return '';
-        };
-
-        const renderPlayerCard = (p, rank, isPeak = false) => {
-            const sqIdx = StateStore.squad.indexOf(p);
-            const wr = winRate(p);
-            const rankClass = `rank-${rank}`;
-
-            let rankIconHTML = '';
-            if (!isPeak) { // Only for active roster
-                const iconClass = getRankIconClass(rank);
-                if (iconClass) {
-                    rankIconHTML = `<div class="rank-icon ${iconClass}">${rank}</div>`;
-                } else {
-                    rankIconHTML = `<div class="rank-icon" style="background:var(--bg2); border:1px solid var(--border); color:var(--text-muted);">${rank}</div>`;
-                }
-            }
-
-            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' <span class="fire-emoji">🔥</span>' : ''}</div>`;
-            const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
-            const progressBarHTML = `
-                <div class="win-rate-progress">
-                    <div class="win-rate-progress-fill" style="width:${wr}%"></div>
-                </div>
-            `;
-
-            if (isPeak) {
-                return `
-                    <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
-                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); opacity: 0.6; margin-bottom:8px;">#${rank}</div>
-                        ${nameHTML}
-                        ${metaHTML}
-                        ${progressBarHTML}
-                    </div>`;
-            } else {
-                return `
-                    <div class="stats-card active-roster" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
-                        ${rankIconHTML}
-                        ${nameHTML}
-                        ${metaHTML}
-                    </div>`;
-            }
-        };
-
-        let peakPerformersHTML = '';
-        if (peakPerformers.length > 0) {
-            peakPerformersHTML = `
-                <div class="stats-group">
-                    <div class="stats-header">PEAK PERFORMERS</div>
-                    <div class="stats-grid peak-performers-grid">
-                        ${peakPerformers.map((p, i) => renderPlayerCard(p, i + 1, true)).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        let activeRosterHTML = '';
-        if (activeRoster.length > 0) {
-            activeRosterHTML = `
-                <div class="stats-group">
-                    <div class="stats-header">ACTIVE ROSTER</div>
-                    <div class="stats-grid">
-                        ${activeRoster.map((p, i) => renderPlayerCard(p, i + 4, false)).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        content.innerHTML = tabs + peakPerformersHTML + activeRosterHTML;
-
-    } else if (tab === 'profile') {
-        const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
-        
-        // 1. Identity Header
-        const { title, icon } = me ? getPlayerTitle(me) : { title: 'Spectator', icon: '👀' };
-        const avatarColor = Avatar.color(passport.playerName);
-        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
-        
-        const headerHTML = `
-            <div class="sl-profile-card">
-                <div class="sl-profile-top-right">
-                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
-                </div>
-                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
-                    ${avatarInitial}
-                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
-                </div>
-                <div class="sl-profile-name-large">${escapeHTML(passport.playerName)}</div>
-                <div class="sl-profile-title-badge">
-                    <span>${icon}</span>
-                    <span>${title}</span>
-                </div>
-            </div>`;
-
-        // 2. Stats Deck
-        const career = passport.stats || { wins: 0, games: 0 };
-        const cWins  = career.wins || 0;
-        const cGames = career.games || 0;
-        const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
-        
-        let sWins = 0, sGames = 0, sWr = 0;
-        if (me) {
-            sWins = me.wins;
-            sGames = me.games;
-            sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
-        }
-
-        const statsHTML = `
-            <div class="sl-stats-deck">
-                <div class="sl-stat-card ${!me ? 'inactive' : ''}">
-                    <div class="sl-card-label">CURRENT SESSION</div>
-                    ${me ? `
-                    <div class="sl-card-grid">
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sWins}</div>
-                            <div class="sl-card-key">WINS</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sGames}</div>
-                            <div class="sl-card-key">GAMES</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${sWr}%</div>
-                            <div class="sl-card-key">WIN RATE</div>
-                        </div>
-                    </div>` : `<div class="sl-card-empty">Not in squad</div>`}
-                </div>
-                <div class="sl-stat-card">
-                    <div class="sl-card-label">CAREER RECORD</div>
-                    <div class="sl-card-grid">
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cWins}</div>
-                            <div class="sl-card-key">WINS</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cGames}</div>
-                            <div class="sl-card-key">GAMES</div>
-                        </div>
-                        <div class="sl-card-item">
-                            <div class="sl-card-val">${cWr}%</div>
-                            <div class="sl-card-key">WIN RATE</div>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
-
-        // Form & Analytics (New Section)
-        let analyticsHTML = '';
-        if (me) {
-            // Rival Logic
-            let rivalName = 'None yet';
-            let rivalCount = 0;
-            if (me.opponentHistory) {
-                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
-                if (rivals.length > 0) {
-                    const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
-                    rivalName = rivalP ? rivalP.name : 'Unknown';
-                    rivalCount = rivals[0][1];
-                }
-            }
-
-            // Form Logic
-            const formHTML = (me.form || []).map(r => 
-                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'#ef4444'}; color:${r==='W'?'#000':'#fff'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
-            ).join('');
-
-            analyticsHTML = `
-                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
-                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
-                    </div>
-                    <div style="width:1px; height:30px; background:var(--border);"></div>
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
-                        <div style="font-size:0.9rem; font-weight:700;">${escapeHTML(rivalName)}</div>
-                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
-                    </div>
-                </div>`;
-        }
-
-        // 3. Chemistry
-        let chemHTML = '';
-        if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
-            const partners = Object.entries(me.partnerStats);
-            partners.sort(([, a], [, b]) => {
-                if (b.wins !== a.wins) return b.wins - a.wins;
-                return b.games - a.games;
-            });
-            const best = partners[0];
-            if (best) {
-                const [uuid, stats] = best;
-                const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
-                const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
-                chemHTML = `
-                    <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
-                    <div class="sl-chem-card">
-                        <div class="sl-chem-details">
-                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
-                            <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
-                        </div>
-                    </div>`;
-            }
-        }
-
-        // 4. Achievements
-        let achHTML = '';
-        if (window.Achievements) {
-            const sessionAch = me ? (me.achievements || []) : [];
-            const allTimeAch = passport.achievements || [];
-            const myAch = [...new Set([...sessionAch, ...allTimeAch])];
-            const list = Object.keys(window.Achievements).map(key => {
-                const data = window.getAchievementDisplay(key, myAch);
-                const unlocked = data.unlocked;
-                return `
-                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="${unlocked ? `border-left: 3px solid ${data.color}` : ''}">
-                        <div class="sl-ach-icon">${data.icon}</div>
-                        <div class="sl-ach-text">
-                            <div class="sl-ach-title">${data.name}</div>
-                            <div class="sl-ach-desc">${data.description}</div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            achHTML = `<div class="sl-achievements-list" style="margin-top:20px;">${list}</div>`;
-        }
-
-        content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
-
-    } else if (tab === 'hall-of-fame') {
-        const period = window._lbPeriod || 'all';
-        const subTabs = `
-            <div style="display:flex; gap:8px; margin-bottom:16px;">
-                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
-                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
-            </div>`;
-
-        content.innerHTML = tabs + subTabs + `
-            <div class="sl-searching" style="margin-top:20px;">
-                <div class="sl-searching-spinner"></div>
-                <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
-            </div>`;
-
-        fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
-            .then(res => res.json())
-            .then(data => {
-                // Guard: only render if user is still on the hall-of-fame tab
-                if (!document.querySelector('.stats-tab.active')?.textContent.toLowerCase().includes('hall')) return;
-                
-                const players = data.players || [];
-
-                // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
-                players.sort((a, b) => {
-                    // Support both snake_case (DB) and camelCase (Internal)
-                    const connA = Object.keys(a.partner_stats || a.partnerStats || {}).length;
-                    const connB = Object.keys(b.partner_stats || b.partnerStats || {}).length;
-                    if (connB !== connA) return connB - connA; // Most unique partners first
-
-                    const trophyA = (a.achievements || []).length;
-                    const trophyB = (b.achievements || []).length;
-                    if (trophyB !== trophyA) return trophyB - trophyA;
-
-                    const gamesA = a.total_games ?? a.totalGames ?? a.games ?? 0;
-                    const gamesB = b.total_games ?? b.totalGames ?? b.games ?? 0;
-                    return gamesB - gamesA;
-                });
-
-                const html = players.map((p, i) => {
-                    const connections = Object.keys(p.partner_stats || p.partnerStats || {}).length;
-                    return `
-                    <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
-                        <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
-                        <div style="flex:1;">
-                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
-                            <div class="stats-meta">${connections} Connections · ${p.total_games ?? p.totalGames ?? p.games ?? 0} Games</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
-                            <div style="font-size:0.5rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">INFLUENCE</div>
-                        </div>
-                    </div>`;
-                }).join('');
-
-                content.innerHTML = tabs + subTabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
-            })
-            .catch(() => {
-                content.innerHTML = tabs + subTabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
-            });
-
-    } else if (tab === 'history') {
-        if (StateStore.roundHistory.length === 0) {
-            content.innerHTML = tabs + `
-                <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
-                    No rounds played yet this session.
-                </div>`;
-            return;
-        }
-
-        const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
-            const roundNum = StateStore.roundHistory.length - i;
-            
-            let timeHtml = '';
-            if (round.timestamp) {
-                const t = new Date(round.timestamp);
-                const timeStr = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                timeHtml = `<div style="font-size:0.65rem; color:var(--text-muted); margin-left:auto;">${timeStr}</div>`;
-            }
-
-            const games = (round.matches || []).map((m, gi) => {
-                const winIdx  = m.winnerTeamIndex;
-                if (winIdx === null || winIdx === undefined) return '';
-                const loseIdx = winIdx === 0 ? 1 : 0;
-
-                const squadLookup = round.squadSnapshot || [];
-                const getName = (id) => {
-                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
-                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
-                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
-                    return p ? p.name : id;
-                };
-
-                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
-                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
-
-                const durationMs = (m.endedAt && m.startedAt) ? m.endedAt - m.startedAt : 0;
-                const durMin = Math.floor(durationMs / 60000);
-                const durSec = Math.floor((durationMs % 60000) / 1000);
-                const durStr = durationMs > 0 ? `<span style="opacity:0.5; margin-left:6px; font-size:0.6rem;">⏱ ${durMin}:${durSec.toString().padStart(2, '0')}</span>` : '';
-
-                return `
-                    <div class="history-game">
-                        <div class="history-game-label">Game ${gi + 1}</div>
-                        <div class="history-matchup">
-                            <span class="history-winner">${escapeHTML(winners)}</span>
-                            <span class="history-vs">def.</span>
-                            <span class="history-loser">${escapeHTML(losers)}</span>${durStr}
-                        </div>
-                        ${timeHtml}
-                    </div>
-                `;
-            }).join('');
-
-            return `
-                <div class="history-round" style="animation-delay: ${i * 0.05}s">
-                    <div class="history-round-label">Round ${roundNum}</div>
-                    ${games}
-                </div>
-            `;
-        }).join('');
-
-        const searchBar = `
-            <div style="margin-bottom: 12px; position: relative;">
-                <input type="text" id="histSearchInput" placeholder="Search history..." 
-                    style="width:100%; padding-right: 32px;"
-                    oninput="window.filterHistory(this.value)">
-                <button id="histSearchClear" onclick="window.clearHistorySearch()" 
-                    style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1rem; padding: 8px;">
-                    ✕
-                </button>
-            </div>`;
-
-        content.innerHTML = tabs + searchBar + `<div class="history-list">${rounds}</div>`;
-    }
-}
-
 window.filterHistory = function(query) {
     const term = query.toLowerCase().trim();
     
