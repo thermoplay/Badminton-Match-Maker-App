@@ -543,7 +543,8 @@ window.movePlayerToFront       = movePlayerToFront;
 window.removePlayerFromSession = removePlayerFromSession;
 window.setCourts               = setCourts;
 window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
-window.openWarRoom             = openWarRoom;
+window.openTournamentMode      = openTournamentMode;
+window.addTournamentGuest      = addTournamentGuest;
 
 // ---------------------------------------------------------------------------
 // RENDERING
@@ -2990,20 +2991,6 @@ function ensureHostUI() {
         dashboard.appendChild(selector);
     }
 
-    // Add War Room Entry Point
-    if (!document.getElementById('warRoomEntry')) {
-        const btn = document.createElement('button');
-        btn.id = 'warRoomEntry';
-        btn.className = 'btn-main';
-        btn.style.marginTop = '12px';
-        btn.style.background = 'var(--obsidian)';
-        btn.style.border = '1px solid var(--royal-purple)';
-        btn.style.color = 'var(--royal-purple)';
-        btn.innerHTML = '⚡ ENTER TOURNAMENT WAR ROOM';
-        btn.onclick = () => window.openWarRoom();
-        dashboard.appendChild(btn);
-    }
-
     // 1. Join Notification Toast (Popup)
    if (!document.getElementById('joinNotification')) {
         const notif = document.createElement('div');
@@ -3057,22 +3044,22 @@ function ensureHostUI() {
 let wrSelectedPlayer = null;
 let wrTeams = [];
 
-function openWarRoom() {
+function openTournamentMode() {
     const overlay = document.createElement('div');
     overlay.className = 'war-room-overlay';
     overlay.id = 'warRoomOverlay';
     
-    const code = window.currentRoomCode || 'LOCAL';
-    const unassigned = StateStore.squad.filter(p => p.active);
+    const code = window.currentRoomCode || 'OFFLINE';
+    const unassigned = StateStore.squad.filter(p => p.active && !wrTeams.some(t => t.players.some(tp => tp.uuid === p.uuid)));
 
     overlay.innerHTML = `
         <div class="wr-header">
             <div style="display:flex; align-items:center; gap:15px;">
-                <div class="wr-room-pill">ROOM: ${code}</div>
+                <div class="wr-room-pill">TOURNAMENT: ${code}</div>
                 <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} PARTICIPANTS</div>
             </div>
             <div style="display:flex; gap:10px;">
-                <button class="btn-icon" onclick="addPlayer()">+ GUEST</button>
+                <button class="btn-icon" onclick="window.addTournamentGuest()">+ GUEST</button>
                 <button class="btn-icon" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
             </div>
         </div>
@@ -3102,6 +3089,32 @@ function openWarRoom() {
     `;
 
     document.body.appendChild(overlay);
+}
+
+function addTournamentGuest() {
+    UIManager.prompt({
+        title: 'Add Tournament Guest',
+        placeholder: 'Enter name...',
+        confirmText: 'Add to Pool',
+        onConfirm: (name) => {
+            const trimmed = name.trim();
+            if (!trimmed) return;
+            
+            const newUUID = _generateUUID();
+            const newPlayer = migratePlayer({
+                name: trimmed,
+                uuid: newUUID,
+                active: true,
+                isGuest: true
+            });
+            
+            StateStore.set('squad', [...StateStore.squad, newPlayer]);
+            if (window.Haptic) Haptic.success();
+            // Refresh the Tournament Mode UI
+            const overlay = document.getElementById('warRoomOverlay');
+            if (overlay) { overlay.remove(); openTournamentMode(); }
+        }
+    });
 }
 
 window.handleWarRoomTap = (uuid) => {
@@ -3584,10 +3597,15 @@ function showLandingPage() {
             ${recentHTML}
 
             <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:32px;">
-                <button class="btn-main" onclick="closeLandingPage()" style="height:64px; font-size:1.1rem; box-shadow:0 0 30px var(--accent-dim);">
-                    ➕ CREATE NEW SESSION
+                <button class="btn-main" onclick="closeLandingPage()" style="height:54px; font-size:1rem; box-shadow:0 0 30px var(--accent-dim);">
+                    🏸 REGULAR PLAY SESSION
                 </button>
                 
+                <button class="btn-main" onclick="window.openTournamentMode()" 
+                        style="height:54px; font-size:1rem; background:var(--obsidian); border:1px solid var(--royal-purple); color:#fff; box-shadow:0 0 20px rgba(107, 33, 168, 0.3);">
+                    🏆 ENTER TOURNAMENT MODE
+                </button>
+
                 <div style="height:1px; background:var(--border); margin:8px 0; position:relative;">
                     <span style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--bg); padding:0 12px; font-size:0.55rem; color:var(--text-muted); font-weight:900; letter-spacing:2px;">OR JOIN BY CODE</span>
                 </div>
