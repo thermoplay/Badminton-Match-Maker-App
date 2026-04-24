@@ -1248,16 +1248,15 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
     gap: 10px;
 }
 
-/* New grid for Peak Performers */
 .stats-grid.peak-performers-grid {
-    grid-template-columns: 1fr 1.2fr 1fr; /* Center card wider */
-    gap: 15px;
-    align-items: end; /* Align cards to the bottom */
+    grid-template-columns: repeat(3, 1fr); /* perfectly aligned horizontal row */
+    gap: 12px;
+    align-items: stretch;
+    margin-bottom: 32px;
 }
 
 .stats-card {
     background: var(--surface);
-    padding: 16px;
     border-radius: 12px;
     border: 1px solid var(--border);
     position: relative;
@@ -1273,44 +1272,64 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
 /* Removed: .stats-group:first-child .stats-card { border-left: 3px solid var(--accent); } */
 /* Removed: .stats-card::before { ... } */
 
-/* Base Peak Performer Card */
 .stats-card.peak-performer {
     background: linear-gradient(145deg, var(--surface2), var(--bg2));
-    border-color: var(--border-accent);
-    box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.15), inset 0 0 10px rgba(var(--accent-rgb), 0.08);
-    min-height: 120px; /* Base height */
-    padding: 18px;
+    border-width: 2px;
+    min-height: 180px;
+    padding: 24px 12px;
     text-align: center;
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    justify-content: center;
 }
 
-/* Rank 1 Specific (Taller, Glowing Border, Holographic Glass) */
 .stats-card.peak-performer.rank-1 {
-    min-height: 180px; /* Taller */
-    border-color: var(--accent);
-    box-shadow: 0 0 30px rgba(var(--accent-rgb), 0.4), inset 0 0 15px rgba(var(--accent-rgb), 0.2);
-    background: linear-gradient(145deg, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0.02));
-    backdrop-filter: blur(5px); /* Holographic glass effect */
-    -webkit-backdrop-filter: blur(5px);
-    position: relative;
-    z-index: 1; /* Ensure it's above other cards */
-    transform: translateY(-5px); /* Slightly lift */
+    border-color: #9333ea;
+    box-shadow: 0 0 15px rgba(147, 51, 234, 0.5);
+    background: linear-gradient(180deg, rgba(147, 51, 234, 0.1), var(--bg2));
+    animation: purplePulse 2s infinite alternate;
+    order: 2; /* Podium middle */
+    z-index: 2;
+    transform: scale(1.05);
 }
 
-.stats-card.peak-performer.rank-1::before {
-    content: '';
-    position: absolute;
-    inset: -2px; /* Extend glow slightly beyond border */
-    border-radius: 14px;
-    border: 2px solid var(--accent);
-    opacity: 0.6;
-    animation: pulseGlow 2s infinite alternate; /* Subtle breathing glow */
-    pointer-events: none;
-    z-index: -1;
+.stats-card.peak-performer.rank-1 .stats-name {
+    color: #c084fc;
+    text-shadow: 0 0 10px rgba(147, 51, 234, 0.6);
 }
 
-@keyframes pulseGlow {
-    0% { box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.5); opacity: 0.6; }
-    100% { box-shadow: 0 0 25px rgba(var(--accent-rgb), 0.8); opacity: 0.8; }
+.stats-card.peak-performer.rank-1 .fire-emoji {
+    text-shadow: 0 0 12px rgba(147, 51, 234, 0.8);
+}
+
+.stats-card.peak-performer.rank-1 .win-rate-progress-fill {
+    background: #9333ea;
+}
+
+.stats-card.peak-performer.rank-2 {
+    border-color: #cbd5e1;
+    box-shadow: 0 0 12px rgba(203, 213, 225, 0.3);
+    background: linear-gradient(180deg, rgba(203, 213, 225, 0.05), var(--bg2));
+    order: 1; /* Podium left */
+}
+
+.stats-card.peak-performer.rank-2 .win-rate-progress-fill {
+    background: #cbd5e1;
+}
+
+.stats-card.peak-performer.rank-3 {
+    border-color: #b45309;
+    box-shadow: 0 0 12px rgba(180, 83, 9, 0.3);
+    background: linear-gradient(180deg, rgba(180, 83, 9, 0.05), var(--bg2));
+    order: 3; /* Podium right */
+}
+
+.stats-card.peak-performer.rank-3 .win-rate-progress-fill {
+    background: #b45309;
+}
+
+@keyframes purplePulse {
+    from { box-shadow: 0 0 15px rgba(147, 51, 234, 0.4); }
+    to { box-shadow: 0 0 25px rgba(147, 51, 234, 0.7); }
 }
 
 .stats-name {
@@ -1335,9 +1354,7 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
     margin-bottom: 8px;
 }
 .stats-card.peak-performer.rank-1 .stats-name {
-    font-size: 1.8rem; /* Larger for rank 1 */
-    color: var(--accent);
-    text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.5);
+    font-size: 1.7rem;
 }
 
 .stats-meta {
@@ -1369,7 +1386,7 @@ body:not(.player-mode) .match-label:hover { color: var(--accent); }
     background: rgba(255,255,255,0.03); /* Lighter glass effect */
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid rgba(32, 255, 173, 0.12); /* semi-transparent dimmed mint */
     padding: 12px 16px;
     display: flex;
     flex-direction: row; /* Horizontal layout */

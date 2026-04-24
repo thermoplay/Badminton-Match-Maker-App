@@ -1606,10 +1606,10 @@ function renderStatsTab(tab) {
     `;
 
     if (tab === 'performance') {
-        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins);
-        const topCount = Math.max(1, Math.ceil(StateStore.squad.length * 0.3));
-        const peakPerformers = sorted.slice(0, topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
-        const activeRoster   = sorted.slice(topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
+        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins || a.name.localeCompare(b.name));
+        const topCount = 3; // Podium layout expects exactly 3 players
+        const peakPerformers = sorted.slice(0, topCount);
+        const activeRoster   = sorted.slice(topCount);
         const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
 
         const getRankIconClass = (rank) => {
@@ -1634,7 +1634,7 @@ function renderStatsTab(tab) {
                 }
             }
 
-            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' 🔥' : ''}</div>`;
+            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' <span class="fire-emoji">🔥</span>' : ''}</div>`;
             const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
             const progressBarHTML = `
                 <div class="win-rate-progress">
@@ -1645,7 +1645,7 @@ function renderStatsTab(tab) {
             if (isPeak) {
                 return `
                     <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
-                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); margin-bottom:8px;">#${rank}</div>
+                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); opacity: 0.6; margin-bottom:8px;">#${rank}</div>
                         ${nameHTML}
                         ${metaHTML}
                         ${progressBarHTML}
