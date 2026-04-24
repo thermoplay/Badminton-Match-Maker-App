@@ -3818,14 +3818,14 @@ function showLandingPage() {
     `;
 }
 
-function confirmGoToMainMenu() {
-    const hasActiveSession = StateStore.squad.length > 0 || isOnlineSession;
+function goToMainMenu() {
+    const hasActiveSession = StateStore.squad.length > 0 || (typeof isOnlineSession !== 'undefined' && isOnlineSession);
     if (hasActiveSession) {
         UIManager.confirm({
             title: 'Exit to Lobby?',
             message: 'Your current session is still active. Return to the main lobby?',
             confirmText: 'Return to Lobby',
-            onConfirm: () => showLandingPage()
+            onConfirm: () => typeof showLandingPage === 'function' && showLandingPage()
         });
     } else {
         showLandingPage();
