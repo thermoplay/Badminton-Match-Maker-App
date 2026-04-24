@@ -549,6 +549,10 @@ window.removePlayerFromSession = removePlayerFromSession;
 window.setCourts               = setCourts;
 window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
 window.openTournamentMode      = openTournamentMode;
+window.resetTournament         = resetTournament;
+window.handleWarRoomTap        = handleWarRoomTap;
+window.igniteTournament        = igniteTournament;
+window.renderWarRoomQR         = renderWarRoomQR;
 window.igniteWarRoomLive       = igniteWarRoomLive;
 window.showLiveSuccessModal    = showLiveSuccessModal;
 window.advanceTournamentTeam   = advanceTournamentTeam;
@@ -3078,6 +3082,8 @@ function openTournamentMode() {
                 <div id="wrQR" class="wr-header-qr"></div>
             </div>
             <div style="display:flex; gap:10px;">
+                            ${wrTeams.length > 0 ? `<button class="wr-btn-guest" style="border-color:var(--danger); color:var(--danger);" onclick="window.resetTournament()">🔄 RESET</button>` : ''}
+
                 ${!isLive ? `<button class="wr-btn-guest wr-go-live-btn" style="border-color:var(--accent); color:var(--accent);" onclick="window.igniteWarRoomLive()">🌐 GO LIVE</button>` : `<div class="wr-room-pill">ROOM: ${code}</div>`}
                 <button class="wr-btn-guest" onclick="window.addTournamentGuest()">🏆 + GUEST</button>
                 <button class="wr-btn-close" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
@@ -3104,7 +3110,14 @@ function openTournamentMode() {
             <div class="wr-column">
                 <div class="wr-column-title">Bracket Entries</div>
                 <div id="wrTeamsList" style="flex:1; overflow-y:auto; display:grid; grid-template-columns:1fr; gap:10px;">
-                    <!-- Teams will appear here -->
+                    ${wrTeams.map((t, idx) => `
+                        <div class="wr-team-card">
+                            <div style="font-size:0.6rem; color:var(--trophy-gold); margin-bottom:4px;">TEAM ${idx + 1}</div>
+                            <div style="font-family:var(--font-display); font-weight:800; font-style:italic; text-transform:uppercase;">
+                                ${escapeHTML(t.name)}
+                            </div>
+                        </div>
+                    `).join('')}
                 </div>
             </div>
         </div>
@@ -3116,6 +3129,24 @@ function openTournamentMode() {
 
     document.body.appendChild(overlay);
     if (isLive) setTimeout(() => renderWarRoomQR(), 100);
+}
+
+function resetTournament() {
+    UIManager.confirm({
+        title: 'Reset Tournament?',
+        message: 'This will clear all teams and the current bracket. Players will return to the Draft Pool.',
+        confirmText: 'Reset Everything',
+        isDestructive: true,
+        onConfirm: () => {
+            wrTeams = [];
+            wrRounds = [];
+            wrSelectedPlayer = null;
+            const overlay = document.getElementById('warRoomOverlay');
+            if (overlay) { overlay.remove(); openTournamentMode(); }
+            if (window.Haptic) Haptic.bump();
+            showSessionToast('Tournament Reset');
+        }
+    });
 }
 
 async function igniteWarRoomLive() {
@@ -3212,7 +3243,7 @@ async function removeTournamentPlayer(uuid) {
     if (overlay) { overlay.remove(); openTournamentMode(); }
 }
 
-window.handleWarRoomTap = (uuid) => {
+function handleWarRoomTap(uuid) {
     const el = document.querySelector(`[data-uuid="${uuid}"]`);
     if (!wrSelectedPlayer) {
         wrSelectedPlayer = uuid;
@@ -3231,7 +3262,7 @@ window.handleWarRoomTap = (uuid) => {
         createWarRoomTeam(p1, p2);
         wrSelectedPlayer = null;
     }
-};
+}
 
 function createWarRoomTeam(p1, p2) {
     const team = { id: _generateUUID(), players: [p1, p2], name: `${p1.name} & ${p2.name}` };
