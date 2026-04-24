@@ -3079,7 +3079,7 @@ function openTournamentMode() {
             </div>
             <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
                 <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} IN ROOM</div>
-                <div id="wrQR" class="wr-header-qr"></div>
+                <div id="wrQR" class="wr-header-qr" onclick="window.showLiveSuccessModal(window.currentRoomCode)" style="cursor:pointer;"></div>
             </div>
             <div style="display:flex; gap:10px;">
                             ${wrTeams.length > 0 ? `<button class="wr-btn-guest" style="border-color:var(--danger); color:var(--danger);" onclick="window.resetTournament()">🔄 RESET</button>` : ''}
@@ -3337,7 +3337,7 @@ function renderTournamentBracket() {
     workbench.appendChild(champ);
 }
 
-window.advanceTournamentTeam = (rIdx, mIdx, teamNum) => {
+function advanceTournamentTeam(rIdx, mIdx, teamNum) {
     const match = wrRounds[rIdx][mIdx];
     const winner = teamNum === 1 ? match.team1 : match.team2;
     const loser = teamNum === 1 ? match.team2 : match.team1;
@@ -3360,7 +3360,7 @@ window.advanceTournamentTeam = (rIdx, mIdx, teamNum) => {
 
     renderTournamentBracket();
     Haptic.success();
-};
+}
 
 function _recordTournamentMatchResult(winnerTeam, loserTeam) {
     if (!winnerTeam || !loserTeam) return; // Ignore BYEs
