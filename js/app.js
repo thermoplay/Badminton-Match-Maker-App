@@ -973,6 +973,4585 @@ window.openCourtRename = openCourtRename;
 // OVERLAYS — STATS & SYNC
 // ---------------------------------------------------------------------------
 
+/**
+ * Displays a high-fidelity success modal after the host goes live.
+ * Features the Room Code and a scannable QR code for easy sharing.
+ */
+function showLiveSuccessModal(code) {
+    // Close any background overlays (like the sync settings menu)
+    if (typeof closeOverlay === 'function') closeOverlay();
+
+    const content = `
+        <div class="menu-card" style="padding:32px 24px; text-align:center; max-width:380px;">
+            <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:8px; text-transform:uppercase;">BROADCAST ACTIVE</div>
+            <h2 style="font-size:2.8rem; margin-bottom:12px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic; color:#fff;">LIVE NOW</h2>
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:24px; line-height:1.4;">Spectators and players can now join using the credentials below.</p>
+
+            <div style="background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:20px; margin-bottom:24px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);">
+                 <div style="font-size:0.55rem; color:var(--text-muted); letter-spacing:2px; margin-bottom:6px; font-weight:800; text-transform:uppercase;">ROOM CODE</div>
+                 <div style="font-family:var(--font-display); font-size:2.6rem; font-weight:900; font-style:italic; color:var(--accent); letter-spacing:4px; line-height:1; text-shadow:0 0 20px var(--accent-glow);">${code}</div>
+            </div>
+
+            <div style="background:#fff; padding:12px; border-radius:16px; width:fit-content; margin:0 auto 24px; box-shadow:0 10px 40px rgba(0,255,163,0.15);">
+                <div id="liveSuccessQR" style="display:flex; justify-content:center;"></div>
+            </div>
+
+            <button class="btn-main" style="width:100%; height:56px; box-shadow:0 0 30px var(--accent-dim);" onclick="UIManager.hide()">
+                READY TO PLAY
+            </button>
+        </div>
+    `;
+
+    UIManager.show(content, 'card');
+
+    // Generate the QR code within the success modal
+    setTimeout(() => {
+        const qrDiv = document.getElementById('liveSuccessQR');
+        if (qrDiv) {
+            const joinUrl = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
+            const QRCtor = window.QRCodeConstructor || window.QRCode;
+            if (QRCtor) {
+                qrDiv.innerHTML = '';
+                new QRCtor(qrDiv, {
+                    text: joinUrl,
+                    width: 180,
+                    height: 180,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff'
+                });
+            }
+        }
+    }, 50);
+}
+
+function goToMainMenu() {
+    const hasActiveSession = StateStore.squad.length > 0 || (typeof window.isOnlineSession !== 'undefined' && window.isOnlineSession);
+    if (hasActiveSession) {
+        UIManager.confirm({
+            title: 'Exit to Lobby?',
+            message: 'Your current session is still active. Return to the main lobby?',
+            confirmText: 'Return to Lobby',
+            onConfirm: () => typeof showLandingPage === 'function' && showLandingPage()
+        });
+    } else {
+        showLandingPage();
+    }
+}
+
+function closeLandingPage() {
+    const el = document.getElementById('landingPage');
+    if (!el) return;
+
+    const doClose = () => {
+        el.style.transition = 'opacity 0.3s';
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 300);
+    };
+
+    // If the host has no name, prompt them before starting.
+    if (passport && !passport.playerName) {
+        UIManager.prompt({
+            title: 'Enter Your Name',
+            initialValue: '',
+            confirmText: 'Start Hosting',
+            onConfirm: (name) => {
+                if (name && name.trim()) {
+                    // Create the host's passport and add them to the squad.
+                    Passport.rename(name.trim());
+                    passport = Passport.get(); // Re-fetch passport
+                    _autoAddHostToSquad(); // This will now find and add them
+                    doClose();
+                } else {
+                    doClose(); // Close without adding if they cancel.
+                }
+            }
+        });
+    } else {
+        // Host already has a name, _autoAddHostToSquad should have already run.
+        doClose();
+    }
+}
+
+function joinFromRecent(code) {
+    if (window.Haptic) Haptic.tap();
+    window.location.href = `?join=${code}&role=player`;
+}
+
+function openStandalonePassport() {
+    const el = document.getElementById('landingPage');
+    if (el) el.remove();
+    
+    const ps = document.getElementById('passportStandalone');
+    const sl = document.getElementById('sidelinePanel');
+    
+    // Ensure SidelineView is hidden so they don't overlap
+    if (sl) sl.style.display = 'none';
+
+    const p = Passport.get();
+    if (ps && p) {
+        ps.style.display = 'flex';
+        document.body.classList.add('player-mode'); // Use context to hide host UI
+        window.renderPassportStandalone(p);
+
+        // 'Silent Hydrate' - Update career stats and trophies from global players table
+        if (p.playerUUID) {
+            fetch('/api/member-upsert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    room_code: 'RESTORE', 
+                    player_uuid: p.playerUUID, 
+                    player_name: p.playerName 
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.global) {
+                    const { passport: updatedP, needsUpload } = Passport.hydrate(data.global);
+
+                    // 2. Fetch global leaderboard to compute rank percentile
+                    fetch('/api/leaderboard-get')
+                        .then(lbRes => lbRes.json())
+                        .then(lbData => {
+                            const players = lbData.players || [];
+                            const rankIdx = players.findIndex(lp => lp.uuid === updatedP.playerUUID);
+                            if (rankIdx !== -1) {
+                                const rank = rankIdx + 1;
+                                const percentile = Math.ceil((rank / players.length) * 100);
+                                const percHTML = players.length > 5 ? `<div style="font-size:0.5rem; opacity:0.6; margin-top:2px; font-style:normal; font-weight:700;">TOP ${percentile}%</div>` : '';
+                                window._lastRankDisplay = `#${rank}${percHTML}`;
+                                window.renderPassportStandalone(updatedP, window._lastRankDisplay);
+                            } else {
+                                window.renderPassportStandalone(updatedP);
+                            }
+                        })
+                        .catch(() => window.renderPassportStandalone(updatedP));
+
+                    // If local stats are more advanced than the cloud, perform a reconcile sync
+                    if (needsUpload && !window.isOnlineSession) {
+                        console.log('[Passport] Local data advanced; reconciling with cloud...');
+                        fetch('/api/match-history', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                type: 'reconcile_sync',
+                                player_uuid: updatedP.playerUUID,
+                                total_wins: updatedP.stats.wins,
+                                total_games: updatedP.stats.games,
+                                achievements: updatedP.achievements,
+                                teammate_history: updatedP.teammateHistory,
+                                opponent_history: updatedP.opponentHistory,
+                                partner_stats: updatedP.partnerStats
+                            })
+                        }).catch(e => console.warn('[Passport] Reconciliation failed', e));
+                    }
+                }
+            })
+            .catch(e => console.warn('[Passport] Silent hydrate failed', e));
+        }
+    }
+}
+
+function goToPlayerMode() {
+    window.location.href = '?role=player';
+}
+
+function joinFromLobby() {
+    const input = document.getElementById('lobbyRoomCode');
+    const code = input?.value?.trim();
+    if (!code) return;
+    
+    // Normalize and Route
+    let cleanCode = code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (cleanCode.length === 8) cleanCode = cleanCode.slice(0, 4) + '-' + cleanCode.slice(4);
+    
+    window.location.href = `?join=${cleanCode}&role=player`;
+}
+
+function showLandingPage() {
+    if (document.getElementById('landingPage')) return;
+
+    // Hide other standalone views if returning to menu
+    const ps = document.getElementById('passportStandalone');
+    if (ps) ps.style.display = 'none';
+    const sl = document.getElementById('sidelinePanel');
+    if (sl) sl.style.display = 'none';
+    document.body.classList.remove('player-mode');
+
+    if (typeof closeOverlay === 'function') closeOverlay();
+    let div = document.createElement('div');
+    div.id = 'landingPage';
+    document.body.appendChild(div);
+    div.className = 'actionMenu'; // Reuse modal style
+    div.style.zIndex = '9000';
+    div.style.background = 'var(--bg)'; // Opaque background
+
+    const recentRooms = JSON.parse(localStorage.getItem('cs_recent_rooms') || '[]');
+    let recentHTML = '';
+    if (recentRooms.length > 0) {
+        recentHTML = `
+            <div style="margin-bottom: 24px;">
+                <div style="font-size: 0.55rem; color: var(--text-muted); font-weight: 900; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; text-align: center;">QUICK RE-JOIN</div>
+                <div style="display: flex; gap: 8px; justify-content: center;">
+                    ${recentRooms.map(code => `
+                        <button class="btn-main" onclick="window.joinFromRecent('${code}')" 
+                                style="flex: 1; height: 40px; font-size: 0.75rem; background: var(--surface2); color: var(--text); border: 1px solid var(--border); box-shadow: none;">
+                            ${code}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    div.innerHTML = `
+        <div class="menu-card" style="padding:40px 20px; max-width:380px; border:none; box-shadow:none; background:transparent;">
+            <div style="font-family:var(--font-display); font-size:3.2rem; font-weight:900; font-style:italic; line-height:0.85; margin-bottom:8px; color:var(--text); text-align:center;">
+                COURTSIDE<span style="color:var(--accent);">PRO</span>
+            </div>
+            <p style="color:var(--accent); text-align:center; margin-bottom:32px; font-size:0.6rem; letter-spacing:4px; text-transform:uppercase; font-weight:900; opacity:0.8;">
+                GLOBAL LOBBY
+            </p>
+
+            ${recentHTML}
+
+            <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:32px;">
+                <button class="btn-main" onclick="closeLandingPage()" style="height:54px; font-size:1rem; box-shadow:0 0 30px var(--accent-dim);">
+                    🏸 REGULAR PLAY SESSION
+                </button>
+                
+                <button class="btn-main" onclick="window.openTournamentMode()" 
+                        style="height:54px; font-size:1rem; background:var(--obsidian); border:1px solid var(--royal-purple); color:#fff; box-shadow:0 0 20px rgba(107, 33, 168, 0.3);">
+                    🏆 ENTER TOURNAMENT MODE
+                </button>
+
+                <div style="height:1px; background:var(--border); margin:8px 0; position:relative;">
+                    <span style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--bg); padding:0 12px; font-size:0.55rem; color:var(--text-muted); font-weight:900; letter-spacing:2px;">OR JOIN BY CODE</span>
+                </div>
+
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="lobbyRoomCode" placeholder="ROOM CODE" 
+                           style="flex:1; height:54px; text-align:center; font-family:var(--font-display); font-size:1.1rem; letter-spacing:2px; font-style:italic;"
+                           oninput="this.value = this.value.toUpperCase()"
+                           onkeydown="if(event.key==='Enter') window.joinFromLobby()">
+                    <button class="btn-main" onclick="window.joinFromLobby()" style="width:70px; background:var(--surface2); color:var(--text); border:1px solid var(--border);">GO</button>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <button class="btn-main" onclick="openStandalonePassport()" style="background:var(--bg2); color:var(--text); height:50px; font-size:0.8rem; border:1px solid var(--border);">
+                    🪪 MY PASSPORT
+                </button>
+                <button class="btn-main" onclick="PlayerMode.restorePassportPrompt()" style="background:var(--bg2); color:var(--text); height:50px; font-size:0.8rem; border:1px solid var(--border);">
+                    🔑 RESTORE
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function joinManualCode() {
+    const input = document.getElementById('manualRoomCodeInput');
+    const raw = input?.value?.trim();
+    if (raw) {
+        // Normalize room code: strip non-alphanumeric and add hyphen if 8 chars
+        let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
+
+        if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
+            const newUrl = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
+            window.history.pushState({}, document.title, newUrl);
+            document.body.classList.add('player-mode');
+            closeOverlay();
+            PlayerMode.boot(Passport.get(), code);
+        } else {
+            window.location.href = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
+        }
+    } else {
+        alert('Please enter a room code.');
+    }
+}
+
+function _startHostTimerTick() {
+    if (window._hostTickTimer) clearInterval(window._hostTickTimer);
+    window._hostTickTimer = setInterval(() => {
+        const matches = StateStore.currentMatches || [];
+        matches.forEach((m, i) => {
+            if (!m.startedAt || m.winnerTeamIndex !== null) return;
+            const el = document.getElementById(`timer-${i}`);
+            if (!el) return;
+            
+            const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
+            const min = Math.floor(elapsed / 60);
+            const sec = elapsed % 60;
+            el.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
+            
+            // Use the same CSS classes defined for the court-timer
+            el.classList.toggle('timer-warn', min >= 10);
+            el.classList.toggle('timer-alert', min >= 15);
+        });
+    }, 1000);
+}
+
+function _supportSectionHTML() {
+    return `
+        <div style="margin-top: auto; padding-top: 24px;">
+            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
+
+            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">🐛 Report a Bug</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
+                    onclick="openBugReportModal()">
+                    🐛 Report a Bug
+                </button>
+            </div>
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">☕ Support the Dev</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
+                    If Courtside Pro saves you time, consider buying the dev a coffee.
+                </p>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
+                    <div style="text-align:center;">
+                            
+                    </div>
+                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
+                        style="display:inline-flex; align-items:center; gap:8px;
+                               background:#FF5E5B; color:#fff; font-weight:700;
+                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
+                               text-decoration:none; white-space:nowrap;">
+                        ☕ Ko-fi
+                    </a>
+                </div>
+            </div>
+
+            </div>
+        </div>
+    `;
+}
+
+function openBugReportModal() {
+    let modal = document.getElementById('bugReportModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'bugReportModal';
+        modal.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.7);
+            display:flex; align-items:center; justify-content:center;
+            z-index:9999; padding:20px; box-sizing:border-box;
+        `;
+        modal.innerHTML = `
+            <div style="background:var(--surface1,#1e293b); border:1px solid var(--border,#334155);
+                        border-radius:16px; padding:24px; width:100%; max-width:400px;
+                        box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div style="font-weight:700; font-size:1rem; color:#fff;">🐛 Report a Bug</div>
+                    <button onclick="closeBugReportModal()" style="background:none; border:none;
+                            color:var(--text-muted,#94a3b8); font-size:1.2rem; cursor:pointer; padding:4px;">✕</button>
+                </div>
+                <p style="font-size:0.75rem; color:var(--text-muted,#94a3b8); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <textarea id="bugReportModalText"
+                    placeholder="Describe what happened…"
+                    rows="5"
+                    style="width:100%; background:var(--bg2,#0f172a); border:1.5px solid var(--border,#334155);
+                           color:#fff; padding:14px; border-radius:12px; margin-bottom:12px;
+                           outline:none; font-size:14px; font-family:inherit;
+                           resize:vertical; box-sizing:border-box;"
+                ></textarea>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-main" style="flex:1; background:#334155; color:#fff;"
+                        onclick="closeBugReportModal()">Cancel</button>
+                    <button class="btn-main" style="flex:1; background:var(--accent,#38bdf8); color:#000;"
+                        onclick="submitBugReport()">📨 Send Report</button>
+                </div>
+            </div>
+        `;
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) closeBugReportModal();
+        });
+        document.body.appendChild(modal);
+    } else {
+        modal.style.display = 'flex';
+        const ta = document.getElementById('bugReportModalText');
+        if (ta) ta.value = '';
+    }
+}
+
+function closeBugReportModal() {
+    const modal = document.getElementById('bugReportModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function submitBugReport() {
+    const text = (document.getElementById('bugReportModalText')?.value || '').trim();
+    if (!text) {
+        alert('Please describe the bug before sending.');
+        return;
+    }
+    const subject = encodeURIComponent('[Courtside Pro] Bug Report');
+    const body = encodeURIComponent(
+        'Bug Description:\n' + text +
+        '\n\n---\n' +
+        'App version: Courtside Pro\n' +
+        'Time: ' + new Date().toLocaleString() + '\n' +
+        'Squad size: ' + (StateStore.squad?.length ?? 'N/A') + '\n' +
+        'Active courts: ' + (StateStore.get('activeCourts') ?? 'N/A')
+    );
+    window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
+    closeBugReportModal();
+}
+
+function importSyncToken() {
+    const val = document.getElementById('syncInput').value.trim();
+    if (!val) return;
+    try {
+        // Fix: Unicode-safe decoding
+        const json = decodeURIComponent(escape(window.atob(val)));
+        const data = JSON.parse(json);
+        if (!data.squad) throw new Error('Missing squad data');
+                StateStore.setState({ squad: data.squad, currentMatches: data.currentMatches || [] }); // Triggers sync
+        closeOverlay();
+        renderSquad();
+        document.getElementById('matchContainer').innerHTML = '';
+        if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+        checkNextButtonState();
+    } catch (e) {
+        alert('Invalid Sync Token. Please check the data and try again.');
+    }
+}
+
+function eraseAllData() {
+    localStorage.clear();
+    location.reload();
+}
+
+function confirmEraseAllData() {
+    UIManager.confirm({
+        title: 'Wipe All Data?',
+        message: 'This will permanently delete all players, matches, and session history. This action cannot be undone.',
+        confirmText: 'Yes, Wipe Everything',
+        isDestructive: true,
+        onConfirm: eraseAllData
+    });
+}
+
+function updateUndoButton() {
+    const btn = document.getElementById('undoRoundBtn');
+    if (!btn) return;
+    btn.style.display  = StateStore.roundHistory.length > 0 ? 'inline-flex' : 'none';
+}
+
+function undoLastRound() {
+    if (StateStore.roundHistory.length === 0) return;
+    UIManager.confirm({
+        title: 'Undo Round?',
+        message: 'Undo the last round? This will reverse all stat changes.',
+        confirmText: 'Yes, Undo',
+        onConfirm: () => {
+            const snapshot = StateStore.roundHistory.pop();
+            // Restore state from the snapshot using the StateStore
+            StateStore.setState({
+                squad: snapshot.squadSnapshot,
+                currentMatches: snapshot.matches,
+                playerQueue: snapshot.queueSnapshot || StateStore.playerQueue,
+            });
+            renderSquad();
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
+            updateUndoButton();
+            checkNextButtonState();
+            Haptic.bump();
+
+            // SYNC FIX: Immediately broadcast the undone state so players 
+            // see their form revert without delay.
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+
+            showSessionToast('↩ Last round undone');
+        }
+    });
+}
+
+/** Calculates a weighted skill index for sorting players. */
+function getSkillIndex(p) {
+    if (!p || p.games === 0) return 0;
+    const winRate = p.wins / p.games;
+    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
+    return (winRate * 100) + (p.wins * 2);
+}
+
+function renderStatsTab(tab) {
+    // UX FIX: Always fetch the latest passport data to ensure career stats 
+    // are up-to-date in the UI after a game ends.
+    if (typeof Passport !== 'undefined') passport = Passport.get();
+
+    const content = document.getElementById('overlayContent');
+
+    const tabs = `
+        <div class="stats-tabs">
+            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
+                onclick="renderStatsTab('performance')">Leaderboard</button>
+            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
+                onclick="renderStatsTab('history')">History</button>
+            <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
+                onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
+            <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
+                onclick="renderStatsTab('profile')">My Profile</button>
+        </div>
+    `;
+
+    if (tab === 'performance') {
+        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins || a.name.localeCompare(b.name));
+        const topCount = 3; // Podium layout expects exactly 3 players
+        const peakPerformers = sorted.slice(0, topCount);
+        const activeRoster   = sorted.slice(topCount);
+        const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+
+        const getRankIconClass = (rank) => {
+            if (rank === 1) return 'gold';
+            if (rank === 2) return 'silver';
+            if (rank === 3) return 'bronze';
+            return '';
+        };
+
+        const renderPlayerCard = (p, rank, isPeak = false) => {
+            const sqIdx = StateStore.squad.indexOf(p);
+            const wr = winRate(p);
+            const rankClass = `rank-${rank}`;
+
+            let rankIconHTML = '';
+            if (!isPeak) { // Only for active roster
+                const iconClass = getRankIconClass(rank);
+                if (iconClass) {
+                    rankIconHTML = `<div class="rank-icon ${iconClass}">${rank}</div>`;
+                } else {
+                    rankIconHTML = `<div class="rank-icon" style="background:var(--bg2); border:1px solid var(--border); color:var(--text-muted);">${rank}</div>`;
+                }
+            }
+
+            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' <span class="fire-emoji">🔥</span>' : ''}</div>`;
+            const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
+            const progressBarHTML = `
+                <div class="win-rate-progress">
+                    <div class="win-rate-progress-fill" style="width:${wr}%"></div>
+                </div>
+            `;
+
+            if (isPeak) {
+                return `
+                    <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); opacity: 0.6; margin-bottom:8px;">#${rank}</div>
+                        ${nameHTML}
+                        ${metaHTML}
+                        ${progressBarHTML}
+                    </div>`;
+            } else {
+                return `
+                    <div class="stats-card active-roster" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        ${rankIconHTML}
+                        ${nameHTML}
+                        ${metaHTML}
+                    </div>`;
+            }
+        };
+
+        let peakPerformersHTML = '';
+        if (peakPerformers.length > 0) {
+            peakPerformersHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">PEAK PERFORMERS</div>
+                    <div class="stats-grid peak-performers-grid">
+                        ${peakPerformers.map((p, i) => renderPlayerCard(p, i + 1, true)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        let activeRosterHTML = '';
+        if (activeRoster.length > 0) {
+            activeRosterHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">ACTIVE ROSTER</div>
+                    <div class="stats-grid">
+                        ${activeRoster.map((p, i) => renderPlayerCard(p, i + 4, false)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        content.innerHTML = tabs + peakPerformersHTML + activeRosterHTML;
+
+    } else if (tab === 'profile') {
+        const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
+        
+        // 1. Identity Header
+        const { title, icon } = me ? getPlayerTitle(me) : { title: 'Spectator', icon: '👀' };
+        const avatarColor = Avatar.color(passport.playerName);
+        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
+        
+        const headerHTML = `
+            <div class="sl-profile-card">
+                <div class="sl-profile-top-right">
+                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
+                </div>
+                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
+                    ${avatarInitial}
+                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
+                </div>
+                <div class="sl-profile-name-large">${escapeHTML(passport.playerName)}</div>
+                <div class="sl-profile-title-badge">
+                    <span>${icon}</span>
+                    <span>${title}</span>
+                </div>
+            </div>`;
+
+        // 2. Stats Deck
+        const career = passport.stats || { wins: 0, games: 0 };
+        const cWins  = career.wins || 0;
+        const cGames = career.games || 0;
+        const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+        
+        let sWins = 0, sGames = 0, sWr = 0;
+        if (me) {
+            sWins = me.wins;
+            sGames = me.games;
+            sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
+        }
+
+        const statsHTML = `
+            <div class="sl-stats-deck">
+                <div class="sl-stat-card ${!me ? 'inactive' : ''}">
+                    <div class="sl-card-label">CURRENT SESSION</div>
+                    ${me ? `
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>` : `<div class="sl-card-empty">Not in squad</div>`}
+                </div>
+                <div class="sl-stat-card">
+                    <div class="sl-card-label">CAREER RECORD</div>
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+        // Form & Analytics (New Section)
+        let analyticsHTML = '';
+        if (me) {
+            // Rival Logic
+            let rivalName = 'None yet';
+            let rivalCount = 0;
+            if (me.opponentHistory) {
+                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
+                if (rivals.length > 0) {
+                    const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
+                    rivalName = rivalP ? rivalP.name : 'Unknown';
+                    rivalCount = rivals[0][1];
+                }
+            }
+
+            // Form Logic
+            const formHTML = (me.form || []).map(r => 
+                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'#ef4444'}; color:${r==='W'?'#000':'#fff'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
+            ).join('');
+
+            analyticsHTML = `
+                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
+                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
+                    </div>
+                    <div style="width:1px; height:30px; background:var(--border);"></div>
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
+                        <div style="font-size:0.9rem; font-weight:700;">${escapeHTML(rivalName)}</div>
+                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
+                    </div>
+                </div>`;
+        }
+
+        // 3. Chemistry
+        let chemHTML = '';
+        if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
+            const partners = Object.entries(me.partnerStats);
+            partners.sort(([, a], [, b]) => {
+                if (b.wins !== a.wins) return b.wins - a.wins;
+                return b.games - a.games;
+            });
+            const best = partners[0];
+            if (best) {
+                const [uuid, stats] = best;
+                const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
+                const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+                chemHTML = `
+                    <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
+                    <div class="sl-chem-card">
+                        <div class="sl-chem-details">
+                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
+                            <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                        </div>
+                    </div>`;
+            }
+        }
+
+        // 4. Achievements
+        let achHTML = '';
+        if (window.Achievements) {
+            const sessionAch = me ? (me.achievements || []) : [];
+            const allTimeAch = passport.achievements || [];
+            const myAch = [...new Set([...sessionAch, ...allTimeAch])];
+            const list = Object.keys(window.Achievements).map(key => {
+                const data = window.getAchievementDisplay(key, myAch);
+                const unlocked = data.unlocked;
+                return `
+                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="${unlocked ? `border-left: 3px solid ${data.color}` : ''}">
+                        <div class="sl-ach-icon">${data.icon}</div>
+                        <div class="sl-ach-text">
+                            <div class="sl-ach-title">${data.name}</div>
+                            <div class="sl-ach-desc">${data.description}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            achHTML = `<div class="sl-achievements-list" style="margin-top:20px;">${list}</div>`;
+        }
+
+        content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
+
+    } else if (tab === 'hall-of-fame') {
+        const period = window._lbPeriod || 'all';
+        const subTabs = `
+            <div style="display:flex; gap:8px; margin-bottom:16px;">
+                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
+                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
+            </div>`;
+
+        content.innerHTML = tabs + subTabs + `
+            <div class="sl-searching" style="margin-top:20px;">
+                <div class="sl-searching-spinner"></div>
+                <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
+            </div>`;
+
+        fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
+            .then(res => res.json())
+            .then(data => {
+                // Guard: only render if user is still on the hall-of-fame tab
+                if (!document.querySelector('.stats-tab.active')?.textContent.toLowerCase().includes('hall')) return;
+                
+                const players = data.players || [];
+
+                // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
+                players.sort((a, b) => {
+                    // Support both snake_case (DB) and camelCase (Internal)
+                    const connA = Object.keys(a.partner_stats || a.partnerStats || {}).length;
+                    const connB = Object.keys(b.partner_stats || b.partnerStats || {}).length;
+                    if (connB !== connA) return connB - connA; // Most unique partners first
+
+                    const trophyA = (a.achievements || []).length;
+                    const trophyB = (b.achievements || []).length;
+                    if (trophyB !== trophyA) return trophyB - a.trophyA;
+
+                    const gamesA = a.total_games ?? a.totalGames ?? a.games ?? 0;
+                    const gamesB = b.total_games ?? b.totalGames ?? b.games ?? 0;
+                    return gamesB - gamesA;
+                });
+
+                const html = players.map((p, i) => {
+                    const connections = Object.keys(p.partner_stats || p.partnerStats || {}).length;
+                    return `
+                    <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
+                        <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
+                        <div style="flex:1;">
+                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
+                            <div class="stats-meta">${connections} Connections · ${p.total_games ?? p.totalGames ?? p.games ?? 0} Games</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
+                            <div style="font-size:0.5rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">INFLUENCE</div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                content.innerHTML = tabs + subTabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
+            })
+            .catch(() => {
+                content.innerHTML = tabs + subTabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
+            });
+
+    } else if (tab === 'history') {
+        if (StateStore.roundHistory.length === 0) {
+            content.innerHTML = tabs + `
+                <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
+                    No rounds played yet this session.
+                </div>`;
+            return;
+        }
+
+        const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
+            const roundNum = StateStore.roundHistory.length - i;
+            
+            let timeHtml = '';
+            if (round.timestamp) {
+                const t = new Date(round.timestamp);
+                const timeStr = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                timeHtml = `<div style="font-size:0.65rem; color:var(--text-muted); margin-left:auto;">${timeStr}</div>`;
+            }
+
+            const games = (round.matches || []).map((m, gi) => {
+                const winIdx  = m.winnerTeamIndex;
+                if (winIdx === null || winIdx === undefined) return '';
+                const loseIdx = winIdx === 0 ? 1 : 0;
+
+                const squadLookup = round.squadSnapshot || [];
+                const getName = (id) => {
+                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
+                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
+                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
+                    return p ? p.name : id;
+                };
+
+                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
+                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
+
+                const durationMs = (m.endedAt && m.startedAt) ? m.endedAt - m.startedAt : 0;
+                const durMin = Math.floor(durationMs / 60000);
+                const durSec = Math.floor((durationMs % 60000) / 1000);
+                const durStr = durationMs > 0 ? `<span style="opacity:0.5; margin-left:6px; font-size:0.6rem;">⏱ ${durMin}:${durSec.toString().padStart(2, '0')}</span>` : '';
+
+                return `
+                    <div class="history-game">
+                        <div class="history-game-label">Game ${gi + 1}</div>
+                        <div class="history-matchup">
+                            <span class="history-winner">${escapeHTML(winners)}</span>
+                            <span class="history-vs">def.</span>
+                            <span class="history-loser">${escapeHTML(losers)}</span>${durStr}
+                        </div>
+                        ${timeHtml}
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="history-round" style="animation-delay: ${i * 0.05}s">
+                    <div class="history-round-label">Round ${roundNum}</div>
+                    ${games}
+                </div>
+            `;
+        }).join('');
+
+        const searchBar = `
+            <div style="margin-bottom: 12px; position: relative;">
+                <input type="text" id="histSearchInput" placeholder="Search history..." 
+                    style="width:100%; padding-right: 32px;"
+                    oninput="window.filterHistory(this.value)">
+                <button id="histSearchClear" onclick="window.clearHistorySearch()" 
+                    style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1rem; padding: 8px;">
+                    ✕
+                </button>
+            </div>`;
+
+        content.innerHTML = tabs + searchBar + `<div class="history-list">${rounds}</div>`;
+    }
+}
+
+window.filterHistory = function(query) {
+    const term = query.toLowerCase().trim();
+    
+    const clearBtn = document.getElementById('histSearchClear');
+    if (clearBtn) clearBtn.style.display = term ? 'block' : 'none';
+
+    const rounds = document.querySelectorAll('.history-round');
+    rounds.forEach(round => {
+        const games = round.querySelectorAll('.history-game');
+        let roundVisible = false;
+        games.forEach(game => {
+            const match = !term || game.textContent.toLowerCase().includes(term);
+            game.style.display = match ? 'flex' : 'none';
+            if (match) roundVisible = true;
+        });
+        round.style.display = roundVisible ? 'block' : 'none';
+    });
+};
+
+window.clearHistorySearch = function() {
+    const input = document.getElementById('histSearchInput');
+    if (input) {
+        input.value = '';
+        window.filterHistory('');
+        input.focus();
+    }
+};
+
+/**
+ * Generates a beautiful recovery card image for the player to save.
+ */
+async function generateRecoveryCard() {
+    const p = Passport.get();
+    if (!p) return;
+
+    if (window.Haptic) Haptic.tap();
+    if (typeof showSessionToast === 'function') showSessionToast('🎨 Generating Card...');
+
+    if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
+    const avatarColor = Avatar.color(p.playerName);
+    const emoji = p.spiritAnimal || '🐾';
+
+    // Create an off-screen high-quality card
+    const card = document.createElement('div');
+    card.style.cssText = `
+        position: fixed; left: -9999px; top: -9999px; width: 400px; padding: 40px;
+        background: #0a0a0f; color: #f0f0f5; font-family: sans-serif;
+        border-radius: 24px; text-align: center; border: 2px solid #00ffa3;
+    `;
+
+    card.innerHTML = `
+        <div style="font-size: 0.65rem; letter-spacing: 4px; color: #00ffa3; margin-bottom: 24px; font-weight: 900; text-transform: uppercase;">COURTSIDE PRO RECOVERY CARD</div>
+        
+        <div style="width: 100px; height: 100px; border-radius: 50%; background: ${avatarColor}; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; font-size: 3rem; border: 4px solid #0a0a0f; box-shadow: 0 0 0 2px #00ffa3;">
+            ${p.spiritAnimal || (p.playerName || '?').charAt(0).toUpperCase()}
+        </div>
+        
+        <div style="font-size: 2.2rem; font-weight: 900; font-style: italic; text-transform: uppercase; margin-bottom: 8px;">${escapeHTML(p.playerName)}</div>
+        <div style="display: inline-block; font-size: 0.7rem; font-weight: 800; letter-spacing: 2px; color: #00ffa3; background: rgba(0, 255, 163, 0.15); padding: 4px 14px; border-radius: 20px; border: 1px solid rgba(0, 255, 163, 0.25); margin-bottom: 30px;">${emoji} ATHLETE</div>
+        
+        <div style="background: #111118; border: 1px solid rgba(255,255,255,0.07); border-radius: 16px; padding: 24px; margin-bottom: 20px;">
+            <div style="font-size: 0.55rem; color: #6b6b80; letter-spacing: 1.5px; margin-bottom: 10px; font-weight: 800; text-transform: uppercase;">YOUR PRIVATE RECOVERY KEY</div>
+            <div style="font-family: monospace; font-size: 0.8rem; color: #00ffa3; word-break: break-all; line-height: 1.5; background: #000; padding: 12px; border-radius: 8px;">${p.playerUUID}</div>
+        </div>
+        
+        <div style="font-size: 0.65rem; color: #6b6b80; line-height: 1.6; max-width: 280px; margin: 0 auto;">Keep this key safe. Use it to restore your career trophies and statistics if you switch phones or clear your data.</div>
+        
+        <div style="margin-top: 40px; font-size: 0.55rem; color: rgba(0, 255, 163, 0.4); letter-spacing: 2px; font-weight: 700; text-transform: uppercase;">thecourtsidepro.vercel.app</div>
+    `;
+
+    document.body.appendChild(card);
+
+    try {
+        const canvas = await html2canvas(card, {
+            backgroundColor: '#0a0a0f',
+            scale: 2,
+            useCORS: true,
+            logging: false,
+        });
+
+        canvas.toBlob(async (blob) => {
+            const url = URL.createObjectURL(blob);
+            const fileName = `Courtside-Recovery-${p.playerName.replace(/\s+/g, '-')}.png`;
+            
+            // Use Native Share if available (Mobile optimization)
+            const file = new File([blob], fileName, { type: 'image/png' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({ files: [file], title: 'Courtside Pro Recovery Key' });
+                } catch (e) { if (e.name !== 'AbortError') console.error(e); }
+            } else {
+                // Fallback to traditional download
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                a.click();
+                if (typeof showSessionToast === 'function') showSessionToast('✅ Card Downloaded');
+            }
+
+            if (window.Haptic) Haptic.success();
+        }, 'image/png');
+    } catch (e) { console.error(e); }
+    finally { document.body.removeChild(card); }
+}
+
+async function sharePlayerCard() {
+    const card = document.querySelector('.player-card');
+    if (!card) return;
+
+    if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
+    try {
+        const canvas = await html2canvas(card, {
+            backgroundColor: '#0a0a0f',
+            scale: 2,
+            useCORS: true,
+            logging: false,
+        });
+
+        canvas.toBlob(async (blob) => {
+            const file = new File([blob], 'courtside-player-card.png', { type: 'image/png' });
+            if (navigator.share && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                    title:  'The Court Side',
+                    text:   'Check out this player card!',
+                    files:  [file],
+                });
+            } else {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'courtside-player-card.png';
+                a.click();
+            }
+        }, 'image/png');
+    } catch (e) {
+        console.error('Share failed:', e);
+    }
+    Haptic.success();
+}
+
+async function shareAuraPoster(matchIdx) {
+    const m = StateStore.currentMatches[matchIdx];
+    if (!m) return;
+    
+    const getName = (id) => {
+        return (typeof findP === 'function') ? (findP(id)?.name || id) : id;
+    };
+
+    if (typeof generateShareableImage === 'function') {
+        generateShareableImage({
+            teamA: (m.teams[0] || []).map(getName).join(' & '),
+            teamB: (m.teams[1] || []).map(getName).join(' & '),
+            title: 'LIVE NOW'
+        }).catch(e => {
+            console.error('Aura poster failed:', e);
+            showSessionToast('Could not generate poster');
+        });
+    } else {
+        console.error('generateShareableImage function not found.');
+        showSessionToast('Share function is unavailable.');
+    }
+}
+
+let playRequests = [];
+window.playRequests = playRequests;
+
+function _iwtpShow(id) {
+    ['iwtpChoiceView','iwtpNewPlayerView','iwtpExistingView','iwtpSpectatorView'].forEach(v => {
+        const el = document.getElementById(v);
+        if (el) el.style.display = v === id ? 'block' : 'none';
+    });
+}
+
+function showIWTPChoice() { _iwtpShow('iwtpChoiceView'); }
+
+function showIWTPNewPlayer() {
+    _iwtpShow('iwtpNewPlayerView');
+    Haptic.tap();
+    setTimeout(() => document.getElementById('iwtpNameInput')?.focus(), 120);
+}
+
+function showIWTPExisting() {
+    _iwtpShow('iwtpExistingView');
+    Haptic.tap();
+    const list = document.getElementById('iwtpPlayerList');
+    if (!list) return;
+    // Use window.squad for player-side logic, as StateStore is for the host.
+    const currentSquad = window.squad || [];
+    if (currentSquad.length === 0) {
+        list.innerHTML = `<p class="iwtp-empty">No players yet.<br>Ask the host to add players first.</p>`;
+        return;
+    }
+    list.innerHTML = currentSquad.map(p => `
+        <button class="iwtp-player-chip" onclick="confirmSpectateAs('${escapeHTML(p.name)}')">
+            ${Avatar.html(p.name, p.spiritAnimal)}
+            <span>${escapeHTML(p.name)}</span>
+        </button>
+    `).join('');
+}
+
+function confirmSpectateAs(name) {
+    localStorage.setItem('cs_spectator_name', name);
+    document.getElementById('iwtpSpectatorName').textContent    = name.toUpperCase();
+    document.getElementById('iwtpSpectatorSubtitle').textContent = 'Live view — read only';
+    _iwtpShow('iwtpSpectatorView');
+    document.body.classList.add('spectator-mode');
+    Haptic.success();
+    showSessionToast(`👁 Watching as ${name}`);
+}
+
+function collapseIWTPSheet() {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet) return;
+    sheet.style.transition = 'transform 0.4s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease';
+    sheet.style.transform  = 'translateY(100%)';
+    sheet.style.opacity    = '0';
+    setTimeout(() => { sheet.style.display = 'none'; }, 420);
+    Haptic.tap();
+}
+
+async function submitIWantToPlay() {
+    const input = document.getElementById('iwtpNameInput');
+    const name  = (input?.value || '').trim();
+    const btn   = document.getElementById('iwtpSendBtn');
+    const p     = (typeof Passport !== 'undefined') ? Passport.get() : null;
+
+    if (!name) { showSessionToast('Please enter your name first.'); input?.focus(); return; }
+    if (!window.currentRoomCode) { showSessionToast('Not connected to a session.'); return; }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+    const playerUUID = p ? p.playerUUID : null;
+    const spiritAnimal = p ? p.spiritAnimal : null;
+
+    try {
+        const res = await fetch('/api/play-request', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code: window.currentRoomCode,
+                name: name,
+                player_uuid: playerUUID,
+                spirit_animal: spiritAnimal
+            }),
+        });
+
+        if (res.ok) {
+            localStorage.setItem('cs_spectator_name', name);
+            collapseIWTPSheet();
+            setTimeout(() => showSessionToast('🏀 Request sent! Pending host approval…'), 300);
+            Haptic.success();
+        } else { throw new Error('Failed'); }
+    } catch {
+        if (btn) { btn.disabled = false; btn.textContent = 'Send Request'; }
+        showSessionToast('Could not send request. Try again.');
+        Haptic.error();
+    }
+}
+
+function checkIWTPSmartRecognition() {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet || !window.isOnlineSession || window.isOperator) return;
+
+    const savedName = localStorage.getItem('cs_spectator_name');
+    if (savedName) {
+        // Use window.squad for player-side logic, as StateStore is for the host.
+        const match = (window.squad || []).find(p => p.name.toLowerCase() === savedName.toLowerCase());
+        if (match) { confirmSpectateAs(match.name); return; }
+    }
+    showIWTPChoice();
+}
+
+let _lastSeenRequestIds = new Set();
+let _pollingInterval = null;
+let _isPolling = false;
+
+/**
+ * Tracks seen request IDs to prevent duplicate processing/notifications.
+ * Implements a sliding window (max 200 IDs) to prevent memory leaks in long sessions.
+ */
+function _trackRequestId(id) {
+    if (!id) return;
+    _lastSeenRequestIds.add(id);
+    if (_lastSeenRequestIds.size > 200) {
+        const oldest = _lastSeenRequestIds.values().next().value;
+        _lastSeenRequestIds.delete(oldest);
+    }
+}
+
+function _isPlayerAlreadyInSession(record) {
+    if (!record) return null;
+    const uuidMap = window._sessionUUIDMap || {};
+    return StateStore.squad.find(p => 
+        (record.player_uuid && p.uuid === record.player_uuid) || 
+        (p.name.toLowerCase() === (record.name || '').toLowerCase()) ||
+        (record.player_uuid && uuidMap[record.name] === record.player_uuid)
+    );
+}
+
+async function pollPlayRequests() {
+    if (_isPolling || !window.isOnlineSession || !window.isOperator || !window.currentRoomCode || _isProcessingOpenPartyBatch) return;
+    _isPolling = true;
+    try {
+        const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(window.currentRoomCode)}`);
+        const data = await res.json();
+        const incoming = data.requests || [];
+
+        const trulyPending = [];
+
+        for (const r of incoming) {
+            const isOpen = StateStore.get('isOpenParty');
+            if (!_lastSeenRequestIds.has(r.id)) {
+                // Track immediately to prevent race-induced duplicate processing
+                _trackRequestId(r.id);
+
+                const existing = _isPlayerAlreadyInSession(r);
+
+                if (existing) {
+                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad). Reconciling UUID/Name.`);
+                    let changed = false;
+                    const existingIdx = StateStore.squad.findIndex(p => p.uuid === existing.uuid);
+                    let updatedPlayer = { ...existing }; // Create a new object for immutable update
+
+                    if (r.player_uuid && updatedPlayer.uuid !== r.player_uuid) {
+                        updatedPlayer.uuid = r.player_uuid;
+                        changed = true;
+                    }
+                    if (r.name && updatedPlayer.name !== r.name) {
+                        updatedPlayer.name = r.name;
+                        changed = true;
+                    }
+
+                    const newSquad = [...StateStore.squad];
+                    newSquad[existingIdx] = updatedPlayer;
+                    StateStore.set('squad', newSquad); // Explicitly update StateStore
+
+                    if (changed) {
+                        renderSquad();
+                        saveToDisk();
+                    }
+
+                    if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+                    fetch('/api/play-request', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: r.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+                    }).catch(() => {});
+                    continue;
+                }
+
+                if (isOpen) {
+                    console.log(`[CourtSide] Auto-approving ${r.name} (Open Party)`);
+                    await approvePlayRequest(r.name, r.id, r.player_uuid || null);
+                    continue;
+                }
+                trulyPending.push(r);
+                const requestIdUUID = r.player_uuid || null;
+                const requestIdEmoji = r.spirit_animal || null;
+                showJoinNotification(r.name, r.id, requestIdUUID, requestIdEmoji);
+            } else {
+                // If we've seen it but it's still in the fetch, it's pending unless it's an auto-join
+                if (!isOpen) trulyPending.push(r);
+            }
+        }
+
+        playRequests = trulyPending;
+        window.playRequests = trulyPending;
+
+        const badge = document.getElementById('playRequestsBadge');
+        const count = document.getElementById('playRequestsCount');
+        if (badge && count) {
+            const hasReqs = trulyPending.length > 0;
+            badge.style.display = hasReqs ? 'flex' : 'none';
+            count.textContent   = trulyPending.length;
+        }
+    } catch (e) { console.error('[pollPlayRequests] failed', e); } finally { _isPolling = false; }
+}
+
+const _notifQueue = [];
+let   _notifShowing = false;
+
+function showJoinNotification(name, id, uuid = null, emoji = null) {
+    _notifQueue.push({ name, id, uuid, emoji });
+    if (!_notifShowing) processNotifQueue();
+}
+
+function processNotifQueue() {
+    if (_notifQueue.length === 0) { _notifShowing = false; return; }
+    _notifShowing = true;
+
+    const { name, id, uuid, emoji } = _notifQueue.shift();
+    const notif  = document.getElementById('joinNotification');
+    const nameEl = document.getElementById('joinNotifName');
+    if (!notif || !nameEl) return;
+
+    nameEl.innerHTML    = emoji ? `<span style="margin-right:8px">${emoji}</span>${escapeHTML(name)}` : escapeHTML(name);
+    notif.dataset.id    = id;
+    notif.dataset.name  = name;
+    notif.dataset.uuid  = uuid || '';
+    notif.classList.add('show');
+    Haptic.bump();
+
+    const timer = setTimeout(() => dismissJoinNotification(), 12000);
+    notif._timer = timer;
+}
+
+function dismissJoinNotification() {
+    const notif = document.getElementById('joinNotification');
+    if (!notif) return;
+    clearTimeout(notif._timer);
+    notif.classList.remove('show');
+    setTimeout(processNotifQueue, 400);
+}
+
+async function notifApprove() {
+    const notif = document.getElementById('joinNotification');
+    const name  = notif?.dataset.name;
+    const id    = notif?.dataset.id;
+    const uuid  = notif?.dataset.uuid || null;
+    if (name && id) {
+        await approvePlayRequest(name, id, uuid);
+    }
+    dismissJoinNotification();
+}
+
+async function notifDecline() {
+    const notif = document.getElementById('joinNotification');
+    const id    = notif?.dataset.id;
+    if (id) {
+        await denyPlayRequest(id);
+    }
+    dismissJoinNotification();
+}
+
+function showPlayRequests() {
+    const modal = document.getElementById('playRequestsModal');
+    const list  = document.getElementById('playRequestsList');
+    if (!modal || !list) return;
+
+    const approveAllHTML = playRequests.length > 1 
+        ? `<button class="btn-main" style="margin-bottom:12px; background:var(--accent); color:#000; font-size:0.8rem; height:40px;" onclick="approveAllRequests()">✓ Approve All (${playRequests.length})</button>`
+        : '';
+
+    list.innerHTML = playRequests.length === 0
+        ? '<p style="text-align:center;color:var(--text-muted);padding:20px 0;">No pending requests.</p>'
+        : approveAllHTML + playRequests.map(r => `
+            <div class="pr-row">
+                ${r.spirit_animal ? `<span style="font-size:1.2rem;margin-right:8px;">${r.spirit_animal}</span>` : ''}
+                <span class="pr-name">${escapeHTML(r.name)}</span>
+                <button class="pr-add-btn" onclick="approvePlayRequest('${escapeHTML(r.name)}', '${r.id}', '${r.player_uuid||''}')">+ Add</button>
+                <button class="pr-deny-btn" onclick="denyPlayRequest('${r.id}')">✕</button>
+            </div>
+        `).join('');
+
+    modal.style.display = 'flex';
+}
+
+async function approveAllRequests() {
+    if (!window.playRequests || window.playRequests.length === 0) return;
+    const toApprove = [...window.playRequests];
+    closePlayRequests();
+    showSessionToast(`Processing ${toApprove.length} approvals...`);
+    const ids = toApprove.map(r => r.id);
+    if (ids.length > 0) {
+        await batchApproveAPI(ids);
+    }
+}
+window.approveAllRequests = approveAllRequests;
+
+function closePlayRequests() {
+    document.getElementById('playRequestsModal').style.display = 'none';
+}
+
+function _resolvePlayerForSession(name, incomingUUID) {
+    const validUUID = incomingUUID && incomingUUID.trim().length > 0 ? incomingUUID : null;
+    let player = null;
+    let finalName = name;
+
+    // 1. Priority: UUID (Canonical Identity)
+    if (validUUID) {
+        player = StateStore.squad.find(p => p.uuid === validUUID);
+        if (player) {
+            // Update name if changed
+            if (player.name !== name) {
+                console.log(`[CourtSide] Updating name for ${player.uuid}: ${player.name} -> ${name}`);
+                player.name = name;
+            }
+            return player;
+        }
+    }
+
+    // 2. If not found by UUID, treat as NEW.
+    // 2. Secondary: Name-based lookup (Smart Recognition)
+    // If UUID didn't match but the name does, assume it's the same person
+    // ONLY if the squad entry has no UUID (Legacy/Guest).
+    player = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (player && (!player.uuid || player.uuid === incomingUUID)) {
+        if (validUUID && !player.uuid) player.uuid = validUUID; // Adopt canonical ID
+        return player;
+    }
+
+    // 3. Truly NEW player — handle collisions
+    //    Check for name collisions and auto-rename.
+    let collision = StateStore.squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
+    let counter = 1;
+    while (collision) {
+        finalName = `${name} (${counter})`;
+        collision = StateStore.squad.find(p => p.name.toLowerCase() === finalName.toLowerCase());
+        counter++;
+    }
+
+    // 3. Create new player
+    player = migratePlayer({
+        name: finalName,
+        uuid: validUUID || _generateUUID(),
+    });
+
+    return player;
+}
+window._resolvePlayerForSession = _resolvePlayerForSession;
+
+/**
+ * Handles a player joining via Open Party (no approval required).
+ * Reuses logic from approvePlayRequest without the deletion step.
+ */
+function handleAutoJoin(name, playerUUID, spiritAnimal = null) {
+    if (!window.isOperator) return;
+    if (!playerUUID) return;
+
+    // RACE PROTECTION: Ignore if already processing this player via another sync path
+    if (_processingPlayerUUIDs.has(playerUUID)) return;
+    _processingPlayerUUIDs.add(playerUUID);
+    setTimeout(() => _processingPlayerUUIDs.delete(playerUUID), 2000);
+    
+    // SNAPPINESS: Host adopts the player immediately to StateStore
+    const existing = StateStore.squad.find(p => p.uuid === playerUUID);
+    if (!existing) {
+        const player = migratePlayer({
+            name: name,
+            uuid: playerUUID,
+            spiritAnimal: spiritAnimal,
+            active: true
+        });
+        const newSquad = [...StateStore.squad, player];
+        const newQueue = [...StateStore.playerQueue.filter(u => u !== playerUUID), playerUUID];
+        
+        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
+        renderSquad();
+        if (typeof renderQueueStrip === 'function') renderQueueStrip();
+        
+        // Use throttled broadcast to avoid flooding clients during rapid joins
+        if (typeof broadcastGameState === 'function') broadcastGameState(false);
+
+        showSessionToast(`🔓 ${name} joined instantly`);
+        if (window.Haptic) Haptic.success();
+    }
+}
+
+let _processingRequestIds = new Set();
+let _processingPlayerUUIDs = new Set();
+
+async function approvePlayRequest(name, id, playerUUID = null, skipSync = false, skipAPI = false) {
+    if (!id || _processingRequestIds.has(id)) return;
+    if (playerUUID && _processingPlayerUUIDs.has(playerUUID)) return;
+
+    _processingRequestIds.add(id);
+    if (playerUUID) {
+        _processingPlayerUUIDs.add(playerUUID);
+        setTimeout(() => _processingPlayerUUIDs.delete(playerUUID), 2000);
+    }
+
+    console.log(`[CourtSide] Approving ${name}, UUID: ${playerUUID}`);
+    
+    try {
+    const requestRow = playRequests.find(r => String(r.id) === String(id));
+    const reconciledAchievements = requestRow?.achievements;
+    const initialEmoji = requestRow?.spirit_animal;
+
+    // Capture existing state to prevent queue duplication if name changes
+    const existing = StateStore.squad.find(p => (playerUUID && p.uuid === playerUUID) || (p.name.toLowerCase() === name.toLowerCase()));
+    const oldName = existing ? existing.name : null;
+
+    const player = _resolvePlayerForSession(name, playerUUID);
+    const finalName = player.name;
+    const validUUID = player.uuid;
+
+    let newSquad = [...StateStore.squad];
+    // Identity Integrity: Ensure the player is in the squad array
+    if (!newSquad.find(p => p.uuid === validUUID)) {
+        newSquad.push(player);
+    }
+
+    if (initialEmoji) player.spiritAnimal = initialEmoji;
+
+    // BACKGROUND ACHIEVEMENT FETCHING (Prevent Race Condition)
+    // We move this to an async block so StateStore.setState happens immediately.
+    // This prevents multiple paths from adding the same player if approval triggers overlap.
+    if (player.uuid && window.fetchPlayerAchievements) {
+        (async () => {
+            try {
+                let achievementIds = [];
+                if (Array.isArray(reconciledAchievements)) {
+                    achievementIds = reconciledAchievements;
+                } else {
+                    const fetched = await window.fetchPlayerAchievements(player.uuid);
+                    achievementIds = fetched.map(a => a.achievement_id);
+                }
+                const currentSet = new Set(player.achievements || []); 
+                achievementIds.forEach(id => currentSet.add(id));
+                player.achievements = Array.from(currentSet);
+                StateStore.set('squad', [...StateStore.squad]); // Signal update
+            } catch (e) { console.error(`Failed to fetch achievements for ${player.name}`, e); }
+        })();
+    }
+    player.active = true;
+
+    window._sessionUUIDMap = window._sessionUUIDMap || {};
+    if (validUUID) window._sessionUUIDMap[player.name] = validUUID;
+
+    const token = _makeApprovalToken();
+    window._approvedPlayers = window._approvedPlayers || {};
+    window._approvedPlayers[validUUID || player.name] = { token, name: player.name, uuid: validUUID, approvedAt: Date.now() };
+
+    // Identity Cleanup: Remove name-based "Guest" entry if upgrading to UUID
+    let newQueue = StateStore.playerQueue.filter(u => u !== player.uuid && u !== name && u !== oldName);
+    newQueue.push(player.uuid);
+
+    // If skipping sync (batch mode), we still need to update the StateStore references
+    // so the next iteration of the loop sees the updated squad/queue.
+    if (!skipSync) {
+        StateStore.setState({ squad: newSquad, playerQueue: newQueue });
+    } else {
+        // Update local state without triggering the Store's reactive setter/sync
+        StateStore.squad = newSquad;
+        StateStore.playerQueue = newQueue;
+    }
+
+    renderSquad();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
+
+    showSessionToast(`✅ ${player.name} added`);
+    Haptic.success();
+
+    if (!skipAPI) {
+        if (typeof memberApprove === 'function' && validUUID) {
+            memberApprove(validUUID);
+        }
+    }
+
+    if (typeof broadcastApproval === 'function') {
+        broadcastApproval(validUUID, player.name, token);
+    }
+
+    if (!skipAPI) denyPlayRequest(id); // Non-blocking cleanup
+    } catch (e) {
+        console.error('[approvePlayRequest] Failed', e);
+    } finally {
+        _processingRequestIds.delete(id);
+    }
+}
+
+function _makeApprovalToken() {
+    return Array.from({ length: 12 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+}
+
+function _generateUUID() {
+    if (window.Passport && typeof window.Passport._uuid === 'function') {
+        return window.Passport._uuid();
+    }
+    // Use native crypto API as primary fallback if Passport is missing
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
+/** Sends a batch request to resolve multiple play requests in one API call. */
+async function batchApproveAPI(ids) {
+    if (!ids || ids.length === 0 || !window.currentRoomCode || !window.operatorKey) return;
+    try {
+        await fetch('/api/play-request', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                ids, 
+                room_code: window.currentRoomCode, 
+                operator_key: window.operatorKey 
+            }),
+        });
+        if (typeof pollPlayRequests === 'function') await pollPlayRequests();
+    } catch (e) {
+        console.error('[CourtSide] Batch approval API failed', e);
+    }
+}
+
+async function denyPlayRequest(id) {
+    try {
+        await fetch('/api/play-request', {
+            method:  'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+        });
+        await pollPlayRequests();
+        showPlayRequests();
+    } catch { /* silent */ }
+}
+
+// Called by sync.js when a Realtime INSERT event occurs on play_requests table
+window.onPlayRequestInsert = async function(record) {
+    if (!record) return;
+
+    // LOCK CHECK: If Edge function already activated this player, ignore the request insertion
+    if (record.player_uuid && _processingPlayerUUIDs.has(record.player_uuid)) return;
+
+    if (!_lastSeenRequestIds.has(record.id)) {
+        // Track immediately to prevent duplicate processing
+        _trackRequestId(record.id);
+
+        // Metadata Integrity: Ensure the record is in the cache so approvePlayRequest
+        // can extract the spirit animal and achievements during auto-approval.
+        if (!playRequests.some(r => r.id === record.id)) {
+            playRequests.push(record);
+            if (playRequests.length > 100) playRequests.shift(); // Max-size cleanup
+            window.playRequests = playRequests;
+        }
+
+        const existing = _isPlayerAlreadyInSession(record);
+
+        if (existing) {
+            // Adopt real UUID for manual additions triggered by realtime events (immutable update)
+            if (record.player_uuid && existing.uuid !== record.player_uuid) {
+                const existingIdx = StateStore.squad.findIndex(p => p.uuid === existing.uuid);
+                const newSquad = [...StateStore.squad];
+                newSquad[existingIdx] = { ...existing, uuid: record.player_uuid };
+                StateStore.set('squad', newSquad); // Explicitly update StateStore
+            }
+
+            if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+            fetch('/api/play-request', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: record.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+            }).catch(() => {});
+            return;
+        }
+
+        // Lock Check: If a batch approval is currently running, ignore realtime
+        // triggers for a moment. Sequential integrity is maintained by the
+        // batch loop and the next polling cycle.
+        if (_isProcessingOpenPartyBatch) return;
+
+        if (StateStore.get('isOpenParty')) {
+            await approvePlayRequest(record.name, record.id, record.player_uuid);
+            return;
+        }
+
+        const recordIdUUID = record.player_uuid || null;
+        const recordIdEmoji = record.spirit_animal || null;
+        showJoinNotification(record.name, record.id, recordIdUUID, recordIdEmoji);
+    }
+    if (!_isProcessingOpenPartyBatch) pollPlayRequests(); // Fetch full list to ensure badge count is accurate
+};
+
+function ensureHostUI() {
+    // Only show host UI if not in player/spectator view
+    const isPlayerView = document.body.classList.contains('player-mode');
+    if (isPlayerView) return;
+
+    // Create a host dashboard area if it doesn't exist
+    let dashboard = document.getElementById('hostDashboard');
+    if (!dashboard) {
+        dashboard = document.createElement('div');
+        dashboard.id = 'hostDashboard';
+        dashboard.className = 'host-dashboard';
+        dashboard.style.display = 'flex';
+        const container = document.querySelector('.app-container');
+        if (container) {
+            const header = container.querySelector('header');
+            if (header) header.insertAdjacentElement('afterend', dashboard);
+        }
+    }
+
+    // Add Director Hub container
+    if (!document.getElementById('directorHub')) {
+        const hub = document.createElement('div');
+        hub.id = 'directorHub';
+        hub.className = 'panel'; 
+        hub.style.padding = '16px';
+        hub.style.marginBottom = '12px';
+        hub.innerHTML = `
+            <div class="sync-section-label" style="margin-bottom:12px; font-size:0.6rem;">Director Insights</div>
+            <div id="directorHubGrid" class="sh-insights-grid"></div>
+        `;
+        dashboard.insertBefore(hub, dashboard.firstChild);
+    }
+    renderDirectorHub();
+
+    // Add Open Party Toggle
+    if (!document.getElementById('slOpenPartyToggle')) {
+        const toggle = document.createElement('div');
+        toggle.id = 'slOpenPartyToggle';
+        toggle.className = 'open-party-toggle';
+        toggle.onclick = () => toggleOpenParty();
+        dashboard.appendChild(toggle);
+        renderOpenPartyToggle();
+    }
+
+    // Add Court Selector to Host Dashboard
+    if (!document.getElementById('courtCountInput')) {
+        const selector = document.createElement('div');
+        selector.className = 'panel';
+        selector.style.padding = '12px 16px';
+        selector.innerHTML = `
+            <div class="court-selector" style="flex-direction: row; justify-content: space-between; align-items: center;">
+                <div class="court-selector-label" style="margin-bottom: 0;">ACTIVE COURTS</div>
+                <div class="court-input-row">
+                    <input type="number" id="courtCountInput" class="court-count-input" 
+                           value="${StateStore.get('activeCourts') || 1}" min="1" max="10">
+                    <button class="court-set-btn" onclick="window.setCourts(document.getElementById('courtCountInput').value)">SET</button>
+                </div>
+            </div>
+        `;
+        dashboard.appendChild(selector);
+    }
+
+    // 1. Join Notification Toast (Popup)
+   if (!document.getElementById('joinNotification')) {
+        const notif = document.createElement('div');
+        notif.id = 'joinNotification';
+        notif.className = 'join-notif';
+        notif.innerHTML = `
+            <div class="join-notif-inner">
+                <div class="join-notif-label">REQUEST TO JOIN</div>
+                <div class="join-notif-name" id="joinNotifName">PLAYER</div>
+                <div class="join-notif-actions">
+                    <button class="join-notif-approve" onclick="notifApprove()">APPROVE</button>
+                    <button class="join-notif-decline" onclick="notifDecline()">DECLINE</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(notif);
+    }
+
+    // 2. Play Requests Badge (The Button)
+    if (!document.getElementById('playRequestsBadge')) {
+        const badge = document.createElement('div');
+        badge.id = 'playRequestsBadge';
+        badge.className = 'play-requests-badge';
+        badge.onclick = window.showPlayRequests;
+        badge.style.display = 'none'; 
+        badge.innerHTML = `
+            <span>PENDING REQUESTS</span>
+            <span id="playRequestsCount" style="background:rgba(0,0,0,0.3); color:var(--accent); padding:2px 8px; border-radius:6px; margin-left:10px; font-size:0.7rem; border:1px solid var(--border-accent);">0</span>
+        `;
+        if (dashboard) dashboard.appendChild(badge);
+        else document.body.appendChild(badge);
+    }
+
+    // 3. Play Requests Modal (The List)
+    if (!document.getElementById('playRequestsModal')) {
+        const modal = document.createElement('div');
+        modal.id = 'playRequestsModal';
+        modal.className = 'play-requests-modal';
+        modal.style.display = 'none';
+        modal.innerHTML = `
+            <div class="play-requests-card">
+                <div class="play-requests-title">Pending Requests</div>
+                <div id="playRequestsList" style="max-height: 300px; overflow-y: auto;"></div>
+                <button class="btn-cancel" onclick="closePlayRequests()" style="margin-top:12px;">Close</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+}
+
+function openTournamentMode() {
+    const overlay = document.createElement('div');
+    overlay.className = 'war-room-overlay';
+    overlay.id = 'warRoomOverlay';
+    
+    const code = window.currentRoomCode;
+    const isLive = !!code;
+    
+    // FIX: Tight filter to ensure anyone in wrTeams is GONE from Pool
+    const assignedIds = new Set(wrTeams.flatMap(t => t.players.map(tp => tp.uuid || tp.name)));
+    const unassigned = StateStore.squad.filter(p => p.active && !assignedIds.has(p.uuid || p.name));
+
+    overlay.innerHTML = `
+        <div class="wr-header">
+            <div class="wr-title-area" onclick="window.editTournamentName()">
+                <div style="font-family:var(--font-display); font-size:0.6rem; color:var(--trophy-gold); font-weight:900; letter-spacing:2px; margin-bottom:2px;">${isLive ? 'LIVE SESSION' : 'OFFLINE MODE'}</div>
+                <div style="font-family:var(--font-display); font-size:1.6rem; font-weight:900; font-style:italic; line-height:1; color:#fff;">${wrTournamentName} <span style="font-size:0.8rem; opacity:0.4;">✏️</span></div>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+                <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} IN ROOM</div>
+                <div id="wrQR" class="wr-header-qr" onclick="window.showLiveSuccessModal(window.currentRoomCode)" style="cursor:pointer;"></div>
+            </div>
+            <div style="display:flex; gap:10px;">
+                            ${wrTeams.length > 0 ? `<button class="wr-btn-guest" style="border-color:var(--danger); color:var(--danger);" onclick="window.resetTournament()">🔄 RESET</button>` : ''}
+
+                ${!isLive ? `<button class="wr-btn-guest wr-go-live-btn" style="border-color:var(--accent); color:var(--accent);" onclick="window.igniteWarRoomLive()">🌐 GO LIVE</button>` : `<div class="wr-room-pill">ROOM: ${code}</div>`}
+                <button class="wr-btn-guest" onclick="window.addTournamentGuest()">🏆 + GUEST</button>
+                <button class="wr-btn-close" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
+            </div>
+        </div>
+
+        <div class="wr-workbench">
+            <div class="wr-column">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div class="wr-column-title" style="margin-bottom:0;">The Draft Pool</div>
+                    ${unassigned.length >= 2 ? `<button class="wr-chip-btn" onclick="window.autoPairTournament()" style="color:var(--accent); font-size:0.6rem; font-weight:900; border:1px solid var(--accent); border-radius:4px; padding:2px 6px;">⚡ AUTO-PAIR</button>` : ''}
+                </div>
+                <div id="wrDraftPool" style="flex:1; overflow-y:auto;">
+                    ${unassigned.map(p => `
+                        <div class="wr-draft-chip" onclick="handleWarRoomTap('${p.uuid}')" data-uuid="${p.uuid}">
+                            <div style="flex:1; font-weight:700;">
+                                ${escapeHTML(p.name)} ${p.isGuest ? '' : '<span title="Passport User" style="opacity:0.5; margin-left:4px;">🪪</span>'}
+                            </div>
+                            <div class="wr-chip-actions">
+                                <button class="wr-chip-btn" onclick="event.stopPropagation(); window.editTournamentPlayer('${p.uuid}')">✏️</button>
+                                <button class="wr-chip-btn" onclick="event.stopPropagation(); window.removeTournamentPlayer('${p.uuid}')">✕</button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            <div class="wr-column">
+                <div class="wr-column-title">Bracket Entries</div>
+                <div id="wrTeamsList" style="flex:1; overflow-y:auto; display:grid; grid-template-columns:1fr; gap:10px;">
+                    ${wrTeams.map((t, idx) => `
+                        <div class="wr-team-card">
+                            <div style="font-size:0.6rem; color:var(--trophy-gold); margin-bottom:4px;">TEAM ${idx + 1}</div>
+                            <div style="font-family:var(--font-display); font-weight:800; font-style:italic; text-transform:uppercase;">
+                                ${escapeHTML(t.name)}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+
+        <button class="wr-ignition-btn" onclick="igniteTournament()">
+            GENERATE CHAMPIONSHIP BRACKET
+        </button>
+    `;
+
+    document.body.appendChild(overlay);
+    if (isLive) setTimeout(() => renderWarRoomQR(), 100);
+}
+
+function resetTournament() {
+    UIManager.confirm({
+        title: 'Reset Tournament?',
+        message: 'This will clear all teams and the current bracket. Players will return to the Draft Pool.',
+        confirmText: 'Reset Everything',
+        isDestructive: true,
+        onConfirm: () => {
+            wrTeams = [];
+            wrRounds = [];
+            wrSelectedPlayer = null;
+            const overlay = document.getElementById('warRoomOverlay');
+            if (overlay) { overlay.remove(); openTournamentMode(); }
+            if (window.Haptic) Haptic.bump();
+            showSessionToast('Tournament Reset');
+        }
+    });
+}
+
+async function igniteWarRoomLive() {
+    if (typeof createOnlineSession === 'function') {
+        await createOnlineSession();
+        // Refresh the Tournament overlay to show the new Room Code and QR
+        const overlay = document.getElementById('warRoomOverlay');
+        if (overlay) { overlay.remove(); openTournamentMode(); }
+        showSessionToast('🌐 TOURNAMENT IS NOW LIVE');
+    }
+}
+
+function renderWarRoomQR() {
+    const code = window.currentRoomCode;
+    const qrDiv = document.getElementById('wrQR');
+    if (!qrDiv || !code) return;
+    
+    const joinUrl = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
+    const QRCtor = window.QRCodeConstructor || window.QRCode;
+    if (QRCtor) {
+        qrDiv.innerHTML = '';
+        new QRCtor(qrDiv, {
+            text: joinUrl,
+            width: 60,
+            height: 60,
+            colorDark: '#000000',
+            colorLight: '#ffffff'
+        });
+    }
+}
+
+function editTournamentName() {
+    UIManager.prompt({
+        title: 'Edit Tournament Name',
+        initialValue: wrTournamentName,
+        onConfirm: (val) => {
+            if (val.trim()) wrTournamentName = val.trim().toUpperCase();
+            const overlay = document.getElementById('warRoomOverlay');
+            if (overlay) { overlay.remove(); openTournamentMode(); }
+        }
+    });
+}
+
+function addTournamentGuest() {
+    UIManager.prompt({
+        title: 'Add Tournament Guest',
+        placeholder: 'Enter name...',
+        confirmText: 'Add to Pool',
+        onConfirm: (name) => {
+            const trimmed = name.trim();
+            if (!trimmed) return;
+            
+            const newUUID = _generateUUID();
+            const newPlayer = migratePlayer({
+                name: trimmed,
+                uuid: newUUID,
+                active: true,
+                isGuest: true
+            });
+            
+            StateStore.set('squad', [...StateStore.squad, newPlayer]);
+            if (window.Haptic) Haptic.success();
+            // Refresh the Tournament Mode UI
+            const overlay = document.getElementById('warRoomOverlay');
+            if (overlay) { overlay.remove(); openTournamentMode(); }
+        }
+    });
+}
+
+function editTournamentPlayer(uuid) {
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    if (!p) return;
+    
+    UIManager.prompt({
+        title: 'Edit Player Name',
+        initialValue: p.name,
+        onConfirm: (newName) => {
+            if (!newName.trim()) return;
+            if (typeof _applyNameUpdate === 'function') {
+                _applyNameUpdate(uuid, p.name, newName.trim());
+                // Refresh view
+                const overlay = document.getElementById('warRoomOverlay');
+                if (overlay) { overlay.remove(); openTournamentMode(); }
+            }
+        }
+    });
+}
+
+async function removeTournamentPlayer(uuid) {
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    if (!p) return;
+    await removePlayerFromSession(uuid, p.name);
+    const overlay = document.getElementById('warRoomOverlay');
+    if (overlay) { overlay.remove(); openTournamentMode(); }
+}
+
+function autoPairTournament() {
+    const assignedIds = new Set(wrTeams.flatMap(t => t.players.map(tp => tp.uuid || tp.name)));
+    const unassigned = StateStore.squad
+        .filter(p => p.active && !assignedIds.has(p.uuid || p.name))
+        .sort((a, b) => (b.wins || 0) - (a.wins || 0)); // Sort by wins high to low
+
+    if (unassigned.length < 2) return;
+
+    // Balanced Pairing: Match top seeds with bottom seeds
+    while (unassigned.length >= 2) {
+        const top = unassigned.shift();
+        const bottom = unassigned.pop();
+        
+        const team = { 
+            id: _generateUUID(), 
+            players: [top, bottom], 
+            name: `${top.name} & ${bottom.name}` 
+        };
+        wrTeams.push(team);
+    }
+
+    if (window.Haptic) Haptic.success();
+    showSessionToast('Balanced Teams Created');
+    const overlay = document.getElementById('warRoomOverlay');
+    if (overlay) { overlay.remove(); openTournamentMode(); }
+}
+
+function handleWarRoomTap(uuid) {
+    const el = document.querySelector(`[data-uuid="${uuid}"]`);
+    if (!wrSelectedPlayer) {
+        wrSelectedPlayer = uuid;
+        el.classList.add('selected');
+        Haptic.tap();
+    } else {
+        if (wrSelectedPlayer === uuid) {
+            wrSelectedPlayer = null;
+            el.classList.remove('selected');
+            return;
+        }
+        // Merge!
+        const p1 = StateStore.squad.find(p => p.uuid === wrSelectedPlayer);
+        const p2 = StateStore.squad.find(p => p.uuid === uuid);
+        
+        createWarRoomTeam(p1, p2);
+        wrSelectedPlayer = null;
+    }
+}
+
+function createWarRoomTeam(p1, p2) {
+    const team = { id: _generateUUID(), players: [p1, p2], name: `${p1.name} & ${p2.name}` };
+    wrTeams.push(team);
+    
+    // Refresh pool to properly exclude the team members
+    const overlay = document.getElementById('warRoomOverlay');
+    if (overlay) { overlay.remove(); openTournamentMode(); }
+
+    if (window.Haptic) Haptic.success();
+}
+
+function igniteTournament() {
+    if (wrTeams.length < 2) return alert('Need at least 2 teams to ignite bracket.');
+    wrRounds = generateTournamentBracket(wrTeams);
+    renderTournamentBracket();
+    if (window.Haptic) Haptic.success();
+    showSessionToast('🏆 TOURNAMENT IGNITED');
+}
+
+function renderTournamentBracket() {
+    const workbench = document.querySelector('.wr-workbench');
+    if (!workbench) return;
+
+    workbench.innerHTML = '';
+    workbench.className = 'wr-bracket-canvas';
+    
+    wrRounds.forEach((round, rIdx) => {
+        const roundDiv = document.createElement('div');
+        roundDiv.className = 'wr-round';
+        roundDiv.innerHTML = `
+            <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">ROUND ${rIdx + 1}</div>
+            ${round.map((m, mIdx) => {
+                const isDecided = m.winner !== null;
+                const isBye = m.team1 && !m.team2;
+                const canSelect = !isDecided && m.team1 && m.team2 && !isBye;
+                
+                const t1Winner = m.winner?.id === m.team1?.id || isBye;
+                const t2Winner = m.winner?.id === m.team2?.id && !isBye;
+
+                return `
+                <div class="wr-matchup">
+                    <div class="wr-bracket-slot ${m.team1 ? 'has-team' : ''} ${t1Winner ? 'winner' : ''}" 
+                         onclick="${canSelect ? `window.advanceTournamentTeam(${rIdx}, ${mIdx}, 1)` : ''}">
+                        ${m.team1 ? escapeHTML(m.team1.name) : 'TBD'}
+                    </div>
+                    <div class="wr-bracket-slot ${m.team2 ? 'has-team' : ''} ${t2Winner ? 'winner' : ''}" 
+                         onclick="${canSelect ? `window.advanceTournamentTeam(${rIdx}, ${mIdx}, 2)` : ''}">
+                        ${m.team2 ? escapeHTML(m.team2.name) : (m.team1 ? 'BYE' : 'TBD')}
+                    </div>
+                </div>`;
+            }).join('')}
+        `;
+        workbench.appendChild(roundDiv);
+    });
+
+    // Add Championship center-piece
+    const lastRound = wrRounds[wrRounds.length - 1];
+    const overallWinner = lastRound[0].winner;
+
+    const champ = document.createElement('div');
+    champ.className = 'wr-round';
+    champ.innerHTML = `
+        <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">FINALS</div>
+        <div class="wr-championship-ring ${overallWinner ? 'crowned' : ''}">
+            <div style="font-size:2rem;">🏆</div>
+            <div style="font-family:var(--font-display); font-weight:900; color:var(--trophy-gold); letter-spacing:3px;">
+                ${overallWinner ? escapeHTML(overallWinner.name) : 'CHAMPION'}
+            </div>
+        </div>
+    `;
+    workbench.appendChild(champ);
+}
+
+function advanceTournamentTeam(rIdx, mIdx, teamNum) {
+    const match = wrRounds[rIdx][mIdx];
+    const winner = teamNum === 1 ? match.team1 : match.team2;
+    const loser = teamNum === 1 ? match.team2 : match.team1;
+    
+    if (!winner) return;
+    match.winner = winner;
+
+    // Record Career Stats for all players in this match
+    _recordTournamentMatchResult(winner, loser);
+
+    // Advance to next round if not the final round
+    if (rIdx < wrRounds.length - 1) {
+        const nextRoundIdx = rIdx + 1;
+        const nextMatchIdx = Math.floor(mIdx / 2);
+        const nextMatch = wrRounds[nextRoundIdx][nextMatchIdx];
+        
+        if (mIdx % 2 === 0) nextMatch.team1 = winner;
+        else nextMatch.team2 = winner;
+    }
+
+    renderTournamentBracket();
+    Haptic.success();
+}
+
+function _recordTournamentMatchResult(winnerTeam, loserTeam) {
+    if (!winnerTeam || !loserTeam) return; // Ignore BYEs
+
+    const updatePlayer = (p, isWin) => {
+        p.wins += isWin ? 1 : 0;
+        p.games += 1;
+        p.streak = isWin ? (p.streak + 1) : 0;
+        p.form = (p.form || []).concat(isWin ? 'W' : 'L').slice(-5);
+        p.sessionPlayCount++;
+
+        // Career Record Update (Passport)
+        const myUUID = (typeof Passport !== 'undefined') ? Passport.get()?.playerUUID : null;
+        if (myUUID && p.uuid === myUUID && typeof Passport.recordGame === 'function') {
+            Passport.recordGame(isWin);
+        }
+    };
+
+    winnerTeam.players.forEach(p => updatePlayer(p, true));
+    loserTeam.players.forEach(p => updatePlayer(p, false));
+
+    // Signal state change for Host (persists to localStorage and triggers cloud sync)
+    if (typeof StateStore !== 'undefined') {
+        StateStore.set('squad', [...StateStore.squad]);
+    }
+}
+
+function _startHostTimerTick() {
+    if (window._hostTickTimer) clearInterval(window._hostTickTimer);
+    window._hostTickTimer = setInterval(() => {
+        const matches = StateStore.currentMatches || [];
+        matches.forEach((m, i) => {
+            if (!m.startedAt || m.winnerTeamIndex !== null) return;
+            const el = document.getElementById(`timer-${i}`);
+            if (!el) return;
+            
+            const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
+            const min = Math.floor(elapsed / 60);
+            const sec = elapsed % 60;
+            el.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
+            
+            // Use the same CSS classes defined for the court-timer
+            el.classList.toggle('timer-warn', min >= 10);
+            el.classList.toggle('timer-alert', min >= 15);
+        });
+    }, 1000);
+}
+
+function _supportSectionHTML() {
+    return `
+        <div style="margin-top: auto; padding-top: 24px;">
+            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
+
+            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">🐛 Report a Bug</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
+                    onclick="openBugReportModal()">
+                    🐛 Report a Bug
+                </button>
+            </div>
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">☕ Support the Dev</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
+                    If Courtside Pro saves you time, consider buying the dev a coffee.
+                </p>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
+                    <div style="text-align:center;">
+                            
+                    </div>
+                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
+                        style="display:inline-flex; align-items:center; gap:8px;
+                               background:#FF5E5B; color:#fff; font-weight:700;
+                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
+                               text-decoration:none; white-space:nowrap;">
+                        ☕ Ko-fi
+                    </a>
+                </div>
+            </div>
+
+            </div>
+        </div>
+    `;
+}
+
+function openBugReportModal() {
+    let modal = document.getElementById('bugReportModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'bugReportModal';
+        modal.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.7);
+            display:flex; align-items:center; justify-content:center;
+            z-index:9999; padding:20px; box-sizing:border-box;
+        `;
+        modal.innerHTML = `
+            <div style="background:var(--surface1,#1e293b); border:1px solid var(--border,#334155);
+                        border-radius:16px; padding:24px; width:100%; max-width:400px;
+                        box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div style="font-weight:700; font-size:1rem; color:#fff;">🐛 Report a Bug</div>
+                    <button onclick="closeBugReportModal()" style="background:none; border:none;
+                            color:var(--text-muted,#94a3b8); font-size:1.2rem; cursor:pointer; padding:4px;">✕</button>
+                </div>
+                <p style="font-size:0.75rem; color:var(--text-muted,#94a3b8); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <textarea id="bugReportModalText"
+                    placeholder="Describe what happened…"
+                    rows="5"
+                    style="width:100%; background:var(--bg2,#0f172a); border:1.5px solid var(--border,#334155);
+                           color:#fff; padding:14px; border-radius:12px; margin-bottom:12px;
+                           outline:none; font-size:14px; font-family:inherit;
+                           resize:vertical; box-sizing:border-box;"
+                ></textarea>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-main" style="flex:1; background:#334155; color:#fff;"
+                        onclick="closeBugReportModal()">Cancel</button>
+                    <button class="btn-main" style="flex:1; background:var(--accent,#38bdf8); color:#000;"
+                        onclick="submitBugReport()">📨 Send Report</button>
+                </div>
+            </div>
+        `;
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) closeBugReportModal();
+        });
+        document.body.appendChild(modal);
+    } else {
+        modal.style.display = 'flex';
+        const ta = document.getElementById('bugReportModalText');
+        if (ta) ta.value = '';
+    }
+}
+
+function closeBugReportModal() {
+    const modal = document.getElementById('bugReportModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function submitBugReport() {
+    const text = (document.getElementById('bugReportModalText')?.value || '').trim();
+    if (!text) {
+        alert('Please describe the bug before sending.');
+        return;
+    }
+    const subject = encodeURIComponent('[Courtside Pro] Bug Report');
+    const body = encodeURIComponent(
+        'Bug Description:\n' + text +
+        '\n\n---\n' +
+        'App version: Courtside Pro\n' +
+        'Time: ' + new Date().toLocaleString() + '\n' +
+        'Squad size: ' + (StateStore.squad?.length ?? 'N/A') + '\n' +
+        'Active courts: ' + (StateStore.get('activeCourts') ?? 'N/A')
+    );
+    window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
+    closeBugReportModal();
+}
+
+function importSyncToken() {
+    const val = document.getElementById('syncInput').value.trim();
+    if (!val) return;
+    try {
+        // Fix: Unicode-safe decoding
+        const json = decodeURIComponent(escape(window.atob(val)));
+        const data = JSON.parse(json);
+        if (!data.squad) throw new Error('Missing squad data');
+                StateStore.setState({ squad: data.squad, currentMatches: data.currentMatches || [] }); // Triggers sync
+        closeOverlay();
+        renderSquad();
+        document.getElementById('matchContainer').innerHTML = '';
+        if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+        checkNextButtonState();
+    } catch (e) {
+        alert('Invalid Sync Token. Please check the data and try again.');
+    }
+}
+
+function eraseAllData() {
+    localStorage.clear();
+    location.reload();
+}
+
+function confirmEraseAllData() {
+    UIManager.confirm({
+        title: 'Wipe All Data?',
+        message: 'This will permanently delete all players, matches, and session history. This action cannot be undone.',
+        confirmText: 'Yes, Wipe Everything',
+        isDestructive: true,
+        onConfirm: eraseAllData
+    });
+}
+
+function updateUndoButton() {
+    const btn = document.getElementById('undoRoundBtn');
+    if (!btn) return;
+    btn.style.display  = StateStore.roundHistory.length > 0 ? 'inline-flex' : 'none';
+}
+
+function undoLastRound() {
+    if (StateStore.roundHistory.length === 0) return;
+    UIManager.confirm({
+        title: 'Undo Round?',
+        message: 'Undo the last round? This will reverse all stat changes.',
+        confirmText: 'Yes, Undo',
+        onConfirm: () => {
+            const snapshot = StateStore.roundHistory.pop();
+            // Restore state from the snapshot using the StateStore
+            StateStore.setState({
+                squad: snapshot.squadSnapshot,
+                currentMatches: snapshot.matches,
+                playerQueue: snapshot.queueSnapshot || StateStore.playerQueue,
+            });
+            renderSquad();
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
+            updateUndoButton();
+            checkNextButtonState();
+            Haptic.bump();
+
+            // SYNC FIX: Immediately broadcast the undone state so players 
+            // see their form revert without delay.
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+
+            showSessionToast('↩ Last round undone');
+        }
+    });
+}
+
+/** Calculates a weighted skill index for sorting players. */
+function getSkillIndex(p) {
+    if (!p || p.games === 0) return 0;
+    const winRate = p.wins / p.games;
+    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
+    return (winRate * 100) + (p.wins * 2);
+}
+
+function renderStatsTab(tab) {
+    // UX FIX: Always fetch the latest passport data to ensure career stats 
+    // are up-to-date in the UI after a game ends.
+    if (typeof Passport !== 'undefined') passport = Passport.get();
+
+    const content = document.getElementById('overlayContent');
+
+    const tabs = `
+        <div class="stats-tabs">
+            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
+                onclick="renderStatsTab('performance')">Leaderboard</button>
+            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
+                onclick="renderStatsTab('history')">History</button>
+            <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
+                onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
+            <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
+                onclick="renderStatsTab('profile')">My Profile</button>
+        </div>
+    `;
+
+    if (tab === 'performance') {
+        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins || a.name.localeCompare(b.name));
+        const topCount = 3; // Podium layout expects exactly 3 players
+        const peakPerformers = sorted.slice(0, topCount);
+        const activeRoster   = sorted.slice(topCount);
+        const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+
+        const getRankIconClass = (rank) => {
+            if (rank === 1) return 'gold';
+            if (rank === 2) return 'silver';
+            if (rank === 3) return 'bronze';
+            return '';
+        };
+
+        const renderPlayerCard = (p, rank, isPeak = false) => {
+            const sqIdx = StateStore.squad.indexOf(p);
+            const wr = winRate(p);
+            const rankClass = `rank-${rank}`;
+
+            let rankIconHTML = '';
+            if (!isPeak) { // Only for active roster
+                const iconClass = getRankIconClass(rank);
+                if (iconClass) {
+                    rankIconHTML = `<div class="rank-icon ${iconClass}">${rank}</div>`;
+                } else {
+                    rankIconHTML = `<div class="rank-icon" style="background:var(--bg2); border:1px solid var(--border); color:var(--text-muted);">${rank}</div>`;
+                }
+            }
+
+            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' <span class="fire-emoji">🔥</span>' : ''}</div>`;
+            const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
+            const progressBarHTML = `
+                <div class="win-rate-progress">
+                    <div class="win-rate-progress-fill" style="width:${wr}%"></div>
+                </div>
+            `;
+
+            if (isPeak) {
+                return `
+                    <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); opacity: 0.6; margin-bottom:8px;">#${rank}</div>
+                        ${nameHTML}
+                        ${metaHTML}
+                        ${progressBarHTML}
+                    </div>`;
+            } else {
+                return `
+                    <div class="stats-card active-roster" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        ${rankIconHTML}
+                        ${nameHTML}
+                        ${metaHTML}
+                    </div>`;
+            }
+        };
+
+        let peakPerformersHTML = '';
+        if (peakPerformers.length > 0) {
+            peakPerformersHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">PEAK PERFORMERS</div>
+                    <div class="stats-grid peak-performers-grid">
+                        ${peakPerformers.map((p, i) => renderPlayerCard(p, i + 1, true)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        let activeRosterHTML = '';
+        if (activeRoster.length > 0) {
+            activeRosterHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">ACTIVE ROSTER</div>
+                    <div class="stats-grid">
+                        ${activeRoster.map((p, i) => renderPlayerCard(p, i + 4, false)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        content.innerHTML = tabs + peakPerformersHTML + activeRosterHTML;
+
+    } else if (tab === 'profile') {
+        const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
+        
+        // 1. Identity Header
+        const { title, icon } = me ? getPlayerTitle(me) : { title: 'Spectator', icon: '👀' };
+        const avatarColor = Avatar.color(passport.playerName);
+        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
+        
+        const headerHTML = `
+            <div class="sl-profile-card">
+                <div class="sl-profile-top-right">
+                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
+                </div>
+                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
+                    ${avatarInitial}
+                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
+                </div>
+                <div class="sl-profile-name-large">${escapeHTML(passport.playerName)}</div>
+                <div class="sl-profile-title-badge">
+                    <span>${icon}</span>
+                    <span>${title}</span>
+                </div>
+            </div>`;
+
+        // 2. Stats Deck
+        const career = passport.stats || { wins: 0, games: 0 };
+        const cWins  = career.wins || 0;
+        const cGames = career.games || 0;
+        const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+        
+        let sWins = 0, sGames = 0, sWr = 0;
+        if (me) {
+            sWins = me.wins;
+            sGames = me.games;
+            sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
+        }
+
+        const statsHTML = `
+            <div class="sl-stats-deck">
+                <div class="sl-stat-card ${!me ? 'inactive' : ''}">
+                    <div class="sl-card-label">CURRENT SESSION</div>
+                    ${me ? `
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>` : `<div class="sl-card-empty">Not in squad</div>`}
+                </div>
+                <div class="sl-stat-card">
+                    <div class="sl-card-label">CAREER RECORD</div>
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+        // Form & Analytics (New Section)
+        let analyticsHTML = '';
+        if (me) {
+            // Rival Logic
+            let rivalName = 'None yet';
+            let rivalCount = 0;
+            if (me.opponentHistory) {
+                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
+                if (rivals.length > 0) {
+                    const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
+                    rivalName = rivalP ? rivalP.name : 'Unknown';
+                    rivalCount = rivals[0][1];
+                }
+            }
+
+            // Form Logic
+            const formHTML = (me.form || []).map(r => 
+                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'#ef4444'}; color:${r==='W'?'#000':'#fff'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
+            ).join('');
+
+            analyticsHTML = `
+                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
+                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
+                    </div>
+                    <div style="width:1px; height:30px; background:var(--border);"></div>
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
+                        <div style="font-size:0.9rem; font-weight:700;">${escapeHTML(rivalName)}</div>
+                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
+                    </div>
+                </div>`;
+        }
+
+        // 3. Chemistry
+        let chemHTML = '';
+        if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
+            const partners = Object.entries(me.partnerStats);
+            partners.sort(([, a], [, b]) => {
+                if (b.wins !== a.wins) return b.wins - a.wins;
+                return b.games - a.games;
+            });
+            const best = partners[0];
+            if (best) {
+                const [uuid, stats] = best;
+                const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
+                const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+                chemHTML = `
+                    <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
+                    <div class="sl-chem-card">
+                        <div class="sl-chem-details">
+                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
+                            <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                        </div>
+                    </div>`;
+            }
+        }
+
+        // 4. Achievements
+        let achHTML = '';
+        if (window.Achievements) {
+            const sessionAch = me ? (me.achievements || []) : [];
+            const allTimeAch = passport.achievements || [];
+            const myAch = [...new Set([...sessionAch, ...allTimeAch])];
+            const list = Object.keys(window.Achievements).map(key => {
+                const data = window.getAchievementDisplay(key, myAch);
+                const unlocked = data.unlocked;
+                return `
+                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="${unlocked ? `border-left: 3px solid ${data.color}` : ''}">
+                        <div class="sl-ach-icon">${data.icon}</div>
+                        <div class="sl-ach-text">
+                            <div class="sl-ach-title">${data.name}</div>
+                            <div class="sl-ach-desc">${data.description}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            achHTML = `<div class="sl-achievements-list" style="margin-top:20px;">${list}</div>`;
+        }
+
+        content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
+
+    } else if (tab === 'hall-of-fame') {
+        const period = window._lbPeriod || 'all';
+        const subTabs = `
+            <div style="display:flex; gap:8px; margin-bottom:16px;">
+                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
+                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
+            </div>`;
+
+        content.innerHTML = tabs + subTabs + `
+            <div class="sl-searching" style="margin-top:20px;">
+                <div class="sl-searching-spinner"></div>
+                <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
+            </div>`;
+
+        fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
+            .then(res => res.json())
+            .then(data => {
+                // Guard: only render if user is still on the hall-of-fame tab
+                if (!document.querySelector('.stats-tab.active')?.textContent.toLowerCase().includes('hall')) return;
+                
+                const players = data.players || [];
+
+                // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
+                players.sort((a, b) => {
+                    // Support both snake_case (DB) and camelCase (Internal)
+                    const connA = Object.keys(a.partner_stats || a.partnerStats || {}).length;
+                    const connB = Object.keys(b.partner_stats || b.partnerStats || {}).length;
+                    if (connB !== connA) return connB - connA; // Most unique partners first
+
+                    const trophyA = (a.achievements || []).length;
+                    const trophyB = (b.achievements || []).length;
+                    if (trophyB !== trophyA) return trophyB - trophyA;
+
+                    const gamesA = a.total_games ?? a.totalGames ?? a.games ?? 0;
+                    const gamesB = b.total_games ?? b.totalGames ?? b.games ?? 0;
+                    return gamesB - gamesA;
+                });
+
+                const html = players.map((p, i) => {
+                    const connections = Object.keys(p.partner_stats || p.partnerStats || {}).length;
+                    return `
+                    <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
+                        <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
+                        <div style="flex:1;">
+                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
+                            <div class="stats-meta">${connections} Connections · ${p.total_games ?? p.totalGames ?? p.games ?? 0} Games</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
+                            <div style="font-size:0.5rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">INFLUENCE</div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                content.innerHTML = tabs + subTabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
+            })
+            .catch(() => {
+                content.innerHTML = tabs + subTabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
+            });
+
+    } else if (tab === 'history') {
+        if (StateStore.roundHistory.length === 0) {
+            content.innerHTML = tabs + `
+                <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
+                    No rounds played yet this session.
+                </div>`;
+            return;
+        }
+
+        const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
+            const roundNum = StateStore.roundHistory.length - i;
+            
+            let timeHtml = '';
+            if (round.timestamp) {
+                const t = new Date(round.timestamp);
+                const timeStr = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                timeHtml = `<div style="font-size:0.65rem; color:var(--text-muted); margin-left:auto;">${timeStr}</div>`;
+            }
+
+            const games = (round.matches || []).map((m, gi) => {
+                const winIdx  = m.winnerTeamIndex;
+                if (winIdx === null || winIdx === undefined) return '';
+                const loseIdx = winIdx === 0 ? 1 : 0;
+
+                const squadLookup = round.squadSnapshot || [];
+                const getName = (id) => {
+                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
+                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
+                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
+                    return p ? p.name : id;
+                };
+
+                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
+                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
+
+                const durationMs = (m.endedAt && m.startedAt) ? m.endedAt - m.startedAt : 0;
+                const durMin = Math.floor(durationMs / 60000);
+                const durSec = Math.floor((durationMs % 60000) / 1000);
+                const durStr = durationMs > 0 ? `<span style="opacity:0.5; margin-left:6px; font-size:0.6rem;">⏱ ${durMin}:${durSec.toString().padStart(2, '0')}</span>` : '';
+
+                return `
+                    <div class="history-game">
+                        <div class="history-game-label">Game ${gi + 1}</div>
+                        <div class="history-matchup">
+                            <span class="history-winner">${escapeHTML(winners)}</span>
+                            <span class="history-vs">def.</span>
+                            <span class="history-loser">${escapeHTML(losers)}</span>${durStr}
+                        </div>
+                        ${timeHtml}
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="history-round" style="animation-delay: ${i * 0.05}s">
+                    <div class="history-round-label">Round ${roundNum}</div>
+                    ${games}
+                </div>
+            `;
+        }).join('');
+
+        const searchBar = `
+            <div style="margin-bottom: 12px; position: relative;">
+                <input type="text" id="histSearchInput" placeholder="Search history..." 
+                    style="width:100%; padding-right: 32px;"
+                    oninput="window.filterHistory(this.value)">
+                <button id="histSearchClear" onclick="window.clearHistorySearch()" 
+                    style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1rem; padding: 8px;">
+                    ✕
+                </button>
+            </div>`;
+
+        content.innerHTML = tabs + searchBar + `<div class="history-list">${rounds}</div>`;
+    }
+}
+
+window.filterHistory = function(query) {
+    const term = query.toLowerCase().trim();
+    
+    const clearBtn = document.getElementById('histSearchClear');
+    if (clearBtn) clearBtn.style.display = term ? 'block' : 'none';
+
+    const rounds = document.querySelectorAll('.history-round');
+    rounds.forEach(round => {
+        const games = round.querySelectorAll('.history-game');
+        let roundVisible = false;
+        games.forEach(game => {
+            const match = !term || game.textContent.toLowerCase().includes(term);
+            game.style.display = match ? 'flex' : 'none';
+            if (match) roundVisible = true;
+        });
+        round.style.display = roundVisible ? 'block' : 'none';
+    });
+};
+
+window.clearHistorySearch = function() {
+    const input = document.getElementById('histSearchInput');
+    if (input) {
+        input.value = '';
+        window.filterHistory('');
+        input.focus();
+    }
+};
+
+// ---------------------------------------------------------------------------
+// PLAYER CARDS
+// ---------------------------------------------------------------------------
+
+function getPlayerTitle(p) {
+    const wr = p.games > 0 ? p.wins / p.games : 0;
+
+    if (p.streak >= 5)              return { title: 'On Fire',       icon: '🔥' };
+    if (p.streak >= 3)              return { title: 'Hot Hand',      icon: '⚡' };
+    if (p.games === 0)              return { title: 'Fresh Blood',   icon: '🌱' };
+    if (p.games >= 10 && wr >= 0.7) return { title: 'The Closer',    icon: '🎯' };
+    if (p.games >= 10 && wr >= 0.6) return { title: 'Sharp Shooter', icon: '🏹' };
+    if (p.games >= 8)               return { title: 'Iron Man',      icon: '💪' };
+    if (wr >= 0.6 && p.games >= 5)  return { title: 'Rising Star',   icon: '⭐' };
+    if (wr <= 0.35 && p.games >= 5) return { title: 'Never Quits',   icon: '🛡️' };
+    if (p.wins === 0 && p.games > 0)return { title: 'The Underdog',  icon: '🐉' };
+    if (p.games >= 6 && wr >= 0.45) return { title: 'Steady Eddie',  icon: '🤝' };
+    if (p.sessionPlayCount >= 5)    return { title: 'Always Ready',  icon: '🏃' };
+    if (p.streak === 0 && p.games > 3) return { title: 'The Wildcard', icon: '🎲' };
+    return { title: 'The Veteran', icon: '🏅' };
+}
+
+async function openPlayerCard(idx) {
+    const p  = StateStore.squad[idx];
+    if (!p) return;
+
+    const { title, icon } = getPlayerTitle(p);
+    const wr  = p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+    const bg  = Avatar.color(p.name);
+    const ini = Avatar.initials(p.name);
+
+    // Calculate Form HTML
+    const formHTML = (p.form || []).map(r => 
+        `<span style="display:inline-block; width:18px; height:18px; border-radius:50%; background:${r==='W'?'var(--accent)':'rgba(239,68,68,0.2)'}; color:${r==='W'?'#000':'#ef4444'}; font-size:0.55rem; font-weight:800; text-align:center; line-height:18px; margin:0 2px;">${r}</span>`
+    ).join('');
+
+    // Calculate Rival
+    let rival = '—';
+    if (p.opponentHistory) {
+        const rivals = Object.entries(p.opponentHistory).sort(([,a], [,b]) => b - a);
+        if (rivals.length) {
+            const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
+            rival = `${rivalP ? rivalP.name : 'Unknown'} (${rivals[0][1]}g)`;
+        }
+    }
+
+    // Calculate Partner Chemistry
+    let chemistryHTML = '';
+    if (p.partnerStats && Object.keys(p.partnerStats).length > 0) {
+        const partners = Object.entries(p.partnerStats);
+        // Sort by wins, then by games played
+        partners.sort(([, a], [, b]) => {
+            if (b.wins !== a.wins) return b.wins - a.wins;
+            return b.games - a.games;
+        });
+        const best = partners[0];
+        if (best) {
+            const [uuid, stats] = best;
+            const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
+            const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+            chemistryHTML = `
+                <div class="pc-section-title" style="margin-top:24px;">Partner Chemistry</div>
+                <div class="pc-chemistry-card">
+                    <div class="pc-chem-icon">🤝</div>
+                    <div class="pc-chem-details">
+                        <div class="pc-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
+                        <div class="pc-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    document.getElementById('playerCardContent').innerHTML = `
+        <div class="pc-avatar-wrap">
+            <div class="pc-avatar" style="background:${bg}; font-style: ${p.spiritAnimal ? 'normal' : 'italic'};">${p.spiritAnimal || ini}</div>
+            ${p.streak >= 3 ? '<div class="pc-streak-ring"></div>' : ''}
+        </div>
+        <div class="pc-title-badge">
+            <span class="pc-title-icon">${icon}</span>
+            <span class="pc-title-text">${title}</span>
+        </div>
+        <div class="pc-name">${escapeHTML(p.name)}</div>
+        <div class="pc-stats-row">
+            <div class="pc-stat">
+                <div class="pc-stat-val">${p.wins}</div>
+                <div class="pc-stat-label">Wins</div>
+            </div>
+            <div class="pc-stat-divider"></div>
+            <div class="pc-stat">
+                <div class="pc-stat-val">${p.games}</div>
+                <div class="pc-stat-label">Games</div>
+            </div>
+            <div class="pc-stat-divider"></div>
+            <div class="pc-stat">
+                <div class="pc-stat-val">${wr}%</div>
+                <div class="pc-stat-label">Win Rate</div>
+            </div>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:16px; padding:0 10px;">
+            <div style="text-align:left;">
+                <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px;">FORM</div>
+                <div>${formHTML || '<span style="opacity:0.5; font-size:0.8rem;">-</span>'}</div>
+            </div>
+            <div style="text-align:right;">
+                <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px;">RIVAL</div>
+                <div style="font-size:0.85rem; font-weight:600;">${escapeHTML(rival)}</div>
+            </div>
+        </div>
+        ${p.streak > 0 ? `<div class="pc-streak">🔥 ${p.streak} game win streak</div>` : ''}
+        ${chemistryHTML}
+        <div id="pc-achievements-container"></div>
+    `;
+
+    document.getElementById('playerCardModal').style.display = 'flex';
+    Haptic.bump();
+
+    // Render achievements directly from local squad data
+    const achievementsContainer = document.getElementById('pc-achievements-container');
+    if (achievementsContainer) {
+        if (window.Achievements) {
+            const allAchHTML = Object.keys(window.Achievements).map(key => {
+                const data = window.getAchievementDisplay(key, p.achievements);
+                const isUnlocked = data.unlocked;
+                return `
+                    <div class="pc-achievement-badge ${isUnlocked ? 'unlocked' : 'locked'}" 
+                         style="${isUnlocked ? `border-color:${data.color}; box-shadow: 0 0 10px ${data.color}44; color:${data.color}` : ''}"
+                         title="${data.name}: ${data.description}"
+                         onmousedown="startAchPress('${key}', '${p.uuid || p.name}')" onmouseup="endAchPress()"
+                         ontouchstart="startAchPress('${key}', '${p.uuid || p.name}')" ontouchend="endAchPress()"
+                         oncontextmenu="event.preventDefault(); return false;">
+                        ${data.icon}
+                    </div>
+                `;
+            }).join('');
+
+            achievementsContainer.innerHTML = `
+                <div class="pc-section-title">Achievements</div>
+                <div class="pc-achievements-grid">${allAchHTML}</div>
+            `;
+        }
+    }
+}
+
+window.openPlayerCard = openPlayerCard;
+
+function closePlayerCard() {
+    document.getElementById('playerCardModal').style.display = 'none';
+}
+
+function _installPassportIWTPOverride() {
+    const _originalCheckIWTP = checkIWTPSmartRecognition;
+    checkIWTPSmartRecognition = function() {
+        const passport = Passport.get();
+        const sheet    = document.getElementById('iwantToPlaySheet');
+        if (!sheet || !window.isOnlineSession || window.isOperator) return;
+
+        // BUG FIX: If already in player mode, suppress the welcome back join prompt
+        if (document.body.classList.contains('player-mode')) {
+            sheet.style.display = 'none';
+            return;
+        }
+
+        if (passport && passport.playerName) {
+            showPassportWelcome(passport);
+            return;
+        }
+        _originalCheckIWTP();
+    };
+}
+
+function showPassportWelcome(passport) {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet) return;
+
+    const choiceView = document.getElementById('iwtpChoiceView');
+    if (!choiceView) return;
+
+    const isOpen = StateStore.get('isOpenParty');
+    choiceView.innerHTML = `
+        <div class="iwtp-title">Welcome back,</div>
+        <div class="iwtp-passport-name">${escapeHTML(passport.playerName)}</div>
+        <div class="iwtp-subtitle">Your passport was found on this device.</div>
+        <button class="iwtp-btn" onclick="passportJoinSession()">
+            🏀 ${isOpen ? 'Join Instantly' : 'Check-in to Room'} ${escapeHTML(window.currentRoomCode || '')}
+        </button>
+        <button class="iwtp-choice-btn iwtp-choice-existing" style="margin-top:10px;" onclick="passportRenameAndJoin()">
+            ✏️ Join with a different name
+        </button>
+        <button class="iwtp-back-btn" style="margin-top:14px; display:block; text-align:center; width:100%;"
+            onclick="spectateOnly()">
+            👁 Just spectate
+        </button>
+    `;
+
+    _iwtpShow('iwtpChoiceView');
+    sheet.style.display = 'flex';
+}
+
+async function passportJoinSession() {
+    const passport = Passport.get();
+    if (!passport || !window.currentRoomCode) return;
+    await submitPassportJoinRequest(passport.playerName, passport.playerUUID);
+}
+
+async function passportRenameAndJoin() {
+    const passport = Passport.get();
+    
+    UIManager.prompt({
+        title: 'Join Session',
+        initialValue: passport?.playerName || '',
+        placeholder: 'Enter name...',
+        confirmText: 'Join',
+        onConfirm: async (newName) => {
+            const trimmed = (newName || '').trim();
+            if (!trimmed) return;
+            Passport.rename(trimmed);
+            await submitPassportJoinRequest(trimmed, passport.playerUUID);
+        }
+    });
+}
+
+async function submitPassportJoinRequest(name, uuid) {
+    if (!window.currentRoomCode) return;
+    const btn = document.querySelector('.iwtp-btn');
+    const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+    const animal = p ? p.spiritAnimal : null;
+
+    try {
+        const res = await fetch('/api/play-request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                room_code: window.currentRoomCode,
+                name: name,
+                player_uuid: uuid,
+                spirit_animal: animal
+            })
+        });
+
+        if (res.ok) {
+            collapseIWTPSheet();
+            setTimeout(() => { SidelineView.show(); }, 450);
+            showSessionToast('🏀 Request sent! Waiting for host approval…');
+            Haptic.success();
+        } else { throw new Error('Failed'); }
+    } catch {
+        if (btn) { btn.disabled = false; btn.textContent = 'Join Session'; }
+        showSessionToast('Could not send request. Try again.');
+    }
+}
+
+/**
+ * Updates the UI for a pending request (modal and toast) if data changes via broadcast.
+ */
+window.updatePendingRequestUI = function(uuid, name, emoji) {
+    if (!window.isOperator) return;
+
+    // 1. Update toast if showing
+    const notif = document.getElementById('joinNotification');
+    if (notif && notif.classList.contains('show') && notif.dataset.uuid === uuid) {
+        const nameEl = document.getElementById('joinNotifName');
+        const finalName = name || notif.dataset.name;
+        if (nameEl) {
+            nameEl.innerHTML = emoji ? `<span style="margin-right:8px">${emoji}</span>${escapeHTML(finalName)}` : escapeHTML(finalName);
+        }
+        if (name) notif.dataset.name = name;
+    }
+
+    // 2. Update modal if open
+    if (document.getElementById('playRequestsModal')?.style.display === 'flex') {
+        showPlayRequests();
+    }
+};
+
+function spectateOnly() {
+    collapseIWTPSheet();
+    document.body.classList.add('spectator-mode');
+    showSessionToast('👁 Spectating live');
+}
+
+
+// =============================================================================
+// LANDING PAGE
+// =============================================================================
+
+function _calculateFinalRecapData() {
+    const squad = StateStore.squad || [];
+    const history = StateStore.roundHistory || [];
+    const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
+    const sport = StateStore.get('sport') || 'Badminton';
+
+    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins); // Sort only by wins
+    const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
+    
+    const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
+    const ironMan = sortedByGames[0] || { name: 'N/A', sessionPlayCount: 0 };
+
+    const sortedByStreak = [...squad].sort((a,b) => b.streak - a.streak);
+    const hotHand = sortedByStreak[0] || { name: 'N/A', streak: 0 };
+
+    const eligibleForWR = squad.filter(p => p.games >= 3);
+    const sortedByWR = [...eligibleForWR].sort((a,b) => (b.wins/b.games) - (a.wins/a.games));
+    const sharpShooter = sortedByWR[0] || { name: 'N/A', wins: 0, games: 0 };
+
+    return { 
+        sessionUUID: _generateUUID(), // Unique ID for this recap instance
+        sport,
+        totalGames, 
+        mvp: { name: mvp.name, wins: mvp.wins, games: mvp.games }, 
+        ironMan: { name: ironMan.name, sessionPlayCount: ironMan.sessionPlayCount },
+        hotHand: { name: hotHand.name, streak: hotHand.streak },
+        sharpShooter: { 
+            name: sharpShooter.name, 
+            wr: sharpShooter.games > 0 ? Math.round((sharpShooter.wins / sharpShooter.games) * 100) : 0,
+            squad: squad.map(p => ({ uuid: p.uuid, name: p.name, spiritAnimal: p.spiritAnimal })) // For voting
+        },
+        squad: sortedByWins.slice(0, 10) 
+    };
+}
+
+function _showHostRecap(recap) {
+    document.body.classList.add('session-ended');
+    closeOverlay();
+
+    const sessionMVPVotes = {}; // To store votes for this recap
+    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+
+    const leaderboardHTML = recap.squad.map((p, i) => `
+        <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);">
+            <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
+            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${esc(p.name)}</div>
+            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.wins}W</div>
+        </div>
+    `).join('');
+
+    const content = `
+        <div class="menu-card" style="max-width:440px; width:95%; max-height:90vh; overflow-y:auto; padding:32px 24px; text-align:left;">
+            <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:8px; text-transform:uppercase;">SESSION COMPLETE</div>
+            <h2 style="font-size:2.2rem; margin-bottom:24px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic;">RECAP & RANKINGS</h2>
+            
+            <div id="hostMvpDisplay" style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
+                <div style="font-size:3rem; margin-bottom:10px;">🏆</div>
+                <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
+                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(recap.mvp.name)}</div>
+                <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${recap.mvp.wins} Wins · ${recap.mvp.games} Games</div>
+                <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
+                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border);">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">TOTAL GAMES</div>
+                    <div style="font-family:var(--font-display); font-size:1.8rem; font-weight:900; color:var(--accent);">${recap.totalGames}</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">IRON MAN</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.ironMan.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.ironMan.sessionPlayCount} Games</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">HOT HAND</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.hotHand.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.hotHand.streak} Win Streak</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">SHARP SHOOTER</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.sharpShooter.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.sharpShooter.wr}% Win Rate</div>
+                </div>
+            </div>
+
+            <div class="sync-section-label" style="margin-bottom:12px;">FINAL STANDINGS</div>
+            <div style="margin-bottom:24px; background:var(--surface); border-radius:12px; border:1px solid var(--border); padding:0 16px;">
+                ${leaderboardHTML}
+            </div>
+
+            <button class="btn-main" style="width:100%; height:54px; margin-bottom:12px; background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="window.location.reload()">BACK TO MENU</button>
+            <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.4; text-align:center;">Data has been synced to career records. Session logic disconnected.</p>
+        </div>
+    `;
+
+    UIManager.show(content, 'card');
+}
+
+function generateQR() {
+    // Fix: Use unicode-safe encoding so emojis don't crash btoa
+    const json  = JSON.stringify({ squad: StateStore.squad, currentMatches: StateStore.currentMatches });
+    const token = window.btoa(unescape(encodeURIComponent(json)));
+    if (token.length > 2500) {
+        alert('Data is too large for a QR code. Please use the "Copy Sync Token" button instead.');
+        return;
+    }
+    const qrDiv = document.getElementById('qrcode');
+    if (!qrDiv) return;
+    qrDiv.innerHTML = '';
+    const QRCtor = window.QRCodeConstructor || window.QRCode;
+    if (!QRCtor) { console.error('[CourtSide] generateQR: QRCode library not loaded'); return; }
+    new QRCtor(qrDiv, {
+        text:         token,
+        width:        200,
+        height:       200,
+        colorDark:    '#000000',
+        colorLight:   '#ffffff',
+    });
+}
+
+function copySyncToken() {
+    let text = window.currentRoomCode;
+    if (!window.isOnlineSession) {
+        // Fix: Unicode-safe encoding
+        const json = JSON.stringify({ squad: StateStore.squad, currentMatches: StateStore.currentMatches });
+        text = window.btoa(unescape(encodeURIComponent(json)));
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+            .then(() => showSessionToast(window.isOnlineSession ? `📋 Room code copied: ${text}` : '📋 Token copied!'))
+            .catch(() => fallbackCopy(text));
+    } else {
+        if (typeof fallbackCopy === 'function') fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text, msg = '📋 Token copied!') {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showSessionToast(msg);
+    } catch (e) {
+        alert('Could not copy automatically. Please copy the token manually.');
+    }
+    document.body.removeChild(ta);
+}
+
+function _preferencesSectionHTML() {
+    const isAudio = localStorage.getItem('cs_host_audio_announce') === 'true';
+    return `
+        <div class="sh-section">
+            <div class="sync-section-label">Preferences</div>
+            <div class="sh-grid">
+                <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="window.toggleHostAudioAnnounce()">
+                    🔊 VOICE ALERTS: ${isAudio ? 'ON' : 'OFF'}
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function closeOverlay() {
+    document.getElementById('overlay').classList.remove('open');
+}
+
+function confirmEndSession() {
+    UIManager.confirm({
+        title: 'End Session?',
+        message: 'This will end the live broadcast for all players and spectators. You will see a final session recap before exiting.',
+        confirmText: 'End Session & Recap',
+        isDestructive: true,
+        onConfirm: async () => {
+            const recapData = _calculateFinalRecapData();
+            const roomCode = window.currentRoomCode;
+            
+            // 1. Broadcast to players so they see their recap
+            if (typeof broadcastSessionEnded === 'function') {
+                broadcastSessionEnded(recapData);
+            }
+
+            // 2. Stop host sync logic immediately
+            localStorage.removeItem('cs_room_code');
+            localStorage.removeItem('cs_operator_key');
+            localStorage.removeItem('cs_op_key_hash');
+            localStorage.removeItem('cs_pro_vault'); // Clear local vault to return to fresh menu
+            localStorage.removeItem('cs_pending_sync');
+
+            // Clear request tracking for the session
+            _lastSeenRequestIds.clear();
+            _processingRequestIds.clear();
+            playRequests = [];
+            _notifQueue.length = 0;
+            window.playRequests = playRequests;
+
+            // 3. Show the Host Recap View (this also hides hostRoot via CSS)
+            _showHostRecap(recapData);
+
+            // 4. Delete from DB (authenticated call)
+            if (roomCode && window.operatorKey) {
+                fetch('/api/session-delete', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room_code: roomCode, operator_key: window.operatorKey }),
+                }).catch(e => console.error('[CourtSide] Silent delete failed', e));
+            }
+        }
+    });
+}
+
+function showOverlay(type) {
+    const title   = document.getElementById('overlayTitle');
+    const content = document.getElementById('overlayContent');
+    document.getElementById('overlay').classList.add('open');
+
+    if (type === 'stats') {
+        title.innerText = type === 'history' ? 'Match History' : 'Leaderboard';
+        renderStatsTab(type === 'history' ? 'history' : 'performance');
+
+    } else {
+        title.innerText = 'Menu & Options';
+        const syncMsg = window._lastSyncTime ? `Cloud Sync Active (Last: ${window._lastSyncTime})` : 'Syncing with cloud...';
+        
+        let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
+
+        if (window.isOnlineSession) {
+            shContent += `
+                <div class="sh-section">
+                    <div class="session-live-card">
+                        <div class="session-live-top">
+                            <span class="session-live-dot"></span>
+                            <span class="session-live-label">LIVE SESSION</span>
+                        </div>
+                        <div class="session-room-code">${window.currentRoomCode}</div>
+                        <p style="font-size:0.7rem; color:var(--text-muted); margin-bottom:20px;">
+                            ${window.isOperator ? 'Share code or invite link to join' : 'Viewing as spectator'}
+                        </p>
+                        
+                        <div class="sh-qr-wrap">
+                            <div id="qrcode" style="display:flex;justify-content:center;margin:0 auto;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Broadcast Controls</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" onclick="copyInviteLink()">🔗 Invite Link</button>
+                        <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📋 Room Code</button>
+                        ${window.isOperator ? `
+                            <button class="btn-main sh-btn-sub" onclick="resyncQueue()">🔄 Resync Queue</button>
+                            <button class="btn-main btn-danger" style="font-size:0.8rem;" onclick="confirmEndSession()">🛑 End Session</button>
+                        ` : `
+                            <button class="btn-main btn-danger" style="grid-column: span 2;" onclick="leaveSession(); closeOverlay();">Leave Session</button>
+                        `}
+                    </div>
+                </div>
+
+                ${_preferencesSectionHTML()}
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Navigation</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
+                    </div>
+                </div>
+
+                ${_supportSectionHTML()}
+            `;
+        } else {
+            shContent += `
+                <div class="sh-section">
+                    <div class="sync-section-label">Go Live</div>
+                    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
+                        Start a live session to sync with players in real-time.
+                    </p>
+                    <button class="btn-main" style="width:100%; height:54px;" onclick="createOnlineSession()">🌐 Start Live Session</button>
+                </div>
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Join Session</div>
+                    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
+                        Enter a room code to watch a live session.
+                    </p>
+                    <input type="text" id="manualRoomCodeInput" placeholder="ENTER CODE"
+                        class="sl-code-input" style="margin-bottom:10px;"
+                        autocomplete="off" autocorrect="off" maxlength="9">
+                    <button id="joinManualCodeBtn" class="btn-main sh-btn-sub" style="width:100%;">Connect to Room</button>
+                </div>
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Backup & Migration</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📦 Export Data</button>
+                        <button class="btn-main sh-btn-sub" onclick="importSyncToken()">📥 Import Data</button>
+                    </div>
+                    <input type="text" id="syncInput" placeholder="Paste token here..."
+                        style="width:100%; margin-top:10px; font-size:0.8rem; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:10px;">
+                </div>
+
+                <div class="sh-section" style="text-align:center; padding-top:10px;">
+                    <button class="btn-main btn-danger" style="width:auto; display:inline-flex; padding:8px 16px; font-size:0.7rem; height:auto; min-height:auto;"
+                        onclick="confirmEraseAllData()">WIPE ALL LOCAL DATA</button>
+                </div>
+
+                ${_preferencesSectionHTML()}
+
+                <div class="sh-section">
+                    <div class="sync-section-label">Navigation</div>
+                    <div class="sh-grid">
+                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
+                    </div>
+                </div>
+
+                ${_supportSectionHTML()}
+            `;
+        }
+        content.innerHTML = shContent;
+
+        if (window.isOnlineSession) {
+            if (!window.currentRoomCode) {
+                console.error('[CourtSide] generateQR: currentRoomCode is null or undefined — QR not generated');
+                const qrDiv = document.getElementById('qrcode');
+                if (qrDiv) qrDiv.innerHTML = '<p style="color:#ef4444;font-size:12px;text-align:center;">Room code missing — try ending and restarting the session.</p>';
+            } else {
+                const joinUrl = window.location.origin + window.location.pathname + '?join=' + window.currentRoomCode + '&role=player';
+                console.log('[CourtSide] Generating QR for:', joinUrl);
+                const QRCtor = window.QRCodeConstructor || window.QRCode;
+                const qrDiv  = document.getElementById('qrcode');
+                if (qrDiv && QRCtor) {
+                    qrDiv.innerHTML = '';
+                    new QRCtor(qrDiv, {
+                        text:          joinUrl,
+                        width:         200,
+                        height:        200,
+                        colorDark:     '#000000',
+                        colorLight:    '#ffffff',
+                        correctLevel:  QRCtor.CorrectLevel?.H || 0,
+                    });
+                } else if (qrDiv) {
+                    console.warn('[CourtSide] QRCode library not loaded, showing plain URL');
+                    qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
+                }
+            }
+        }
+
+        // Attach event listeners for manual code entry to avoid global scope issues
+        if (!window.isOnlineSession) {
+            document.getElementById('joinManualCodeBtn')?.addEventListener('click', joinManualCode);
+            document.getElementById('manualRoomCodeInput')?.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') joinManualCode();
+            });
+        }
+    }
+}
+
+function _calculateFinalRecapData() {
+    const squad = StateStore.squad || [];
+    const history = StateStore.roundHistory || [];
+    const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
+    const sport = StateStore.get('sport') || 'Badminton';
+
+    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins); // Sort only by wins
+    const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
+    
+    const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
+    const ironMan = sortedByGames[0] || { name: 'N/A', sessionPlayCount: 0 };
+
+    const sortedByStreak = [...squad].sort((a,b) => b.streak - a.streak);
+    const hotHand = sortedByStreak[0] || { name: 'N/A', streak: 0 };
+
+    const eligibleForWR = squad.filter(p => p.games >= 3);
+    const sortedByWR = [...eligibleForWR].sort((a,b) => (b.wins/b.games) - (a.wins/a.games));
+    const sharpShooter = sortedByWR[0] || { name: 'N/A', wins: 0, games: 0 };
+
+    return { 
+        sessionUUID: _generateUUID(), // Unique ID for this recap instance
+        sport,
+        totalGames, 
+        mvp: { name: mvp.name, wins: mvp.wins, games: mvp.games }, 
+        ironMan: { name: ironMan.name, sessionPlayCount: ironMan.sessionPlayCount },
+        hotHand: { name: hotHand.name, streak: hotHand.streak },
+        sharpShooter: { 
+            name: sharpShooter.name, 
+            wr: sharpShooter.games > 0 ? Math.round((sharpShooter.wins / sharpShooter.games) * 100) : 0,
+            squad: squad.map(p => ({ uuid: p.uuid, name: p.name, spiritAnimal: p.spiritAnimal })) // For voting
+        },
+        squad: sortedByWins.slice(0, 10) 
+    };
+}
+
+function _showHostRecap(recap) {
+    document.body.classList.add('session-ended');
+    closeOverlay();
+
+    const sessionMVPVotes = {}; // To store votes for this recap
+    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+
+    const leaderboardHTML = recap.squad.map((p, i) => `
+        <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);">
+            <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
+            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${esc(p.name)}</div>
+            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.wins}W</div>
+        </div>
+    `).join('');
+
+    const content = `
+        <div class="menu-card" style="max-width:440px; width:95%; max-height:90vh; overflow-y:auto; padding:32px 24px; text-align:left;">
+            <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:8px; text-transform:uppercase;">SESSION COMPLETE</div>
+            <h2 style="font-size:2.2rem; margin-bottom:24px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic;">RECAP & RANKINGS</h2>
+            
+            <div id="hostMvpDisplay" style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
+                <div style="font-size:3rem; margin-bottom:10px;">🏆</div>
+                <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
+                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(recap.mvp.name)}</div>
+                <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${recap.mvp.wins} Wins · ${recap.mvp.games} Games</div>
+                <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
+                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border);">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">TOTAL GAMES</div>
+                    <div style="font-family:var(--font-display); font-size:1.8rem; font-weight:900; color:var(--accent);">${recap.totalGames}</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">IRON MAN</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.ironMan.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.ironMan.sessionPlayCount} Games</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">HOT HAND</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.hotHand.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.hotHand.streak} Win Streak</div>
+                </div>
+                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
+                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">SHARP SHOOTER</div>
+                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.sharpShooter.name)}</div>
+                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.sharpShooter.wr}% Win Rate</div>
+                </div>
+            </div>
+
+            <div class="sync-section-label" style="margin-bottom:12px;">FINAL STANDINGS</div>
+            <div style="margin-bottom:24px; background:var(--surface); border-radius:12px; border:1px solid var(--border); padding:0 16px;">
+                ${leaderboardHTML}
+            </div>
+
+            <button class="btn-main" style="width:100%; height:54px; margin-bottom:12px; background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="window.location.reload()">BACK TO MENU</button>
+            <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.4; text-align:center;">Data has been synced to career records. Session logic disconnected.</p>
+        </div>
+    `;
+
+    UIManager.show(content, 'card');
+}
+
+function generateQR() {
+    // Fix: Use unicode-safe encoding so emojis don't crash btoa
+    const json  = JSON.stringify({ squad: StateStore.squad, currentMatches: StateStore.currentMatches });
+    const token = window.btoa(unescape(encodeURIComponent(json)));
+    if (token.length > 2500) {
+        alert('Data is too large for a QR code. Please use the "Copy Sync Token" button instead.');
+        return;
+    }
+    const qrDiv = document.getElementById('qrcode');
+    if (!qrDiv) return;
+    qrDiv.innerHTML = '';
+    const QRCtor = window.QRCodeConstructor || window.QRCode;
+    if (!QRCtor) { console.error('[CourtSide] generateQR: QRCode library not loaded'); return; }
+    new QRCtor(qrDiv, {
+        text:         token,
+        width:        200,
+        height:       200,
+        colorDark:    '#000000',
+        colorLight:   '#ffffff',
+    });
+}
+
+function copySyncToken() {
+    let text = window.currentRoomCode;
+    if (!window.isOnlineSession) {
+        // Fix: Unicode-safe encoding
+        const json = JSON.stringify({ squad: StateStore.squad, currentMatches: StateStore.currentMatches });
+        text = window.btoa(unescape(encodeURIComponent(json)));
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+            .then(() => showSessionToast(window.isOnlineSession ? `📋 Room code copied: ${text}` : '📋 Token copied!'))
+            .catch(() => fallbackCopy(text));
+    } else {
+        if (typeof fallbackCopy === 'function') fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text, msg = '📋 Token copied!') {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showSessionToast(msg);
+    } catch (e) {
+        alert('Could not copy automatically. Please copy the token manually.');
+    }
+    document.body.removeChild(ta);
+}
+
+function _supportSectionHTML() {
+    return `
+        <div style="margin-top: auto; padding-top: 24px;">
+            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
+
+            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">🐛 Report a Bug</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
+                    onclick="openBugReportModal()">
+                    🐛 Report a Bug
+                </button>
+            </div>
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">☕ Support the Dev</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
+                    If Courtside Pro saves you time, consider buying the dev a coffee.
+                </p>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
+                    <div style="text-align:center;">
+                            
+                    </div>
+                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
+                        style="display:inline-flex; align-items:center; gap:8px;
+                               background:#FF5E5B; color:#fff; font-weight:700;
+                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
+                               text-decoration:none; white-space:nowrap;">
+                        ☕ Ko-fi
+                    </a>
+                </div>
+            </div>
+
+            </div>
+        </div>
+    `;
+}
+
+function openBugReportModal() {
+    let modal = document.getElementById('bugReportModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'bugReportModal';
+        modal.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.7);
+            display:flex; align-items:center; justify-content:center;
+            z-index:9999; padding:20px; box-sizing:border-box;
+        `;
+        modal.innerHTML = `
+            <div style="background:var(--surface1,#1e293b); border:1px solid var(--border,#334155);
+                        border-radius:16px; padding:24px; width:100%; max-width:400px;
+                        box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div style="font-weight:700; font-size:1rem; color:#fff;">🐛 Report a Bug</div>
+                    <button onclick="closeBugReportModal()" style="background:none; border:none;
+                            color:var(--text-muted,#94a3b8); font-size:1.2rem; cursor:pointer; padding:4px;">✕</button>
+                </div>
+                <p style="font-size:0.75rem; color:var(--text-muted,#94a3b8); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <textarea id="bugReportModalText"
+                    placeholder="Describe what happened…"
+                    rows="5"
+                    style="width:100%; background:var(--bg2,#0f172a); border:1.5px solid var(--border,#334155);
+                           color:#fff; padding:14px; border-radius:12px; margin-bottom:12px;
+                           outline:none; font-size:14px; font-family:inherit;
+                           resize:vertical; box-sizing:border-box;"
+                ></textarea>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-main" style="flex:1; background:#334155; color:#fff;"
+                        onclick="closeBugReportModal()">Cancel</button>
+                    <button class="btn-main" style="flex:1; background:var(--accent,#38bdf8); color:#000;"
+                        onclick="submitBugReport()">📨 Send Report</button>
+                </div>
+            </div>
+        `;
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) closeBugReportModal();
+        });
+        document.body.appendChild(modal);
+    } else {
+        modal.style.display = 'flex';
+        const ta = document.getElementById('bugReportModalText');
+        if (ta) ta.value = '';
+    }
+}
+
+function closeBugReportModal() {
+    const modal = document.getElementById('bugReportModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function submitBugReport() {
+    const text = (document.getElementById('bugReportModalText')?.value || '').trim();
+    if (!text) {
+        alert('Please describe the bug before sending.');
+        return;
+    }
+    const subject = encodeURIComponent('[Courtside Pro] Bug Report');
+    const body = encodeURIComponent(
+        'Bug Description:\n' + text +
+        '\n\n---\n' +
+        'App version: Courtside Pro\n' +
+        'Time: ' + new Date().toLocaleString() + '\n' +
+        'Squad size: ' + (StateStore.squad?.length ?? 'N/A') + '\n' +
+        'Active courts: ' + (StateStore.get('activeCourts') ?? 'N/A')
+    );
+    window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
+    closeBugReportModal();
+}
+
+function importSyncToken() {
+    const val = document.getElementById('syncInput').value.trim();
+    if (!val) return;
+    try {
+        // Fix: Unicode-safe decoding
+        const json = decodeURIComponent(escape(window.atob(val)));
+        const data = JSON.parse(json);
+        if (!data.squad) throw new Error('Missing squad data');
+                StateStore.setState({ squad: data.squad, currentMatches: data.currentMatches || [] }); // Triggers sync
+        closeOverlay();
+        renderSquad();
+        document.getElementById('matchContainer').innerHTML = '';
+        if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+        checkNextButtonState();
+    } catch (e) {
+        alert('Invalid Sync Token. Please check the data and try again.');
+    }
+}
+
+function eraseAllData() {
+    localStorage.clear();
+    location.reload();
+}
+
+function confirmEraseAllData() {
+    UIManager.confirm({
+        title: 'Wipe All Data?',
+        message: 'This will permanently delete all players, matches, and session history. This action cannot be undone.',
+        confirmText: 'Yes, Wipe Everything',
+        isDestructive: true,
+        onConfirm: eraseAllData
+    });
+}
+
+function updateUndoButton() {
+    const btn = document.getElementById('undoRoundBtn');
+    if (!btn) return;
+    btn.style.display  = StateStore.roundHistory.length > 0 ? 'inline-flex' : 'none';
+}
+
+function undoLastRound() {
+    if (StateStore.roundHistory.length === 0) return;
+    UIManager.confirm({
+        title: 'Undo Round?',
+        message: 'Undo the last round? This will reverse all stat changes.',
+        confirmText: 'Yes, Undo',
+        onConfirm: () => {
+            const snapshot = StateStore.roundHistory.pop();
+            // Restore state from the snapshot using the StateStore
+            StateStore.setState({
+                squad: snapshot.squadSnapshot,
+                currentMatches: snapshot.matches,
+                playerQueue: snapshot.queueSnapshot || StateStore.playerQueue,
+            });
+            renderSquad();
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
+            updateUndoButton();
+            checkNextButtonState();
+            Haptic.bump();
+
+            // SYNC FIX: Immediately broadcast the undone state so players 
+            // see their form revert without delay.
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+
+            showSessionToast('↩ Last round undone');
+        }
+    });
+}
+
+/** Calculates a weighted skill index for sorting players. */
+function getSkillIndex(p) {
+    if (!p || p.games === 0) return 0;
+    const winRate = p.wins / p.games;
+    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
+    return (winRate * 100) + (p.wins * 2);
+}
+
+function renderStatsTab(tab) {
+    // UX FIX: Always fetch the latest passport data to ensure career stats 
+    // are up-to-date in the UI after a game ends.
+    if (typeof Passport !== 'undefined') passport = Passport.get();
+
+    const content = document.getElementById('overlayContent');
+
+    const tabs = `
+        <div class="stats-tabs">
+            <button class="stats-tab ${tab === 'performance' ? 'active' : ''}" 
+                onclick="renderStatsTab('performance')">Leaderboard</button>
+            <button class="stats-tab ${tab === 'history' ? 'active' : ''}" 
+                onclick="renderStatsTab('history')">History</button>
+            <button class="stats-tab ${tab === 'hall-of-fame' ? 'active' : ''}" 
+                onclick="renderStatsTab('hall-of-fame')">Hall of Fame</button>
+            <button class="stats-tab ${tab === 'profile' ? 'active' : ''}" 
+                onclick="renderStatsTab('profile')">My Profile</button>
+        </div>
+    `;
+
+    if (tab === 'performance') {
+        const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins || a.name.localeCompare(b.name));
+        const topCount = 3; // Podium layout expects exactly 3 players
+        const peakPerformers = sorted.slice(0, topCount);
+        const activeRoster   = sorted.slice(topCount);
+        const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+
+        const getRankIconClass = (rank) => {
+            if (rank === 1) return 'gold';
+            if (rank === 2) return 'silver';
+            if (rank === 3) return 'bronze';
+            return '';
+        };
+
+        const renderPlayerCard = (p, rank, isPeak = false) => {
+            const sqIdx = StateStore.squad.indexOf(p);
+            const wr = winRate(p);
+            const rankClass = `rank-${rank}`;
+
+            let rankIconHTML = '';
+            if (!isPeak) { // Only for active roster
+                const iconClass = getRankIconClass(rank);
+                if (iconClass) {
+                    rankIconHTML = `<div class="rank-icon ${iconClass}">${rank}</div>`;
+                } else {
+                    rankIconHTML = `<div class="rank-icon" style="background:var(--bg2); border:1px solid var(--border); color:var(--text-muted);">${rank}</div>`;
+                }
+            }
+
+            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' <span class="fire-emoji">🔥</span>' : ''}</div>`;
+            const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
+            const progressBarHTML = `
+                <div class="win-rate-progress">
+                    <div class="win-rate-progress-fill" style="width:${wr}%"></div>
+                </div>
+            `;
+
+            if (isPeak) {
+                return `
+                    <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); opacity: 0.6; margin-bottom:8px;">#${rank}</div>
+                        ${nameHTML}
+                        ${metaHTML}
+                        ${progressBarHTML}
+                    </div>`;
+            } else {
+                return `
+                    <div class="stats-card active-roster" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        ${rankIconHTML}
+                        ${nameHTML}
+                        ${metaHTML}
+                    </div>`;
+            }
+        };
+
+        let peakPerformersHTML = '';
+        if (peakPerformers.length > 0) {
+            peakPerformersHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">PEAK PERFORMERS</div>
+                    <div class="stats-grid peak-performers-grid">
+                        ${peakPerformers.map((p, i) => renderPlayerCard(p, i + 1, true)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        let activeRosterHTML = '';
+        if (activeRoster.length > 0) {
+            activeRosterHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">ACTIVE ROSTER</div>
+                    <div class="stats-grid">
+                        ${activeRoster.map((p, i) => renderPlayerCard(p, i + 4, false)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        content.innerHTML = tabs + peakPerformersHTML + activeRosterHTML;
+
+    } else if (tab === 'profile') {
+        const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
+        
+        // 1. Identity Header
+        const { title, icon } = me ? getPlayerTitle(me) : { title: 'Spectator', icon: '👀' };
+        const avatarColor = Avatar.color(passport.playerName);
+        const avatarInitial = (passport.playerName || '?').charAt(0).toUpperCase();
+        
+        const headerHTML = `
+            <div class="sl-profile-card">
+                <div class="sl-profile-top-right">
+                    <button class="sl-icon-btn" onclick="passportRename()" title="Edit Name">✏️</button>
+                </div>
+                <div class="sl-profile-avatar-large" style="background:${avatarColor}">
+                    ${avatarInitial}
+                    ${me && me.streak >= 3 ? `<div class="sl-streak-ring"></div>` : ''}
+                </div>
+                <div class="sl-profile-name-large">${escapeHTML(passport.playerName)}</div>
+                <div class="sl-profile-title-badge">
+                    <span>${icon}</span>
+                    <span>${title}</span>
+                </div>
+            </div>`;
+
+        // 2. Stats Deck
+        const career = passport.stats || { wins: 0, games: 0 };
+        const cWins  = career.wins || 0;
+        const cGames = career.games || 0;
+        const cWr    = cGames > 0 ? Math.round((cWins / cGames) * 100) : 0;
+        
+        let sWins = 0, sGames = 0, sWr = 0;
+        if (me) {
+            sWins = me.wins;
+            sGames = me.games;
+            sWr = sGames > 0 ? Math.round((sWins / sGames) * 100) : 0;
+        }
+
+        const statsHTML = `
+            <div class="sl-stats-deck">
+                <div class="sl-stat-card ${!me ? 'inactive' : ''}">
+                    <div class="sl-card-label">CURRENT SESSION</div>
+                    ${me ? `
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${sWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>` : `<div class="sl-card-empty">Not in squad</div>`}
+                </div>
+                <div class="sl-stat-card">
+                    <div class="sl-card-label">CAREER RECORD</div>
+                    <div class="sl-card-grid">
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWins}</div>
+                            <div class="sl-card-key">WINS</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cGames}</div>
+                            <div class="sl-card-key">GAMES</div>
+                        </div>
+                        <div class="sl-card-item">
+                            <div class="sl-card-val">${cWr}%</div>
+                            <div class="sl-card-key">WIN RATE</div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+        // Form & Analytics (New Section)
+        let analyticsHTML = '';
+        if (me) {
+            // Rival Logic
+            let rivalName = 'None yet';
+            let rivalCount = 0;
+            if (me.opponentHistory) {
+                const rivals = Object.entries(me.opponentHistory).sort(([,a], [,b]) => b - a);
+                if (rivals.length > 0) {
+                    const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
+                    rivalName = rivalP ? rivalP.name : 'Unknown';
+                    rivalCount = rivals[0][1];
+                }
+            }
+
+            // Form Logic
+            const formHTML = (me.form || []).map(r => 
+                `<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:${r==='W'?'var(--accent)':'#ef4444'}; color:${r==='W'?'#000':'#fff'}; font-size:0.6rem; font-weight:800; text-align:center; line-height:20px; margin:0 2px;">${r}</span>`
+            ).join('');
+
+            analyticsHTML = `
+                <div class="sl-section-label" style="margin-top:24px;">📊 ANALYTICS</div>
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:6px; letter-spacing:1px;">RECENT FORM</div>
+                        <div>${formHTML || '<span style="color:var(--text-muted); font-size:0.8rem;">-</span>'}</div>
+                    </div>
+                    <div style="width:1px; height:30px; background:var(--border);"></div>
+                    <div style="text-align:center; flex:1;">
+                        <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px; letter-spacing:1px;">BIGGEST RIVAL</div>
+                        <div style="font-size:0.9rem; font-weight:700;">${escapeHTML(rivalName)}</div>
+                        <div style="font-size:0.65rem; color:var(--text-muted);">${rivalCount} games</div>
+                    </div>
+                </div>`;
+        }
+
+        // 3. Chemistry
+        let chemHTML = '';
+        if (me && me.partnerStats && Object.keys(me.partnerStats).length > 0) {
+            const partners = Object.entries(me.partnerStats);
+            partners.sort(([, a], [, b]) => {
+                if (b.wins !== a.wins) return b.wins - a.wins;
+                return b.games - a.games;
+            });
+            const best = partners[0];
+            if (best) {
+                const [uuid, stats] = best;
+                const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
+                const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+                chemHTML = `
+                    <div class="sl-section-label" style="margin-top:24px;">🤝 PARTNER CHEMISTRY</div>
+                    <div class="sl-chem-card">
+                        <div class="sl-chem-details">
+                            <div class="sl-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
+                            <div class="sl-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                        </div>
+                    </div>`;
+            }
+        }
+
+        // 4. Achievements
+        let achHTML = '';
+        if (window.Achievements) {
+            const sessionAch = me ? (me.achievements || []) : [];
+            const allTimeAch = passport.achievements || [];
+            const myAch = [...new Set([...sessionAch, ...allTimeAch])];
+            const list = Object.keys(window.Achievements).map(key => {
+                const data = window.getAchievementDisplay(key, myAch);
+                const unlocked = data.unlocked;
+                return `
+                    <div class="sl-ach-item ${unlocked ? 'unlocked' : 'locked'}" style="${unlocked ? `border-left: 3px solid ${data.color}` : ''}">
+                        <div class="sl-ach-icon">${data.icon}</div>
+                        <div class="sl-ach-text">
+                            <div class="sl-ach-title">${data.name}</div>
+                            <div class="sl-ach-desc">${data.description}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            achHTML = `<div class="sl-achievements-list" style="margin-top:20px;">${list}</div>`;
+        }
+
+        content.innerHTML = tabs + headerHTML + statsHTML + analyticsHTML + chemHTML + achHTML;
+
+    } else if (tab === 'hall-of-fame') {
+        const period = window._lbPeriod || 'all';
+        const subTabs = `
+            <div style="display:flex; gap:8px; margin-bottom:16px;">
+                <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
+                <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
+            </div>`;
+
+        content.innerHTML = tabs + subTabs + `
+            <div class="sl-searching" style="margin-top:20px;">
+                <div class="sl-searching-spinner"></div>
+                <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
+            </div>`;
+
+        fetch('/api/leaderboard-get' + (period === 'weekly' ? '?period=weekly' : ''))
+            .then(res => res.json())
+            .then(data => {
+                // Guard: only render if user is still on the hall-of-fame tab
+                if (!document.querySelector('.stats-tab.active')?.textContent.toLowerCase().includes('hall')) return;
+                
+                const players = data.players || [];
+
+                // COMMUNITY SORT: Prioritize Connections > Trophies > Volume
+                players.sort((a, b) => {
+                    // Support both snake_case (DB) and camelCase (Internal)
+                    const connA = Object.keys(a.partner_stats || a.partnerStats || {}).length;
+                    const connB = Object.keys(b.partner_stats || b.partnerStats || {}).length;
+                    if (connB !== connA) return connB - connA; // Most unique partners first
+
+                    const trophyA = (a.achievements || []).length;
+                    const trophyB = (b.achievements || []).length;
+                    if (trophyB !== trophyA) return trophyB - trophyA;
+
+                    const gamesA = a.total_games ?? a.totalGames ?? a.games ?? 0;
+                    const gamesB = b.total_games ?? b.totalGames ?? b.games ?? 0;
+                    return gamesB - gamesA;
+                });
+
+                const html = players.map((p, i) => {
+                    const connections = Object.keys(p.partner_stats || p.partnerStats || {}).length;
+                    return `
+                    <div class="stats-card" style="display:flex; align-items:center; gap:12px; padding: 12px 16px;">
+                        <div style="font-family:var(--font-display); font-size:1rem; font-weight:900; color:var(--text-muted); width:24px;">${i+1}</div>
+                        <div style="flex:1;">
+                            <div class="stats-name" style="margin-bottom:2px;">${escapeHTML(p.player_name || p.name || 'Unknown')}</div>
+                            <div class="stats-meta">${connections} Connections · ${p.total_games ?? p.totalGames ?? p.games ?? 0} Games</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--accent);">👑 ${connections}</div>
+                            <div style="font-size:0.5rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">INFLUENCE</div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                content.innerHTML = tabs + subTabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
+            })
+            .catch(() => {
+                content.innerHTML = tabs + subTabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
+            });
+
+    } else if (tab === 'history') {
+        if (StateStore.roundHistory.length === 0) {
+            content.innerHTML = tabs + `
+                <div style="text-align:center; padding:40px 0; color:var(--text-muted); font-size:0.85rem;">
+                    No rounds played yet this session.
+                </div>`;
+            return;
+        }
+
+        const rounds = [...StateStore.roundHistory].reverse().map((round, i) => {
+            const roundNum = StateStore.roundHistory.length - i;
+            
+            let timeHtml = '';
+            if (round.timestamp) {
+                const t = new Date(round.timestamp);
+                const timeStr = t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                timeHtml = `<div style="font-size:0.65rem; color:var(--text-muted); margin-left:auto;">${timeStr}</div>`;
+            }
+
+            const games = (round.matches || []).map((m, gi) => {
+                const winIdx  = m.winnerTeamIndex;
+                if (winIdx === null || winIdx === undefined) return '';
+                const loseIdx = winIdx === 0 ? 1 : 0;
+
+                const squadLookup = round.squadSnapshot || [];
+                const getName = (id) => {
+                    let p = squadLookup.find(s => s.uuid === id || s.name === id);
+                    // Fallback to current squad if lookup in snapshot fails (e.g. legacy data or host refresh)
+                    if (!p) p = StateStore.squad.find(s => s.uuid === id || s.name === id);
+                    return p ? p.name : id;
+                };
+
+                const winners = (m.teams[winIdx] || []).map(getName).join(' & ') || '?';
+                const losers  = (m.teams[loseIdx] || []).map(getName).join(' & ') || '?';
+
+                const durationMs = (m.endedAt && m.startedAt) ? m.endedAt - m.startedAt : 0;
+                const durMin = Math.floor(durationMs / 60000);
+                const durSec = Math.floor((durationMs % 60000) / 1000);
+                const durStr = durationMs > 0 ? `<span style="opacity:0.5; margin-left:6px; font-size:0.6rem;">⏱ ${durMin}:${durSec.toString().padStart(2, '0')}</span>` : '';
+
+                return `
+                    <div class="history-game">
+                        <div class="history-game-label">Game ${gi + 1}</div>
+                        <div class="history-matchup">
+                            <span class="history-winner">${escapeHTML(winners)}</span>
+                            <span class="history-vs">def.</span>
+                            <span class="history-loser">${escapeHTML(losers)}</span>${durStr}
+                        </div>
+                        ${timeHtml}
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="history-round" style="animation-delay: ${i * 0.05}s">
+                    <div class="history-round-label">Round ${roundNum}</div>
+                    ${games}
+                </div>
+            `;
+        }).join('');
+
+        const searchBar = `
+            <div style="margin-bottom: 12px; position: relative;">
+                <input type="text" id="histSearchInput" placeholder="Search history..." 
+                    style="width:100%; padding-right: 32px;"
+                    oninput="window.filterHistory(this.value)">
+                <button id="histSearchClear" onclick="window.clearHistorySearch()" 
+                    style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1rem; padding: 8px;">
+                    ✕
+                </button>
+            </div>`;
+
+        content.innerHTML = tabs + searchBar + `<div class="history-list">${rounds}</div>`;
+    }
+}
+
+window.filterHistory = function(query) {
+    const term = query.toLowerCase().trim();
+    
+    const clearBtn = document.getElementById('histSearchClear');
+    if (clearBtn) clearBtn.style.display = term ? 'block' : 'none';
+
+    const rounds = document.querySelectorAll('.history-round');
+    rounds.forEach(round => {
+        const games = round.querySelectorAll('.history-game');
+        let roundVisible = false;
+        games.forEach(game => {
+            const match = !term || game.textContent.toLowerCase().includes(term);
+            game.style.display = match ? 'flex' : 'none';
+            if (match) roundVisible = true;
+        });
+        round.style.display = roundVisible ? 'block' : 'none';
+    });
+};
+
+window.clearHistorySearch = function() {
+    const input = document.getElementById('histSearchInput');
+    if (input) {
+        input.value = '';
+        window.filterHistory('');
+        input.focus();
+    }
+};
+
+// ---------------------------------------------------------------------------
+// PLAYER CARDS
+// ---------------------------------------------------------------------------
+
+function getPlayerTitle(p) {
+    const wr = p.games > 0 ? p.wins / p.games : 0;
+
+    if (p.streak >= 5)              return { title: 'On Fire',       icon: '🔥' };
+    if (p.streak >= 3)              return { title: 'Hot Hand',      icon: '⚡' };
+    if (p.games === 0)              return { title: 'Fresh Blood',   icon: '🌱' };
+    if (p.games >= 10 && wr >= 0.7) return { title: 'The Closer',    icon: '🎯' };
+    if (p.games >= 10 && wr >= 0.6) return { title: 'Sharp Shooter', icon: '🏹' };
+    if (p.games >= 8)               return { title: 'Iron Man',      icon: '💪' };
+    if (wr >= 0.6 && p.games >= 5)  return { title: 'Rising Star',   icon: '⭐' };
+    if (wr <= 0.35 && p.games >= 5) return { title: 'Never Quits',   icon: '🛡️' };
+    if (p.wins === 0 && p.games > 0)return { title: 'The Underdog',  icon: '🐉' };
+    if (p.games >= 6 && wr >= 0.45) return { title: 'Steady Eddie',  icon: '🤝' };
+    if (p.sessionPlayCount >= 5)    return { title: 'Always Ready',  icon: '🏃' };
+    if (p.streak === 0 && p.games > 3) return { title: 'The Wildcard', icon: '🎲' };
+    return { title: 'The Veteran', icon: '🏅' };
+}
+
+async function openPlayerCard(idx) {
+    const p  = StateStore.squad[idx];
+    if (!p) return;
+
+    const { title, icon } = getPlayerTitle(p);
+    const wr  = p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
+    const bg  = Avatar.color(p.name);
+    const ini = Avatar.initials(p.name);
+
+    // Calculate Form HTML
+    const formHTML = (p.form || []).map(r => 
+        `<span style="display:inline-block; width:18px; height:18px; border-radius:50%; background:${r==='W'?'var(--accent)':'rgba(239,68,68,0.2)'}; color:${r==='W'?'#000':'#ef4444'}; font-size:0.55rem; font-weight:800; text-align:center; line-height:18px; margin:0 2px;">${r}</span>`
+    ).join('');
+
+    // Calculate Rival
+    let rival = '—';
+    if (p.opponentHistory) {
+        const rivals = Object.entries(p.opponentHistory).sort(([,a], [,b]) => b - a);
+        if (rivals.length) {
+            const rivalP = StateStore.squad.find(s => (s.uuid || s.name) === rivals[0][0]);
+            rival = `${rivalP ? rivalP.name : 'Unknown'} (${rivals[0][1]}g)`;
+        }
+    }
+
+    // Calculate Partner Chemistry
+    let chemistryHTML = '';
+    if (p.partnerStats && Object.keys(p.partnerStats).length > 0) {
+        const partners = Object.entries(p.partnerStats);
+        // Sort by wins, then by games played
+        partners.sort(([, a], [, b]) => {
+            if (b.wins !== a.wins) return b.wins - a.wins;
+            return b.games - a.games;
+        });
+        const best = partners[0];
+        if (best) {
+            const [uuid, stats] = best;
+            const partnerP = StateStore.squad.find(s => (s.uuid || s.name) === uuid);
+            const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
+            chemistryHTML = `
+                <div class="pc-section-title" style="margin-top:24px;">Partner Chemistry</div>
+                <div class="pc-chemistry-card">
+                    <div class="pc-chem-icon">🤝</div>
+                    <div class="pc-chem-details">
+                        <div class="pc-chem-name">Best with: <strong>${escapeHTML(partnerP ? partnerP.name : 'Unknown')}</strong></div>
+                        <div class="pc-chem-stats">${stats.wins}W - ${stats.games - stats.wins}L (${wr}%)</div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    document.getElementById('playerCardContent').innerHTML = `
+        <div class="pc-avatar-wrap">
+            <div class="pc-avatar" style="background:${bg}; font-style: ${p.spiritAnimal ? 'normal' : 'italic'};">${p.spiritAnimal || ini}</div>
+            ${p.streak >= 3 ? '<div class="pc-streak-ring"></div>' : ''}
+        </div>
+        <div class="pc-title-badge">
+            <span class="pc-title-icon">${icon}</span>
+            <span class="pc-title-text">${title}</span>
+        </div>
+        <div class="pc-name">${escapeHTML(p.name)}</div>
+        <div class="pc-stats-row">
+            <div class="pc-stat">
+                <div class="pc-stat-val">${p.wins}</div>
+                <div class="pc-stat-label">Wins</div>
+            </div>
+            <div class="pc-stat-divider"></div>
+            <div class="pc-stat">
+                <div class="pc-stat-val">${p.games}</div>
+                <div class="pc-stat-label">Games</div>
+            </div>
+            <div class="pc-stat-divider"></div>
+            <div class-stat">
+                <div class="pc-stat-val">${wr}%</div>
+                <div class="pc-stat-label">Win Rate</div>
+            </div>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:16px; padding:0 10px;">
+            <div style="text-align:left;">
+                <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px;">FORM</div>
+                <div>${formHTML || '<span style="opacity:0.5; font-size:0.8rem;">-</span>'}</div>
+            </div>
+            <div style="text-align:right;">
+                <div style="font-size:0.6rem; color:var(--text-muted); font-weight:700; margin-bottom:4px;">RIVAL</div>
+                <div style="font-size:0.85rem; font-weight:600;">${escapeHTML(rival)}</div>
+            </div>
+        </div>
+        ${p.streak > 0 ? `<div class="pc-streak">🔥 ${p.streak} game win streak</div>` : ''}
+        ${chemistryHTML}
+        <div id="pc-achievements-container"></div>
+    `;
+
+    document.getElementById('playerCardModal').style.display = 'flex';
+    Haptic.bump();
+
+    // Render achievements directly from local squad data
+    const achievementsContainer = document.getElementById('pc-achievements-container');
+    if (achievementsContainer) {
+        if (window.Achievements) {
+            const allAchHTML = Object.keys(window.Achievements).map(key => {
+                const data = window.getAchievementDisplay(key, p.achievements);
+                const isUnlocked = data.unlocked;
+                return `
+                    <div class="pc-achievement-badge ${isUnlocked ? 'unlocked' : 'locked'}" 
+                         style="${isUnlocked ? `border-color:${data.color}; box-shadow: 0 0 10px ${data.color}44; color:${data.color}` : ''}"
+                         title="${data.name}: ${data.description}"
+                         onmousedown="startAchPress('${key}', '${p.uuid || p.name}')" onmouseup="endAchPress()"
+                         ontouchstart="startAchPress('${key}', '${p.uuid || p.name}')" ontouchend="endAchPress()"
+                         oncontextmenu="event.preventDefault(); return false;">
+                        ${data.icon}
+                    </div>
+                `;
+            }).join('');
+
+            achievementsContainer.innerHTML = `
+                <div class="pc-section-title">Achievements</div>
+                <div class="pc-achievements-grid">${allAchHTML}</div>
+            `;
+        }
+    }
+}
+
+window.openPlayerCard = openPlayerCard;
+
+function closePlayerCard() {
+    document.getElementById('playerCardModal').style.display = 'none';
+}
+
+/**
+ * Generates a beautiful recovery card image for the player to save.
+ */
+async function generateRecoveryCard() {
+    const p = Passport.get();
+    if (!p) return;
+
+    if (window.Haptic) Haptic.tap();
+    if (typeof showSessionToast === 'function') showSessionToast('🎨 Generating Card...');
+
+    if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
+    const avatarColor = Avatar.color(p.playerName);
+    const emoji = p.spiritAnimal || '🐾';
+
+    // Create an off-screen high-quality card
+    const card = document.createElement('div');
+    card.style.cssText = `
+        position: fixed; left: -9999px; top: -9999px; width: 400px; padding: 40px;
+        background: #0a0a0f; color: #f0f0f5; font-family: sans-serif;
+        border-radius: 24px; text-align: center; border: 2px solid #00ffa3;
+    `;
+
+    card.innerHTML = `
+        <div style="font-size: 0.65rem; letter-spacing: 4px; color: #00ffa3; margin-bottom: 24px; font-weight: 900; text-transform: uppercase;">COURTSIDE PRO RECOVERY CARD</div>
+        
+        <div style="width: 100px; height: 100px; border-radius: 50%; background: ${avatarColor}; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; font-size: 3rem; border: 4px solid #0a0a0f; box-shadow: 0 0 0 2px #00ffa3;">
+            ${p.spiritAnimal || (p.playerName || '?').charAt(0).toUpperCase()}
+        </div>
+        
+        <div style="font-size: 2.2rem; font-weight: 900; font-style: italic; text-transform: uppercase; margin-bottom: 8px;">${escapeHTML(p.playerName)}</div>
+        <div style="display: inline-block; font-size: 0.7rem; font-weight: 800; letter-spacing: 2px; color: #00ffa3; background: rgba(0, 255, 163, 0.15); padding: 4px 14px; border-radius: 20px; border: 1px solid rgba(0, 255, 163, 0.25); margin-bottom: 30px;">${emoji} ATHLETE</div>
+        
+        <div style="background: #111118; border: 1px solid rgba(255,255,255,0.07); border-radius: 16px; padding: 24px; margin-bottom: 20px;">
+            <div style="font-size: 0.55rem; color: #6b6b80; letter-spacing: 1.5px; margin-bottom: 10px; font-weight: 800; text-transform: uppercase;">YOUR PRIVATE RECOVERY KEY</div>
+            <div style="font-family: monospace; font-size: 0.8rem; color: #00ffa3; word-break: break-all; line-height: 1.5; background: #000; padding: 12px; border-radius: 8px;">${p.playerUUID}</div>
+        </div>
+        
+        <div style="font-size: 0.65rem; color: #6b6b80; line-height: 1.6; max-width: 280px; margin: 0 auto;">Keep this key safe. Use it to restore your career trophies and statistics if you switch phones or clear your data.</div>
+        
+        <div style="margin-top: 40px; font-size: 0.55rem; color: rgba(0, 255, 163, 0.4); letter-spacing: 2px; font-weight: 700; text-transform: uppercase;">thecourtsidepro.vercel.app</div>
+    `;
+
+    document.body.appendChild(card);
+
+    try {
+        const canvas = await html2canvas(card, {
+            backgroundColor: '#0a0a0f',
+            scale: 2,
+            useCORS: true,
+            logging: false,
+        });
+
+        canvas.toBlob(async (blob) => {
+            const url = URL.createObjectURL(blob);
+            const fileName = `Courtside-Recovery-${p.playerName.replace(/\s+/g, '-')}.png`;
+            
+            // Use Native Share if available (Mobile optimization)
+            const file = new File([blob], fileName, { type: 'image/png' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({ files: [file], title: 'Courtside Pro Recovery Key' });
+                } catch (e) { if (e.name !== 'AbortError') console.error(e); }
+            } else {
+                // Fallback to traditional download
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                a.click();
+                if (typeof showSessionToast === 'function') showSessionToast('✅ Card Downloaded');
+            }
+
+            if (window.Haptic) Haptic.success();
+        }, 'image/png');
+    } catch (e) { console.error(e); }
+    finally { document.body.removeChild(card); }
+}
+
+async function sharePlayerCard() {
+    const card = document.querySelector('.player-card');
+    if (!card) return;
+
+    if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
+    try {
+        const canvas = await html2canvas(card, {
+            backgroundColor: '#0a0a0f',
+            scale: 2,
+            useCORS: true,
+            logging: false,
+        });
+
+        canvas.toBlob(async (blob) => {
+            const file = new File([blob], 'courtside-player-card.png', { type: 'image/png' });
+            if (navigator.share && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                    title:  'The Court Side',
+                    text:   'Check out this player card!',
+                    files:  [file],
+                });
+            } else {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'courtside-player-card.png';
+                a.click();
+            }
+        }, 'image/png');
+    } catch (e) {
+        console.error('Share failed:', e);
+    }
+    Haptic.success();
+}
+
+async function shareAuraPoster(matchIdx) {
+    const m = StateStore.currentMatches[matchIdx];
+    if (!m) return;
+    
+    const getName = (id) => {
+        return (typeof findP === 'function') ? (findP(id)?.name || id) : id;
+    };
+
+    if (typeof generateShareableImage === 'function') {
+        generateShareableImage({
+            teamA: (m.teams[0] || []).map(getName).join(' & '),
+            teamB: (m.teams[1] || []).map(getName).join(' & '),
+            title: 'LIVE NOW'
+        }).catch(e => {
+            console.error('Aura poster failed:', e);
+            showSessionToast('Could not generate poster');
+        });
+    } else {
+        console.error('generateShareableImage function not found.');
+        showSessionToast('Share function is unavailable.');
+    }
+}
+
+let playRequests = [];
+window.playRequests = playRequests;
+
+function _iwtpShow(id) {
+    ['iwtpChoiceView','iwtpNewPlayerView','iwtpExistingView','iwtpSpectatorView'].forEach(v => {
+        const el = document.getElementById(v);
+        if (el) el.style.display = v === id ? 'block' : 'none';
+    });
+}
+
+function showIWTPChoice() { _iwtpShow('iwtpChoiceView'); }
+
+function showIWTPNewPlayer() {
+    _iwtpShow('iwtpNewPlayerView');
+    Haptic.tap();
+    setTimeout(() => document.getElementById('iwtpNameInput')?.focus(), 120);
+}
+
+function showIWTPExisting() {
+    _iwtpShow('iwtpExistingView');
+    Haptic.tap();
+    const list = document.getElementById('iwtpPlayerList');
+    if (!list) return;
+    // Use window.squad for player-side logic, as StateStore is for the host.
+    const currentSquad = window.squad || [];
+    if (currentSquad.length === 0) {
+        list.innerHTML = `<p class="iwtp-empty">No players yet.<br>Ask the host to add players first.</p>`;
+        return;
+    }
+    list.innerHTML = currentSquad.map(p => `
+        <button class="iwtp-player-chip" onclick="confirmSpectateAs('${escapeHTML(p.name)}')">
+            ${Avatar.html(p.name, p.spiritAnimal)}
+            <span>${escapeHTML(p.name)}</span>
+        </button>
+    `).join('');
+}
+
+function confirmSpectateAs(name) {
+    localStorage.setItem('cs_spectator_name', name);
+    document.getElementById('iwtpSpectatorName').textContent    = name.toUpperCase();
+    const subEl = document.getElementById('iwtpSpectatorSubtitle');
+    if (subEl) subEl.textContent = 'Live view — read only';
+    _iwtpShow('iwtpSpectatorView');
+    document.body.classList.add('spectator-mode');
+    if (window.Haptic) Haptic.success();
+    if (typeof showSessionToast === 'function') showSessionToast(`👁 Watching as ${name}`);
+}
+// ---------------------------------------------------------------------------
+
 function joinManualCode() {
     const input = document.getElementById('manualRoomCodeInput');
     const raw = input?.value?.trim();
