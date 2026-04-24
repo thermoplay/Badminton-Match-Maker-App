@@ -1608,8 +1608,8 @@ function renderStatsTab(tab) {
     if (tab === 'performance') {
         const sorted   = [...StateStore.squad].sort((a, b) => getSkillIndex(b) - getSkillIndex(a) || b.wins - a.wins);
         const topCount = Math.max(1, Math.ceil(StateStore.squad.length * 0.3));
-        const peak     = sorted.slice(0, topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
-        const active   = sorted.slice(topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
+        const peakPerformers = sorted.slice(0, topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
+        const activeRoster   = sorted.slice(topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
         const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
 
         const getRankIconClass = (rank) => {
