@@ -393,8 +393,12 @@ async function createOnlineSession() {
         localStorage.setItem('cs_op_key_hash',  operatorKeyHash);
         sbManager.connect(roomCode);
         updateSessionUI();
-        closeOverlay();
-        showSessionToast(`🌐 Live! Room: ${roomCode}`);
+            window.showLiveSuccessModal(roomCode);
+        } else {
+            if (typeof closeOverlay === 'function') closeOverlay();
+            showSessionToast(`🌐 Live! Room: ${roomCode}`);
+        }
+
         Haptic.success();
         _updatePlayerCount();
     } catch (e) {

@@ -550,6 +550,7 @@ window.setCourts               = setCourts;
 window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
 window.openTournamentMode      = openTournamentMode;
 window.igniteWarRoomLive       = igniteWarRoomLive;
+window.showLiveSuccessModal    = showLiveSuccessModal;
 window.advanceTournamentTeam   = advanceTournamentTeam;
 window.editTournamentName      = editTournamentName;
 window.addTournamentGuest      = addTournamentGuest;
@@ -3816,6 +3817,56 @@ function showLandingPage() {
             </div>
         </div>
     `;
+}
+/**
+ * Displays a high-fidelity success modal after the host goes live.
+ * Features the Room Code and a scannable QR code for easy sharing.
+ */
+function showLiveSuccessModal(code) {
+    // Close any background overlays (like the sync settings menu)
+    if (typeof closeOverlay === 'function') closeOverlay();
+
+    const content = `
+        <div class="menu-card" style="padding:32px 24px; text-align:center; max-width:380px;">
+            <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:8px; text-transform:uppercase;">BROADCAST ACTIVE</div>
+            <h2 style="font-size:2.8rem; margin-bottom:12px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic; color:#fff;">LIVE NOW</h2>
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:24px; line-height:1.4;">Spectators and players can now join using the credentials below.</p>
+
+            <div style="background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:20px; margin-bottom:24px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);">
+                 <div style="font-size:0.55rem; color:var(--text-muted); letter-spacing:2px; margin-bottom:6px; font-weight:800; text-transform:uppercase;">ROOM CODE</div>
+                 <div style="font-family:var(--font-display); font-size:2.6rem; font-weight:900; font-style:italic; color:var(--accent); letter-spacing:4px; line-height:1; text-shadow:0 0 20px var(--accent-glow);">${code}</div>
+            </div>
+
+            <div style="background:#fff; padding:12px; border-radius:16px; width:fit-content; margin:0 auto 24px; box-shadow:0 10px 40px rgba(0,255,163,0.15);">
+                <div id="liveSuccessQR" style="display:flex; justify-content:center;"></div>
+            </div>
+
+            <button class="btn-main" style="width:100%; height:56px; box-shadow:0 0 30px var(--accent-dim);" onclick="UIManager.hide()">
+                READY TO PLAY
+            </button>
+        </div>
+    `;
+
+    UIManager.show(content, 'card');
+
+    // Generate the QR code within the success modal
+    setTimeout(() => {
+        const qrDiv = document.getElementById('liveSuccessQR');
+        if (qrDiv) {
+            const joinUrl = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
+            const QRCtor = window.QRCodeConstructor || window.QRCode;
+            if (QRCtor) {
+                qrDiv.innerHTML = '';
+                new QRCtor(qrDiv, {
+                    text: joinUrl,
+                    width: 180,
+                    height: 180,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff'
+                });
+            }
+        }
+    }, 50);
 }
 
 function goToMainMenu() {
