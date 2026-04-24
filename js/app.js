@@ -3831,7 +3831,6 @@ function goToMainMenu() {
         showLandingPage();
     }
 }
-window.confirmGoToMainMenu = confirmGoToMainMenu;
 
 window.closeLandingPage = function() {
     const el = document.getElementById('landingPage');
