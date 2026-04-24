@@ -1612,25 +1612,79 @@ function renderStatsTab(tab) {
         const active   = sorted.slice(topCount).sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
         const winRate  = p => p.games > 0 ? Math.round((p.wins / p.games) * 100) : 0;
 
-        const renderGroup = (label, list) => {
-            if (list.length === 0) return '';
-            const cards = list.map((p, i) => {
-                const sqIdx = StateStore.squad.indexOf(p);
-                return `
-                <div class="stats-card" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
-                    <div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' 🔥' : ''}</div>
-                    <div class="stats-meta">${p.wins}W · ${p.games}G · ${winRate(p)}% WR</div>
-                </div>`;
-            }).join('');
-            return `
-                <div class="stats-group">
-                    <div class="stats-header">${label}</div>
-                    <div class="stats-grid">${cards}</div>
-                </div>
-            `;
+        const getRankIconClass = (rank) => {
+            if (rank === 1) return 'gold';
+            if (rank === 2) return 'silver';
+            if (rank === 3) return 'bronze';
+            return '';
         };
 
-        content.innerHTML = tabs + renderGroup('Peak Performers', peak) + renderGroup('Active Roster', active);
+        const renderPlayerCard = (p, rank, isPeak = false) => {
+            const sqIdx = StateStore.squad.indexOf(p);
+            const wr = winRate(p);
+            const rankClass = `rank-${rank}`;
+
+            let rankIconHTML = '';
+            if (!isPeak) { // Only for active roster
+                const iconClass = getRankIconClass(rank);
+                if (iconClass) {
+                    rankIconHTML = `<div class="rank-icon ${iconClass}">${rank}</div>`;
+                } else {
+                    rankIconHTML = `<div class="rank-icon" style="background:var(--bg2); border:1px solid var(--border); color:var(--text-muted);">${rank}</div>`;
+                }
+            }
+
+            const nameHTML = `<div class="stats-name">${escapeHTML(p.name)}${p.streak >= 3 ? ' 🔥' : ''}</div>`;
+            const metaHTML = `<div class="stats-meta">${p.wins}W · ${p.games}G · ${wr}% WR</div>`;
+            const progressBarHTML = `
+                <div class="win-rate-progress">
+                    <div class="win-rate-progress-fill" style="width:${wr}%"></div>
+                </div>
+            `;
+
+            if (isPeak) {
+                return `
+                    <div class="stats-card peak-performer ${rankClass}" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        <div style="font-family:var(--font-display); font-size:1.2rem; font-weight:900; color:var(--text-muted); margin-bottom:8px;">#${rank}</div>
+                        ${nameHTML}
+                        ${metaHTML}
+                        ${progressBarHTML}
+                    </div>`;
+            } else {
+                return `
+                    <div class="stats-card active-roster" onclick="openPlayerCard(${sqIdx})" style="cursor:pointer;">
+                        ${rankIconHTML}
+                        ${nameHTML}
+                        ${metaHTML}
+                    </div>`;
+            }
+        };
+
+        let peakPerformersHTML = '';
+        if (peakPerformers.length > 0) {
+            peakPerformersHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">PEAK PERFORMERS</div>
+                    <div class="stats-grid peak-performers-grid">
+                        ${peakPerformers.map((p, i) => renderPlayerCard(p, i + 1, true)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        let activeRosterHTML = '';
+        if (activeRoster.length > 0) {
+            activeRosterHTML = `
+                <div class="stats-group">
+                    <div class="stats-header">ACTIVE ROSTER</div>
+                    <div class="stats-grid">
+                        ${activeRoster.map((p, i) => renderPlayerCard(p, i + 4, false)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        content.innerHTML = tabs + peakPerformersHTML + activeRosterHTML;
 
     } else if (tab === 'profile') {
         const me = StateStore.squad.find(p => p.uuid === passport.playerUUID);
