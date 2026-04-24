@@ -551,7 +551,7 @@ window.addTournamentGuest      = addTournamentGuest;
 window.editTournamentPlayer    = editTournamentPlayer;
 window.removeTournamentPlayer  = removeTournamentPlayer;
 window.showLandingPage         = showLandingPage;
-window.goToMainMenu           = showLandingPage;
+window.goToMainMenu           = confirmGoToMainMenu;
 window.closeLandingPage        = closeLandingPage;
 
 // ---------------------------------------------------------------------------
@@ -3818,7 +3818,20 @@ function showLandingPage() {
     `;
 }
 
-window.goToMainMenu = showLandingPage;
+function confirmGoToMainMenu() {
+    const hasActiveSession = StateStore.squad.length > 0 || isOnlineSession;
+    if (hasActiveSession) {
+        UIManager.confirm({
+            title: 'Exit to Lobby?',
+            message: 'Your current session is still active. Return to the main lobby?',
+            confirmText: 'Return to Lobby',
+            onConfirm: () => showLandingPage()
+        });
+    } else {
+        showLandingPage();
+    }
+}
+window.confirmGoToMainMenu = confirmGoToMainMenu;
 
 window.closeLandingPage = function() {
     const el = document.getElementById('landingPage');
