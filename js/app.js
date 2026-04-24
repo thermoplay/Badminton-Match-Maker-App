@@ -8,6 +8,11 @@
 let passport  = null;
 let supabase  = null;
 
+let wrSelectedPlayer = null;
+let wrTeams = [];
+let wrTournamentName = 'TOURNAMENT';
+let wrRounds = [];
+
 window.SPORT_ICONS  = { 'Badminton': '🏸', 'Tennis': '🎾', 'Pickleball': '🏓' };
 
 // Global state is now managed by StateStore
@@ -3048,11 +3053,6 @@ function ensureHostUI() {
         document.body.appendChild(modal);
     }
 }
-
-let wrSelectedPlayer = null;
-let wrTeams = [];
-let wrTournamentName = 'TOURNAMENT';
-let wrRounds = [];
 
 function openTournamentMode() {
     const overlay = document.createElement('div');
