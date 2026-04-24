@@ -1363,13 +1363,19 @@ function generateTournamentBracket(teams) {
     let prevRoundSize = currentRound.length;
     let roundNum = 2;
     while (prevRoundSize > 1) {
-        const nextRoundSize = prevRoundSize / 2;
+        const nextRoundSize = Math.floor(prevRoundSize / 2);
         const nextRound = [];
         for (let i = 0; i < nextRoundSize; i++) {
+            const m1 = rounds[rounds.length - 1][i * 2];
+            const m2 = rounds[rounds.length - 1][i * 2 + 1];
+            
+            const winner1 = m1.winner;
+            const winner2 = m2.winner;
+
             nextRound.push({
                 id: `r${roundNum}-m${i}`,
-                team1: null,
-                team2: null,
+                team1: winner1 || null,
+                team2: winner2 || null,
                 winner: null
             });
         }

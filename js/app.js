@@ -544,6 +544,8 @@ window.removePlayerFromSession = removePlayerFromSession;
 window.setCourts               = setCourts;
 window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
 window.openTournamentMode      = openTournamentMode;
+window.igniteWarRoomLive       = igniteWarRoomLive;
+window.advanceTournamentTeam   = advanceTournamentTeam;
 window.editTournamentName      = editTournamentName;
 window.addTournamentGuest      = addTournamentGuest;
 window.editTournamentPlayer    = editTournamentPlayer;
@@ -3047,6 +3049,7 @@ function ensureHostUI() {
 let wrSelectedPlayer = null;
 let wrTeams = [];
 let wrTournamentName = 'TOURNAMENT';
+let wrRounds = [];
 
 function openTournamentMode() {
     const overlay = document.createElement('div');
@@ -3066,9 +3069,12 @@ function openTournamentMode() {
                 <div style="font-family:var(--font-display); font-size:0.6rem; color:var(--trophy-gold); font-weight:900; letter-spacing:2px; margin-bottom:2px;">${isLive ? 'LIVE SESSION' : 'OFFLINE MODE'}</div>
                 <div style="font-family:var(--font-display); font-size:1.6rem; font-weight:900; font-style:italic; line-height:1; color:#fff;">${wrTournamentName} <span style="font-size:0.8rem; opacity:0.4;">✏️</span></div>
             </div>
-            <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} IN ROOM</div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+                <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} IN ROOM</div>
+                <div id="wrQR" class="wr-header-qr"></div>
+            </div>
             <div style="display:flex; gap:10px;">
-                ${!isLive ? `<button class="wr-btn-guest" style="border-color:var(--accent); color:var(--accent);" onclick="createOnlineSession()">🌐 GO LIVE</button>` : ''}
+                ${!isLive ? `<button class="wr-btn-guest wr-go-live-btn" style="border-color:var(--accent); color:var(--accent);" onclick="window.igniteWarRoomLive()">🌐 GO LIVE</button>` : `<div class="wr-room-pill">ROOM: ${code}</div>`}
                 <button class="wr-btn-guest" onclick="window.addTournamentGuest()">🏆 + GUEST</button>
                 <button class="wr-btn-close" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
             </div>
@@ -3105,6 +3111,36 @@ function openTournamentMode() {
     `;
 
     document.body.appendChild(overlay);
+    if (isLive) setTimeout(() => renderWarRoomQR(), 100);
+}
+
+async function igniteWarRoomLive() {
+    if (typeof createOnlineSession === 'function') {
+        await createOnlineSession();
+        // Refresh the Tournament overlay to show the new Room Code and QR
+        const overlay = document.getElementById('warRoomOverlay');
+        if (overlay) { overlay.remove(); openTournamentMode(); }
+        showSessionToast('🌐 TOURNAMENT IS NOW LIVE');
+    }
+}
+
+function renderWarRoomQR() {
+    const code = window.currentRoomCode;
+    const qrDiv = document.getElementById('wrQR');
+    if (!qrDiv || !code) return;
+    
+    const joinUrl = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
+    const QRCtor = window.QRCodeConstructor || window.QRCode;
+    if (QRCtor) {
+        qrDiv.innerHTML = '';
+        new QRCtor(qrDiv, {
+            text: joinUrl,
+            width: 60,
+            height: 60,
+            colorDark: '#000000',
+            colorLight: '#ffffff'
+        });
+    }
 }
 
 function editTournamentName() {
@@ -3206,41 +3242,115 @@ function createWarRoomTeam(p1, p2) {
 
 function igniteTournament() {
     if (wrTeams.length < 2) return alert('Need at least 2 teams to ignite bracket.');
-    const rounds = generateTournamentBracket(wrTeams);
-    
+    wrRounds = generateTournamentBracket(wrTeams);
+    renderTournamentBracket();
+    if (window.Haptic) Haptic.success();
+    showSessionToast('🏆 TOURNAMENT IGNITED');
+}
+
+function renderTournamentBracket() {
     const workbench = document.querySelector('.wr-workbench');
+    if (!workbench) return;
+
     workbench.innerHTML = '';
     workbench.className = 'wr-bracket-canvas';
     
-    rounds.forEach((round, rIdx) => {
+    wrRounds.forEach((round, rIdx) => {
         const roundDiv = document.createElement('div');
         roundDiv.className = 'wr-round';
         roundDiv.innerHTML = `
             <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">ROUND ${rIdx + 1}</div>
-            ${round.map(m => `
+            ${round.map((m, mIdx) => {
+                const isDecided = m.winner !== null;
+                const isBye = m.team1 && !m.team2;
+                const canSelect = !isDecided && m.team1 && m.team2 && !isBye;
+                
+                const t1Winner = m.winner?.id === m.team1?.id || isBye;
+                const t2Winner = m.winner?.id === m.team2?.id && !isBye;
+
+                return `
                 <div class="wr-matchup">
-                    <div class="wr-bracket-slot ${m.team1 ? 'has-team' : ''}">${m.team1 ? m.team1.name : 'TBD'}</div>
-                    <div class="wr-bracket-slot ${m.team2 ? 'has-team' : ''}">${m.team2 ? m.team2.name : (m.team1 ? 'BYE' : 'TBD')}</div>
-                </div>
-            `).join('')}
+                    <div class="wr-bracket-slot ${m.team1 ? 'has-team' : ''} ${t1Winner ? 'winner' : ''}" 
+                         onclick="${canSelect ? `window.advanceTournamentTeam(${rIdx}, ${mIdx}, 1)` : ''}">
+                        ${m.team1 ? escapeHTML(m.team1.name) : 'TBD'}
+                    </div>
+                    <div class="wr-bracket-slot ${m.team2 ? 'has-team' : ''} ${t2Winner ? 'winner' : ''}" 
+                         onclick="${canSelect ? `window.advanceTournamentTeam(${rIdx}, ${mIdx}, 2)` : ''}">
+                        ${m.team2 ? escapeHTML(m.team2.name) : (m.team1 ? 'BYE' : 'TBD')}
+                    </div>
+                </div>`;
+            }).join('')}
         `;
         workbench.appendChild(roundDiv);
     });
 
     // Add Championship center-piece
+    const lastRound = wrRounds[wrRounds.length - 1];
+    const overallWinner = lastRound[0].winner;
+
     const champ = document.createElement('div');
     champ.className = 'wr-round';
     champ.innerHTML = `
         <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">FINALS</div>
-        <div class="wr-championship-ring">
+        <div class="wr-championship-ring ${overallWinner ? 'crowned' : ''}">
             <div style="font-size:2rem;">🏆</div>
-            <div style="font-family:var(--font-display); font-weight:900; color:var(--trophy-gold); letter-spacing:3px;">CHAMPION</div>
+            <div style="font-family:var(--font-display); font-weight:900; color:var(--trophy-gold); letter-spacing:3px;">
+                ${overallWinner ? escapeHTML(overallWinner.name) : 'CHAMPION'}
+            </div>
         </div>
     `;
     workbench.appendChild(champ);
+}
 
-    if (window.Haptic) Haptic.success();
-    showSessionToast('🏆 TOURNAMENT IGNITED');
+window.advanceTournamentTeam = (rIdx, mIdx, teamNum) => {
+    const match = wrRounds[rIdx][mIdx];
+    const winner = teamNum === 1 ? match.team1 : match.team2;
+    const loser = teamNum === 1 ? match.team2 : match.team1;
+    
+    if (!winner) return;
+    match.winner = winner;
+
+    // Record Career Stats for all players in this match
+    _recordTournamentMatchResult(winner, loser);
+
+    // Advance to next round if not the final round
+    if (rIdx < wrRounds.length - 1) {
+        const nextRoundIdx = rIdx + 1;
+        const nextMatchIdx = Math.floor(mIdx / 2);
+        const nextMatch = wrRounds[nextRoundIdx][nextMatchIdx];
+        
+        if (mIdx % 2 === 0) nextMatch.team1 = winner;
+        else nextMatch.team2 = winner;
+    }
+
+    renderTournamentBracket();
+    Haptic.success();
+};
+
+function _recordTournamentMatchResult(winnerTeam, loserTeam) {
+    if (!winnerTeam || !loserTeam) return; // Ignore BYEs
+
+    const updatePlayer = (p, isWin) => {
+        p.wins += isWin ? 1 : 0;
+        p.games += 1;
+        p.streak = isWin ? (p.streak + 1) : 0;
+        p.form = (p.form || []).concat(isWin ? 'W' : 'L').slice(-5);
+        p.sessionPlayCount++;
+
+        // Career Record Update (Passport)
+        const myUUID = (typeof Passport !== 'undefined') ? Passport.get()?.playerUUID : null;
+        if (myUUID && p.uuid === myUUID && typeof Passport.recordGame === 'function') {
+            Passport.recordGame(isWin);
+        }
+    };
+
+    winnerTeam.players.forEach(p => updatePlayer(p, true));
+    loserTeam.players.forEach(p => updatePlayer(p, false));
+
+    // Signal state change for Host (persists to localStorage and triggers cloud sync)
+    if (typeof StateStore !== 'undefined') {
+        StateStore.set('squad', [...StateStore.squad]);
+    }
 }
 const _startPolling = () => {
     if (_pollingInterval) clearInterval(_pollingInterval);
