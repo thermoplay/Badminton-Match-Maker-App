@@ -478,15 +478,15 @@ function _updateUIAfterPlayerRemoval() {
 
 /** Sends a request to the backend to permanently remove the player from the session_members table. */
 async function _removePlayerFromRemoteDB(playerUUID) {
-    if (!isOperator || !playerUUID || !currentRoomCode || !operatorKey) return;
+    if (!window.isOperator || !playerUUID || !window.currentRoomCode || !window.operatorKey) return;
     try {
         await fetch('/api/play-request', {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                room_code: currentRoomCode,
+                room_code: window.currentRoomCode,
                 player_uuid: playerUUID,
-                operator_key: operatorKey
+                operator_key: window.operatorKey
             })
         });
     } catch (e) {
@@ -1005,7 +1005,7 @@ function showOverlay(type) {
         
         let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
 
-        if (isOnlineSession) {
+        if (window.isOnlineSession) {
             shContent += `
                 <div class="sh-section">
                     <div class="session-live-card">
@@ -1013,9 +1013,9 @@ function showOverlay(type) {
                             <span class="session-live-dot"></span>
                             <span class="session-live-label">LIVE SESSION</span>
                         </div>
-                        <div class="session-room-code">${currentRoomCode}</div>
+                        <div class="session-room-code">${window.currentRoomCode}</div>
                         <p style="font-size:0.7rem; color:var(--text-muted); margin-bottom:20px;">
-                            ${isOperator ? 'Share code or invite link to join' : 'Viewing as spectator'}
+                            ${window.isOperator ? 'Share code or invite link to join' : 'Viewing as spectator'}
                         </p>
                         
                         <div class="sh-qr-wrap">
@@ -1029,7 +1029,7 @@ function showOverlay(type) {
                     <div class="sh-grid">
                         <button class="btn-main sh-btn-sub" onclick="copyInviteLink()">🔗 Invite Link</button>
                         <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📋 Room Code</button>
-                        ${isOperator ? `
+                        ${window.isOperator ? `
                             <button class="btn-main sh-btn-sub" onclick="resyncQueue()">🔄 Resync Queue</button>
                             <button class="btn-main btn-danger" style="font-size:0.8rem;" onclick="confirmEndSession()">🛑 End Session</button>
                         ` : `
@@ -1099,13 +1099,13 @@ function showOverlay(type) {
         }
         content.innerHTML = shContent;
 
-        if (isOnlineSession) {
-            if (!currentRoomCode) {
+        if (window.isOnlineSession) {
+            if (!window.currentRoomCode) {
                 console.error('[CourtSide] generateQR: currentRoomCode is null or undefined — QR not generated');
                 const qrDiv = document.getElementById('qrcode');
                 if (qrDiv) qrDiv.innerHTML = '<p style="color:#ef4444;font-size:12px;text-align:center;">Room code missing — try ending and restarting the session.</p>';
             } else {
-                const joinUrl = window.location.origin + window.location.pathname + '?join=' + currentRoomCode + '&role=player';
+                const joinUrl = window.location.origin + window.location.pathname + '?join=' + window.currentRoomCode + '&role=player';
                 console.log('[CourtSide] Generating QR for:', joinUrl);
                 const QRCtor = window.QRCodeConstructor || window.QRCode;
                 const qrDiv  = document.getElementById('qrcode');
@@ -1127,7 +1127,7 @@ function showOverlay(type) {
         }
 
         // Attach event listeners for manual code entry to avoid global scope issues
-        if (!isOnlineSession) {
+        if (!window.isOnlineSession) {
             document.getElementById('joinManualCodeBtn')?.addEventListener('click', joinManualCode);
             document.getElementById('manualRoomCodeInput')?.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter') joinManualCode();
@@ -3393,13 +3393,13 @@ const _startPolling = () => {
     pollPlayRequests();
     
     _pollingInterval = setInterval(async () => { 
-        if (isOnlineSession && isOperator) {
+        if (window.isOnlineSession && window.isOperator) {
             pollPlayRequests();
             
             // Self-Healing: Check for players who are 'active' in DB but missing in local squad
             if (!_isProcessingOpenPartyBatch) try {
                 const knownUuids = StateStore.squad.map(p => p.uuid).filter(id => id && id.length > 10).join(',');
-                const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}&status=active&exclude=${encodeURIComponent(knownUuids)}`);
+                const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(window.currentRoomCode)}&status=active&exclude=${encodeURIComponent(knownUuids)}`);
                 
                 const data = await res.json();
                 const activeInDB = data.requests || [];
@@ -3453,7 +3453,7 @@ function updateIWTPVisibility() {
 
     // If already in squad, never show the join prompt
     const inSquad = (window.squad || []).some(p => p.uuid === window._passport?.playerUUID);
-    const show = isOnlineSession && !isOperator && !isPlayerView && !inSquad;
+    const show = window.isOnlineSession && !window.isOperator && !isPlayerView && !inSquad;
 
     sheet.style.display = show ? 'flex' : 'none';
     if (show) checkIWTPSmartRecognition();
@@ -4258,7 +4258,7 @@ async function initApp() {
     }
 
     // Show landing if no data and not in a session
-    if (StateStore.squad.length === 0 && !isOnlineSession && !urlParams.get('join')) {
+    if (StateStore.squad.length === 0 && !window.isOnlineSession && !urlParams.get('join')) {
         showLandingPage();
     }
 }
