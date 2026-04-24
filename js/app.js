@@ -544,6 +544,7 @@ window.removePlayerFromSession = removePlayerFromSession;
 window.setCourts               = setCourts;
 window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
 window.openTournamentMode      = openTournamentMode;
+window.editTournamentName      = editTournamentName;
 window.addTournamentGuest      = addTournamentGuest;
 window.editTournamentPlayer    = editTournamentPlayer;
 window.removeTournamentPlayer  = removeTournamentPlayer;
@@ -3045,24 +3046,31 @@ function ensureHostUI() {
 
 let wrSelectedPlayer = null;
 let wrTeams = [];
+let wrTournamentName = 'TOURNAMENT';
 
 function openTournamentMode() {
     const overlay = document.createElement('div');
     overlay.className = 'war-room-overlay';
     overlay.id = 'warRoomOverlay';
     
-    const code = window.currentRoomCode || 'OFFLINE';
-    const unassigned = StateStore.squad.filter(p => p.active && !wrTeams.some(t => t.players.some(tp => tp.uuid === p.uuid)));
+    const code = window.currentRoomCode;
+    const isLive = !!code;
+    
+    // FIX: Tight filter to ensure anyone in wrTeams is GONE from Pool
+    const assignedIds = new Set(wrTeams.flatMap(t => t.players.map(tp => tp.uuid || tp.name)));
+    const unassigned = StateStore.squad.filter(p => p.active && !assignedIds.has(p.uuid || p.name));
 
     overlay.innerHTML = `
         <div class="wr-header">
-            <div style="display:flex; align-items:center; gap:15px;">
-                <div class="wr-room-pill">TOURNAMENT: ${code}</div>
-                <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} PARTICIPANTS</div>
+            <div class="wr-title-area" onclick="window.editTournamentName()">
+                <div style="font-family:var(--font-display); font-size:0.6rem; color:var(--trophy-gold); font-weight:900; letter-spacing:2px; margin-bottom:2px;">${isLive ? 'LIVE SESSION' : 'OFFLINE MODE'}</div>
+                <div style="font-family:var(--font-display); font-size:1.6rem; font-weight:900; font-style:italic; line-height:1; color:#fff;">${wrTournamentName} <span style="font-size:0.8rem; opacity:0.4;">✏️</span></div>
             </div>
+            <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} IN ROOM</div>
             <div style="display:flex; gap:10px;">
-                <button class="btn-icon" onclick="window.addTournamentGuest()">+ GUEST</button>
-                <button class="btn-icon" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
+                ${!isLive ? `<button class="wr-btn-guest" style="border-color:var(--accent); color:var(--accent);" onclick="createOnlineSession()">🌐 GO LIVE</button>` : ''}
+                <button class="wr-btn-guest" onclick="window.addTournamentGuest()">🏆 + GUEST</button>
+                <button class="wr-btn-close" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
             </div>
         </div>
 
@@ -3097,6 +3105,18 @@ function openTournamentMode() {
     `;
 
     document.body.appendChild(overlay);
+}
+
+function editTournamentName() {
+    UIManager.prompt({
+        title: 'Edit Tournament Name',
+        initialValue: wrTournamentName,
+        onConfirm: (val) => {
+            if (val.trim()) wrTournamentName = val.trim().toUpperCase();
+            const overlay = document.getElementById('warRoomOverlay');
+            if (overlay) { overlay.remove(); openTournamentMode(); }
+        }
+    });
 }
 
 function addTournamentGuest() {
@@ -3174,34 +3194,53 @@ window.handleWarRoomTap = (uuid) => {
 };
 
 function createWarRoomTeam(p1, p2) {
-    const team = { id: Date.now(), players: [p1, p2] };
+    const team = { id: _generateUUID(), players: [p1, p2], name: `${p1.name} & ${p2.name}` };
     wrTeams.push(team);
     
-    // Remove from UI pool
-    document.querySelector(`[data-uuid="${p1.uuid}"]`).style.display = 'none';
-    document.querySelector(`[data-uuid="${p2.uuid}"]`).style.display = 'none';
+    // Refresh pool to properly exclude the team members
+    const overlay = document.getElementById('warRoomOverlay');
+    if (overlay) { overlay.remove(); openTournamentMode(); }
 
-    const list = document.getElementById('wrTeamsList');
-    const card = document.createElement('div');
-    card.className = 'wr-team-card';
-    card.innerHTML = `
-        <div style="font-size:0.6rem; color:var(--trophy-gold); margin-bottom:4px;">TEAM ${wrTeams.length}</div>
-        <div style="font-family:var(--font-display); font-weight:800; font-style:italic; text-transform:uppercase;">
-            ${p1.name} & ${p2.name}
-        </div>
-    `;
-    list.appendChild(card);
-    
     if (window.Haptic) Haptic.success();
-    // Mock metallic click sound
-    console.log('Metallic Click Triggered');
 }
 
 function igniteTournament() {
     if (wrTeams.length < 2) return alert('Need at least 2 teams to ignite bracket.');
     const rounds = generateTournamentBracket(wrTeams);
-    // ... Rendering logic for bracket follows
-    showSessionToast('🔥 TOURNAMENT IGNITED');
+    
+    const workbench = document.querySelector('.wr-workbench');
+    workbench.innerHTML = '';
+    workbench.className = 'wr-bracket-canvas';
+    
+    rounds.forEach((round, rIdx) => {
+        const roundDiv = document.createElement('div');
+        roundDiv.className = 'wr-round';
+        roundDiv.innerHTML = `
+            <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">ROUND ${rIdx + 1}</div>
+            ${round.map(m => `
+                <div class="wr-matchup">
+                    <div class="wr-bracket-slot ${m.team1 ? 'has-team' : ''}">${m.team1 ? m.team1.name : 'TBD'}</div>
+                    <div class="wr-bracket-slot ${m.team2 ? 'has-team' : ''}">${m.team2 ? m.team2.name : (m.team1 ? 'BYE' : 'TBD')}</div>
+                </div>
+            `).join('')}
+        `;
+        workbench.appendChild(roundDiv);
+    });
+
+    // Add Championship center-piece
+    const champ = document.createElement('div');
+    champ.className = 'wr-round';
+    champ.innerHTML = `
+        <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">FINALS</div>
+        <div class="wr-championship-ring">
+            <div style="font-size:2rem;">🏆</div>
+            <div style="font-family:var(--font-display); font-weight:900; color:var(--trophy-gold); letter-spacing:3px;">CHAMPION</div>
+        </div>
+    `;
+    workbench.appendChild(champ);
+
+    if (window.Haptic) Haptic.success();
+    showSessionToast('🏆 TOURNAMENT IGNITED');
 }
 const _startPolling = () => {
     if (_pollingInterval) clearInterval(_pollingInterval);
