@@ -550,6 +550,9 @@ window.editTournamentName      = editTournamentName;
 window.addTournamentGuest      = addTournamentGuest;
 window.editTournamentPlayer    = editTournamentPlayer;
 window.removeTournamentPlayer  = removeTournamentPlayer;
+window.showLandingPage         = showLandingPage;
+window.goToMainMenu           = showLandingPage;
+window.closeLandingPage        = closeLandingPage;
 
 // ---------------------------------------------------------------------------
 // RENDERING
@@ -3815,9 +3818,7 @@ function showLandingPage() {
     `;
 }
 
-window.goToMainMenu = showLandingPage;
-
-window.closeLandingPage = function() {
+function closeLandingPage() {
     const el = document.getElementById('landingPage');
     if (!el) return;
 
@@ -3849,7 +3850,7 @@ window.closeLandingPage = function() {
         // Host already has a name, _autoAddHostToSquad should have already run.
         doClose();
     }
-};
+}
 
 window.joinFromRecent = function(code) {
     if (window.Haptic) Haptic.tap();
