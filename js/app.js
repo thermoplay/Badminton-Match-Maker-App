@@ -564,6 +564,10 @@ window.autoPairTournament      = autoPairTournament;
 window.showLandingPage         = showLandingPage;
 window.goToMainMenu           = goToMainMenu;
 window.closeLandingPage        = closeLandingPage;
+window.joinFromLobby           = joinFromLobby;
+window.joinFromRecent          = joinFromRecent;
+window.openStandalonePassport  = openStandalonePassport;
+window.goToPlayerMode          = goToPlayerMode;
 
 // ---------------------------------------------------------------------------
 // RENDERING
@@ -3945,7 +3949,7 @@ function goToMainMenu() {
     }
 }
 
-window.closeLandingPage = function() {
+function closeLandingPage() {
     const el = document.getElementById('landingPage');
     if (!el) return;
 
@@ -3977,14 +3981,14 @@ window.closeLandingPage = function() {
         // Host already has a name, _autoAddHostToSquad should have already run.
         doClose();
     }
-};
+}
 
-window.joinFromRecent = function(code) {
+function joinFromRecent(code) {
     if (window.Haptic) Haptic.tap();
     window.location.href = `?join=${code}&role=player`;
-};
+}
 
-window.openStandalonePassport = function() {
+function openStandalonePassport() {
     const el = document.getElementById('landingPage');
     if (el) el.remove();
     
@@ -4057,7 +4061,7 @@ window.openStandalonePassport = function() {
             .catch(e => console.warn('[Passport] Silent hydrate failed', e));
         }
     }
-};
+}
 
 window.renderPassportStandalone = function(p, globalRank = window._lastRankDisplay || '—') {
     const content = document.getElementById('passportStandaloneContent');
@@ -4178,11 +4182,11 @@ window.renderPassportStandalone = function(p, globalRank = window._lastRankDispl
     renderTrophies(p.achievements || []);
 };
 
-window.goToPlayerMode = function() {
+function goToPlayerMode() {
     window.location.href = '?role=player';
-};
+}
 
-window.joinFromLobby = function() {
+function joinFromLobby() {
     const input = document.getElementById('lobbyRoomCode');
     const code = input?.value?.trim();
     if (!code) return;
@@ -4192,7 +4196,7 @@ window.joinFromLobby = function() {
     if (cleanCode.length === 8) cleanCode = cleanCode.slice(0, 4) + '-' + cleanCode.slice(4);
     
     window.location.href = `?join=${cleanCode}&role=player`;
-};
+}
 
 function _startHostTimerTick() {
     if (window._hostTickTimer) clearInterval(window._hostTickTimer);
