@@ -551,7 +551,7 @@ window.addTournamentGuest      = addTournamentGuest;
 window.editTournamentPlayer    = editTournamentPlayer;
 window.removeTournamentPlayer  = removeTournamentPlayer;
 window.showLandingPage         = showLandingPage;
-window.goToMainMenu           = confirmGoToMainMenu;
+window.goToMainMenu           = goToMainMenu;
 window.closeLandingPage        = closeLandingPage;
 
 // ---------------------------------------------------------------------------
