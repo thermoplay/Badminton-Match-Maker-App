@@ -3818,7 +3818,9 @@ function showLandingPage() {
     `;
 }
 
-function closeLandingPage() {
+window.goToMainMenu = showLandingPage;
+
+window.closeLandingPage = function() {
     const el = document.getElementById('landingPage');
     if (!el) return;
 
@@ -3850,7 +3852,7 @@ function closeLandingPage() {
         // Host already has a name, _autoAddHostToSquad should have already run.
         doClose();
     }
-}
+};
 
 window.joinFromRecent = function(code) {
     if (window.Haptic) Haptic.tap();
