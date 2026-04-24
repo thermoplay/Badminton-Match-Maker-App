@@ -545,6 +545,8 @@ window.setCourts               = setCourts;
 window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
 window.openTournamentMode      = openTournamentMode;
 window.addTournamentGuest      = addTournamentGuest;
+window.editTournamentPlayer    = editTournamentPlayer;
+window.removeTournamentPlayer  = removeTournamentPlayer;
 
 // ---------------------------------------------------------------------------
 // RENDERING
@@ -3070,7 +3072,13 @@ function openTournamentMode() {
                 <div id="wrDraftPool" style="flex:1; overflow-y:auto;">
                     ${unassigned.map(p => `
                         <div class="wr-draft-chip" onclick="handleWarRoomTap('${p.uuid}')" data-uuid="${p.uuid}">
-                            ${escapeHTML(p.name)}
+                            <div style="flex:1; font-weight:700;">
+                                ${escapeHTML(p.name)} ${p.isGuest ? '' : '<span title="Passport User" style="opacity:0.5; margin-left:4px;">🪪</span>'}
+                            </div>
+                            <div class="wr-chip-actions">
+                                <button class="wr-chip-btn" onclick="event.stopPropagation(); window.editTournamentPlayer('${p.uuid}')">✏️</button>
+                                <button class="wr-chip-btn" onclick="event.stopPropagation(); window.removeTournamentPlayer('${p.uuid}')">✕</button>
+                            </div>
                         </div>
                     `).join('')}
                 </div>
@@ -3115,6 +3123,33 @@ function addTournamentGuest() {
             if (overlay) { overlay.remove(); openTournamentMode(); }
         }
     });
+}
+
+function editTournamentPlayer(uuid) {
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    if (!p) return;
+    
+    UIManager.prompt({
+        title: 'Edit Player Name',
+        initialValue: p.name,
+        onConfirm: (newName) => {
+            if (!newName.trim()) return;
+            if (typeof _applyNameUpdate === 'function') {
+                _applyNameUpdate(uuid, p.name, newName.trim());
+                // Refresh view
+                const overlay = document.getElementById('warRoomOverlay');
+                if (overlay) { overlay.remove(); openTournamentMode(); }
+            }
+        }
+    });
+}
+
+async function removeTournamentPlayer(uuid) {
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    if (!p) return;
+    await removePlayerFromSession(uuid, p.name);
+    const overlay = document.getElementById('warRoomOverlay');
+    if (overlay) { overlay.remove(); openTournamentMode(); }
 }
 
 window.handleWarRoomTap = (uuid) => {
