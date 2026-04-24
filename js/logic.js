@@ -106,6 +106,13 @@ function _recordMatchStats(match, timestamp = Date.now()) {
         p.matchHistory = p.matchHistory || [];
         p.matchHistory.unshift({ win: isWin, oppUUIDs: opponents.map(o => o.uuid || o.name), partnerUUID: partnerUUID, time: timestamp });
         if (p.matchHistory.length > 10) p.matchHistory.pop();
+
+         // UX FIX: Update local career record (Passport) for the device owner.
+        // Critical for the Host, who doesn't receive their own "match_resolved" broadcast.
+        const myUUID = (typeof Passport !== 'undefined') ? Passport.get()?.playerUUID : null;
+        if (myUUID && p.uuid === myUUID && typeof Passport.recordGame === 'function') {
+            Passport.recordGame(isWin);
+        }
     });
 
     const addHistory = (p, teammate, opponents) => {
@@ -255,7 +262,13 @@ async function processCourtResult(mIdx) {
     next4.forEach(p => p.waitRounds = 0);
 
     _generateAndRenderNextMatchForCourt(mIdx, next4);
-    _announceMatch(mIdx, next4.slice(0, 2), next4.slice(2, 4));
+
+    // Announce using the actual pairings chosen by the engine
+    const newM = StateStore.currentMatches[mIdx];
+    const teamA = newM.teams[0].map(id => findP(id)).filter(Boolean);
+    const teamB = newM.teams[1].map(id => findP(id)).filter(Boolean);
+    _announceMatch(mIdx, teamA, teamB);
+
     _finalizeCourtResultUpdate(resolutionTS, matchPlayerUUIDs);
 }
 
@@ -1315,3 +1328,56 @@ function swapActivePlayers(uuidA, uuidB) {
 
 // Expose for app.js
 window.swapActivePlayers = swapActivePlayers;
+
+// ---------------------------------------------------------------------------
+// TOURNAMENT BRACKET ENGINE
+// ---------------------------------------------------------------------------
+
+function generateTournamentBracket(teams) {
+    const n = teams.length;
+    if (n < 2) return null;
+
+    // Find next power of 2
+    const powerOf2 = Math.pow(2, Math.ceil(Math.log2(n)));
+    const byes = powerOf2 - n;
+
+    let rounds = [];
+    let currentRound = [];
+
+    // Round 1 Generation
+    const tempTeams = [...teams];
+    for (let i = 0; i < powerOf2 / 2; i++) {
+        const t1 = tempTeams.shift();
+        const t2 = (i < (powerOf2 / 2 - byes)) ? tempTeams.shift() : null; // null represents a BYE
+        
+        currentRound.push({
+            id: `r1-m${i}`,
+            team1: t1,
+            team2: t2,
+            winner: t2 === null ? t1 : null // Auto-advance byes
+        });
+    }
+    rounds.push(currentRound);
+
+    // Generate empty subsequent rounds
+    let prevRoundSize = currentRound.length;
+    let roundNum = 2;
+    while (prevRoundSize > 1) {
+        const nextRoundSize = prevRoundSize / 2;
+        const nextRound = [];
+        for (let i = 0; i < nextRoundSize; i++) {
+            nextRound.push({
+                id: `r${roundNum}-m${i}`,
+                team1: null,
+                team2: null,
+                winner: null
+            });
+        }
+        rounds.push(nextRound);
+        prevRoundSize = nextRoundSize;
+        roundNum++;
+    }
+
+    return rounds;
+}
+window.generateTournamentBracket = generateTournamentBracket;

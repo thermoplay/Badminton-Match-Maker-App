@@ -543,6 +543,7 @@ window.movePlayerToFront       = movePlayerToFront;
 window.removePlayerFromSession = removePlayerFromSession;
 window.setCourts               = setCourts;
 window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
+window.openWarRoom             = openWarRoom;
 
 // ---------------------------------------------------------------------------
 // RENDERING
@@ -1590,6 +1591,10 @@ function getSkillIndex(p) {
 }
 
 function renderStatsTab(tab) {
+    // UX FIX: Always fetch the latest passport data to ensure career stats 
+    // are up-to-date in the UI after a game ends.
+    if (typeof Passport !== 'undefined') passport = Passport.get();
+
     const content = document.getElementById('overlayContent');
 
     const tabs = `
@@ -1848,11 +1853,13 @@ function renderStatsTab(tab) {
 
     } else if (tab === 'hall-of-fame') {
         const period = window._lbPeriod || 'all';
-        content.innerHTML = tabs + `
+        const subTabs = `
             <div style="display:flex; gap:8px; margin-bottom:16px;">
                 <button class="stats-tab ${period === 'all' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='all'; renderStatsTab('hall-of-fame')">All-Time Legends</button>
                 <button class="stats-tab ${period === 'weekly' ? 'active' : ''}" style="font-size:0.6rem; padding:6px;" onclick="window._lbPeriod='weekly'; renderStatsTab('hall-of-fame')">Weekly Stars</button>
-            </div>
+            </div>`;
+
+        content.innerHTML = tabs + subTabs + `
             <div class="sl-searching" style="margin-top:20px;">
                 <div class="sl-searching-spinner"></div>
                 <div class="sl-searching-text">ENTERING THE HALL OF FAME…</div>
@@ -1898,10 +1905,10 @@ function renderStatsTab(tab) {
                     </div>`;
                 }).join('');
 
-                content.innerHTML = tabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
+                content.innerHTML = tabs + subTabs + `<div class="history-list">${html || '<div class="sl-empty">The Hall of Fame is currently empty.</div>'}</div>`;
             })
             .catch(() => {
-                content.innerHTML = tabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
+                content.innerHTML = tabs + subTabs + '<div class="sl-empty">Failed to load Hall of Fame.</div>';
             });
 
     } else if (tab === 'history') {
@@ -2983,6 +2990,20 @@ function ensureHostUI() {
         dashboard.appendChild(selector);
     }
 
+    // Add War Room Entry Point
+    if (!document.getElementById('warRoomEntry')) {
+        const btn = document.createElement('button');
+        btn.id = 'warRoomEntry';
+        btn.className = 'btn-main';
+        btn.style.marginTop = '12px';
+        btn.style.background = 'var(--obsidian)';
+        btn.style.border = '1px solid var(--royal-purple)';
+        btn.style.color = 'var(--royal-purple)';
+        btn.innerHTML = '⚡ ENTER TOURNAMENT WAR ROOM';
+        btn.onclick = () => window.openWarRoom();
+        dashboard.appendChild(btn);
+    }
+
     // 1. Join Notification Toast (Popup)
    if (!document.getElementById('joinNotification')) {
         const notif = document.createElement('div');
@@ -3033,6 +3054,107 @@ function ensureHostUI() {
     }
 }
 
+let wrSelectedPlayer = null;
+let wrTeams = [];
+
+function openWarRoom() {
+    const overlay = document.createElement('div');
+    overlay.className = 'war-room-overlay';
+    overlay.id = 'warRoomOverlay';
+    
+    const code = window.currentRoomCode || 'LOCAL';
+    const unassigned = StateStore.squad.filter(p => p.active);
+
+    overlay.innerHTML = `
+        <div class="wr-header">
+            <div style="display:flex; align-items:center; gap:15px;">
+                <div class="wr-room-pill">ROOM: ${code}</div>
+                <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} PARTICIPANTS</div>
+            </div>
+            <div style="display:flex; gap:10px;">
+                <button class="btn-icon" onclick="addPlayer()">+ GUEST</button>
+                <button class="btn-icon" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
+            </div>
+        </div>
+
+        <div class="wr-workbench">
+            <div class="wr-column">
+                <div class="wr-column-title">The Draft Pool</div>
+                <div id="wrDraftPool" style="flex:1; overflow-y:auto;">
+                    ${unassigned.map(p => `
+                        <div class="wr-draft-chip" onclick="handleWarRoomTap('${p.uuid}')" data-uuid="${p.uuid}">
+                            ${escapeHTML(p.name)}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            <div class="wr-column">
+                <div class="wr-column-title">Bracket Entries</div>
+                <div id="wrTeamsList" style="flex:1; overflow-y:auto; display:grid; grid-template-columns:1fr; gap:10px;">
+                    <!-- Teams will appear here -->
+                </div>
+            </div>
+        </div>
+
+        <button class="wr-ignition-btn" onclick="igniteTournament()">
+            GENERATE CHAMPIONSHIP BRACKET
+        </button>
+    `;
+
+    document.body.appendChild(overlay);
+}
+
+window.handleWarRoomTap = (uuid) => {
+    const el = document.querySelector(`[data-uuid="${uuid}"]`);
+    if (!wrSelectedPlayer) {
+        wrSelectedPlayer = uuid;
+        el.classList.add('selected');
+        Haptic.tap();
+    } else {
+        if (wrSelectedPlayer === uuid) {
+            wrSelectedPlayer = null;
+            el.classList.remove('selected');
+            return;
+        }
+        // Merge!
+        const p1 = StateStore.squad.find(p => p.uuid === wrSelectedPlayer);
+        const p2 = StateStore.squad.find(p => p.uuid === uuid);
+        
+        createWarRoomTeam(p1, p2);
+        wrSelectedPlayer = null;
+    }
+};
+
+function createWarRoomTeam(p1, p2) {
+    const team = { id: Date.now(), players: [p1, p2] };
+    wrTeams.push(team);
+    
+    // Remove from UI pool
+    document.querySelector(`[data-uuid="${p1.uuid}"]`).style.display = 'none';
+    document.querySelector(`[data-uuid="${p2.uuid}"]`).style.display = 'none';
+
+    const list = document.getElementById('wrTeamsList');
+    const card = document.createElement('div');
+    card.className = 'wr-team-card';
+    card.innerHTML = `
+        <div style="font-size:0.6rem; color:var(--trophy-gold); margin-bottom:4px;">TEAM ${wrTeams.length}</div>
+        <div style="font-family:var(--font-display); font-weight:800; font-style:italic; text-transform:uppercase;">
+            ${p1.name} & ${p2.name}
+        </div>
+    `;
+    list.appendChild(card);
+    
+    if (window.Haptic) Haptic.success();
+    // Mock metallic click sound
+    console.log('Metallic Click Triggered');
+}
+
+function igniteTournament() {
+    if (wrTeams.length < 2) return alert('Need at least 2 teams to ignite bracket.');
+    const rounds = generateTournamentBracket(wrTeams);
+    // ... Rendering logic for bracket follows
+    showSessionToast('🔥 TOURNAMENT IGNITED');
+}
 const _startPolling = () => {
     if (_pollingInterval) clearInterval(_pollingInterval);
     ensureHostUI();

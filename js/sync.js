@@ -1499,6 +1499,14 @@ function _updatePlayerCount() {
         countEl.classList.remove('count-updated');
         void countEl.offsetWidth; // force reflow so re-adding class restarts animation
         countEl.classList.add('count-updated');
+           // War Room FOMO Ticker
+        const wrTicker = document.getElementById('wrTicker');
+        if (wrTicker) {
+            wrTicker.classList.remove('glow-bounce');
+            void wrTicker.offsetWidth;
+            wrTicker.classList.add('glow-bounce');
+            wrTicker.textContent = `${count} PARTICIPANTS`;
+        }
         countEl.addEventListener('animationend', () => {
             countEl.classList.remove('count-updated');
         }, { once: true });
