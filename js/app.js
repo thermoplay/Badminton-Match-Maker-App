@@ -8,7 +8,20 @@
 let passport  = null;
 let supabase  = null;
 
-window.SPORT_ICONS  = { 'Badminton': '🏸', 'Tennis': '🎾', 'Pickleball': '🏓' };
+let wrSelectedPlayer = null;
+let wrTeams = [];
+let wrTournamentName = 'TOURNAMENT';
+let wrRounds = [];
+
+function _generateUUID() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
 
 // Global state is now managed by StateStore
 
@@ -17,515 +30,12 @@ let pressTimer = null;
 let isLongPress = false;
 let swapSourceUUID = null;
 
-// Early Global Exposure for UI functions that might be called from HTML
-window.showOverlay = showOverlay;
-window.closeOverlay = closeOverlay;
-
-// ---------------------------------------------------------------------------
-// ACHIEVEMENT PRESS HANDLERS
-// ---------------------------------------------------------------------------
-let achPressTimer = null;
-function startAchPress(key, pUUID = null) {
-    achPressTimer = setTimeout(() => {
-        if (typeof showAchievementDescription === 'function') {
-            let p = null;
-            const squad = (typeof StateStore !== 'undefined' ? StateStore.squad : null) || window.squad || [];
-            if (pUUID) p = squad.find(x => (x.uuid || x.name) === pUUID);
-            else if (typeof selectedPlayerIndex !== 'undefined' && selectedPlayerIndex !== null) p = StateStore.squad[selectedPlayerIndex];
-            
-            showAchievementDescription(key, p ? (p.achievements || []) : []);
-            if (window.Haptic) Haptic.bump();
-        }
-        achPressTimer = null;
-    }, 600);
-}
-function endAchPress(key) {
-    clearTimeout(achPressTimer);
-    achPressTimer = null;
-}
-window.startAchPress = startAchPress;
-window.endAchPress = endAchPress;
-
-// ---------------------------------------------------------------------------
-// PERSISTENCE
-// ---------------------------------------------------------------------------
-
-function saveToDisk() {
-    try {
-        // Cap roundHistory to last 10 entries — enough for undo, keeps localStorage lean
-        const historySlice = StateStore.roundHistory.slice(-10);
-        const stateToSave = {
-            squad: StateStore.squad,
-            currentMatches: StateStore.currentMatches,
-            roundHistory: historySlice,
-            playerQueue: StateStore.playerQueue,
-            activeCourts: StateStore.get('activeCourts'),
-            courtNames: StateStore.get('courtNames'),
-            isOpenParty: StateStore.get('isOpenParty') || false,
-            guestList: StateStore.get('guestList') || [],
-            lastUpdated: StateStore.get('lastUpdated'),
-        };
-        localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
-    } catch (e) {
-        console.warn('CourtSide: Failed to save to disk. Storage might be full.', e);
-        if (typeof showSessionToast === 'function') showSessionToast('⚠️ Storage warning: Data not saved locally.');
-    }
-}
-
-// ---------------------------------------------------------------------------
-// FIELD MIGRATION
-// ---------------------------------------------------------------------------
-function migratePlayer(p) {
-    if (p.wins             == null) p.wins             = 0;
-    if (p.games            == null) p.games            = 0;
-    if (p.streak           == null) p.streak           = 0;
-    if (p.sessionPlayCount == null) p.sessionPlayCount = 0;
-    if (p.waitRounds       == null) p.waitRounds       = 0;
-    if (p.consecutiveGames == null) p.consecutiveGames = 0;
-    if (p.forcedRest       == null) p.forcedRest       = false;
-    if (p.active           == null) p.active           = true;
-    if (p.teammateHistory  == null) p.teammateHistory  = {};
-    if (p.opponentHistory  == null) p.opponentHistory  = {};
-    if (p.partnerStats     == null) p.partnerStats     = {};
-    if (p.form             == null) p.form             = [];
-    if (p.achievements     == null) p.achievements     = [];
-    if (p.matchHistory     == null) p.matchHistory     = [];
-    if (p.spiritAnimal     == null) p.spiritAnimal     = null;
-
-    // Explicitly remove deprecated tracking fields
-    delete p.skillLevel;
-    delete p.rating;
-
-    return p;
-}
-
-function loadFromDisk() {
-    const saved = localStorage.getItem('cs_pro_vault');
-    if (saved) {
-        try {
-            const data = JSON.parse(saved);
-            const loadedSquad = data.squad || [];
-            loadedSquad.forEach(migratePlayer);
-
-            const squadIds = new Set(loadedSquad.map(p => p.uuid || p.name));
-            const loadedMatches = (data.currentMatches || []).filter(m =>
-                m.teams.flat().every(id => squadIds.has(id))
-            );
-
-            const loadedQueue = (data.playerQueue || []).filter(id => loadedSquad.find(p => (p.uuid || p.name) === id));
-            const loadedCourts = (Number.isInteger(data.activeCourts) && data.activeCourts >= 1)
-                ? data.activeCourts : 1;
-
-            StateStore.setState({
-                squad: loadedSquad,
-                roundHistory: data.roundHistory || [],
-                currentMatches: loadedMatches,
-                playerQueue: loadedQueue,
-                activeCourts: loadedCourts,
-                courtNames: data.courtNames || {},
-                isOpenParty: data.isOpenParty || false,
-            sport: data.sport || 'Badminton',
-                guestList: data.guestList || [],
-                lastUpdated: data.lastUpdated || Date.now(),
-            });
-
-            setTimeout(() => {
-                const courtInput = document.getElementById('courtCountInput');
-                if (courtInput) courtInput.value = loadedCourts;
-            }, 0);
-
-            renderSquad();
-            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-            if (typeof renderQueueStrip === 'function') renderQueueStrip();
-        } catch (e) {
-            console.error('CourtSide: Failed to parse saved data.', e);
-            StateStore.setState({ squad: [], currentMatches: [], roundHistory: [] });
-        }
-    }
-    checkNextButtonState();
-    updateUndoButton();
-}
-
-// ---------------------------------------------------------------------------
-// PLAYER MANAGEMENT
-// ---------------------------------------------------------------------------
-
-function addPlayer() {
-    const el = document.getElementById('playerName');
-    const name = el.value.trim();
-    if (!name) return;
-    
-    // Check for existing player (case-insensitive)
-    const existing = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
-    if (existing) {
-        if (typeof showSessionToast === 'function') showSessionToast('⚠️ Player already exists!');
-        else alert('Player already exists!');
-        el.value = '';
-        return;
-    }
-
-    const newUUID = _generateUUID();
-    // Use migratePlayer to ensure all required logic fields (stats, history) are initialized
-    const newPlayer = migratePlayer({
-        name: name,
-        uuid: newUUID,
-        active: true,
-        isGuest: true
-    });
-    
-    const pId = newPlayer.uuid || newPlayer.name;
-    const newQueue = [...StateStore.playerQueue];
-    if (!newQueue.includes(pId)) newQueue.push(pId);
-
-    // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
-    StateStore.set('squad', [...StateStore.squad, newPlayer]);
-    StateStore.set('playerQueue', newQueue);
-
-    // Connectivity: Force an immediate push to Supabase so spectators see the new player instantly
-    if (window.isOnlineSession && window.isOperator && typeof pushStateToSupabase === 'function') {
-        pushStateToSupabase(true, [newUUID]);
-    }
-
-    el.value = '';
-    renderSquad();
-    if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    checkNextButtonState();
-    if (window.Haptic) Haptic.success();
-}
-window.addPlayer = addPlayer;
-
-function editPlayerName() {
-    const p = StateStore.squad[selectedPlayerIndex];
-    if (!p) return;
-    const oldName = p.name;
-
-    closeMenu(); // Close the long-press menu first
-
-    UIManager.prompt({
-        title: 'Edit Player Name',
-        initialValue: p.name,
-        confirmText: 'Save Name',
-        onConfirm: (newName) => {
-            const trimmedNewName = newName.trim();
-            if (!trimmedNewName) return;
-
-            // Check for name collision (case-insensitive, but not against the player's own old name)
-            if (StateStore.squad.some(player => player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
-                alert('A player with this name already exists.');
-                return;
-            }
-
-            if (typeof _applyNameUpdate === 'function') {
-                _applyNameUpdate(p.uuid, oldName, trimmedNewName);
-            }
-        }
-    });
-}
-window.editPlayerName = editPlayerName;
-
-let _isProcessingOpenPartyBatch = false;
-
-async function toggleOpenParty() {
-    const current = StateStore.get('isOpenParty') || false;
-    const next = !current;
-
-    if (next && window.playRequests?.length > 0 && !_isProcessingOpenPartyBatch) {
-        _isProcessingOpenPartyBatch = true;
-        const toApprove = [...window.playRequests];
-        showSessionToast(`🔓 Open Party: ON. Approving ${toApprove.length} players...`);
-        
-        try {
-            // 1. Process all pending requests locally first for instant UI response
-            for (const r of toApprove) {
-                // skipSync=true to prevent multiple redundant StateStore triggers in the loop
-                // skipAPI=true because we will resolve them in a single batch call below
-                await approvePlayRequest(r.name, r.id, r.player_uuid, true, true);
-            }
-
-            // 2. Commit the Open Party state and the new squad members atomically
-            StateStore.setState({
-                isOpenParty: true,
-                squad: [...StateStore.squad],
-                playerQueue: [...StateStore.playerQueue]
-            });
-
-            // 3. Inform the server to clean up the requests table
-            const ids = toApprove.map(r => r.id);
-            if (ids.length > 0) {
-                batchApproveAPI(ids); // Fire and forget cleanup
-            }
-        } finally {
-            _isProcessingOpenPartyBatch = false;
-            if (typeof broadcastGameState === 'function') broadcastGameState(true); // Immediate sync to players
-        }
-    } else {
-        StateStore.set('isOpenParty', next);
-        if (typeof broadcastGameState === 'function') broadcastGameState(true);
-        showSessionToast(`🔓 Open Party: ${next ? 'ON' : 'OFF'}`);
-    }
-    renderOpenPartyToggle();
-}
-window.toggleOpenParty = toggleOpenParty;
-
-function renderOpenPartyToggle() {
-    const el = document.getElementById('slOpenPartyToggle');
-    if (!el) return;
-    const isOpen = StateStore.get('isOpenParty') || false;
-    el.className = `open-party-toggle ${isOpen ? 'is-open' : 'is-closed'}`;
-    el.innerHTML = isOpen 
-        ? '<span>🔓</span> Open Party: ON' 
-        : '<span>🔒</span> Open Party: OFF';
-}
-
-window.renderOpenPartyToggle = renderOpenPartyToggle;
-
-/**
- * Forces a reconciliation of the player queue with the active squad.
- * Useful for fixing edge-case ordering issues or missing players.
- */
-function resyncQueue() {
-    if (window.isOperator === false) return;
-    if (typeof initQueue === 'function') {
-        const hasChanged = initQueue(); // initQueue now returns true if playerQueue changed
-        if (hasChanged) {
-            if (typeof renderQueueStrip === 'function') renderQueueStrip();
-            if (typeof broadcastGameState === 'function') broadcastGameState(true);
-            if (window.Haptic) Haptic.success();
-        } else {
-            if (typeof showSessionToast === 'function') showSessionToast('Queue already synchronized.');
-        }
-    }
-}
-window.resyncQueue = resyncQueue;
-
-// Expose UI functions to global scope for inline onclick handlers
-window.showPlayRequests = showPlayRequests;
-window.closePlayRequests = closePlayRequests;
-window.notifApprove = notifApprove;
-window.notifDecline = notifDecline;
-
-function deletePlayer() {
-    const p = StateStore.squad[selectedPlayerIndex];
-    if (!p) return;
-
-    UIManager.confirm({
-        title: `Delete ${p.name}?`,
-        message: 'This will remove the player from the squad and all current matches. This action cannot be undone.',
-        confirmText: 'Yes, Delete Player',
-        isDestructive: true,
-        onConfirm: async () => {
-            // BUG FIX: Centralize removal logic. This function handles state,
-            // animation, and the required API call to update the database.
-            if (typeof removePlayerFromSession === 'function') {
-                await removePlayerFromSession(p.uuid, p.name);
-            }
-            closeMenu();
-        }
-    });
-}
-
-function initiateSwap(uuid) {
-    swapSourceUUID = uuid;
-    const p = StateStore.squad.find(x => x.uuid === uuid);
-    closeMenu();
-    showSessionToast(`Select another player to swap with ${p.name}`);
-    renderSquad();
-    Haptic.tap();
-}
-
-function completeSwap(targetUUID) {
-    const p1 = StateStore.squad.find(x => x.uuid === swapSourceUUID);
-    const p2 = StateStore.squad.find(x => x.uuid === targetUUID);
-    
-    if (p1 && p2 && typeof swapActivePlayers === 'function') {
-        if (swapActivePlayers(p1.uuid, p2.uuid)) {
-            showSessionToast(`Swapped ${p1.name} & ${p2.name}`);
-            Haptic.success(); // StateStore.set in swapActivePlayers will trigger sync
-        } else {
-            showSessionToast('Could not swap players.');
-        }
-    }
-    cancelSwap(); // Clears state and renders
-}
-
-function cancelSwap() {
-    swapSourceUUID = null;
-    closeMenu();
-    renderSquad();
-}
-
-function toggleRestingState() {
-    const p = StateStore.squad[selectedPlayerIndex];
-    if (!p) return;
-    closeMenu();
-    togglePlayerActive(p.uuid);
-}
-function _autoAddHostToSquad() {
-    // This function runs on app start for the host.
-    // If the host has a player passport from a previous session,
-    // and they aren't already in the current squad, add them automatically.
-    if (!passport || !passport.playerName) return;
-
-    const hostName = passport.playerName;
-    const hostUUID = passport.playerUUID;
-
-    // Check if a player with this UUID or name already exists.
-    const hostInSquad = StateStore.squad.find(p => p.uuid === hostUUID);
-    const newQueue = [...StateStore.playerQueue];
-    let changed = false;
-
-    if (!hostInSquad) {
-        const hostAsPlayer = migratePlayer({
-            name: hostName,
-            uuid: hostUUID,
-            active: true
-        });
-        
-        const existingIdx = newQueue.findIndex(u => u === hostUUID || u === hostName);
-        if (existingIdx === -1) {
-            newQueue.unshift(hostUUID);
-        } else {
-            newQueue[existingIdx] = hostUUID; // Transition name to UUID
-        }
-        
-        StateStore.setState({
-            squad: [hostAsPlayer, ...StateStore.squad],
-            playerQueue: newQueue
-        });
-        changed = true;
-        showSessionToast(`👋 Welcome, ${hostName}! You've been added to the rotation.`);
-    } else {
-        const existingIdx = newQueue.findIndex(u => u === hostUUID || u === hostName);
-        if (existingIdx === -1) {
-            newQueue.unshift(hostUUID); // Also add to front of queue
-            StateStore.set('playerQueue', newQueue);
-            changed = true;
-        } else if (newQueue[existingIdx] === hostName) {
-            newQueue[existingIdx] = hostUUID; // Standardize ID
-            StateStore.set('playerQueue', newQueue);
-            changed = true;
-        }
-        if (hostInSquad.active === false) {
-            const hostIdx = StateStore.squad.findIndex(p => p.uuid === hostUUID);
-            if (hostIdx !== -1) {
-                const newSquad = [...StateStore.squad];
-                newSquad[hostIdx] = { ...hostInSquad, active: true };
-                if (StateStore.set('squad', newSquad)) {
-                    changed = true;
-                }
-            }
-        }
-    }
-
-    if (changed) {
-        renderSquad();
-        if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    }
-}
-
-/** Removes a player from all local state arrays (squad, matches, queue). */
-function _removePlayerFromLocalState(playerIndex) {
-    const removedPlayer = StateStore.squad[playerIndex];
-    const removedName = removedPlayer.name;
-    const removedUUID = removedPlayer.uuid || null;
-
-    const newSquad = [...StateStore.squad];
-    newSquad.splice(playerIndex, 1);
-    const removedId = removedUUID || removedName;
-    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedId));
-    const newQueue = StateStore.playerQueue.filter(u => u !== removedId);
-
-    if (window._approvedPlayers) {
-        // Remove by UUID and any potential name-based entry
-        if (removedUUID) delete window._approvedPlayers[removedUUID]; 
-        if (removedName && window._approvedPlayers[removedName]) delete window._approvedPlayers[removedName];
-    }
-
-    if (window._sessionUUIDMap) {
-        const uuidMap = window._sessionUUIDMap;
-        // Remove entry by the player's current name
-        if (removedName && uuidMap[removedName] === removedUUID) delete uuidMap[removedName];
-        // Iterate and remove any other entries that point to the removed UUID (e.g., old names)
-        for (const key in uuidMap) {
-            if (Object.prototype.hasOwnProperty.call(uuidMap, key) && uuidMap[key] === removedUUID) {
-                delete uuidMap[key];
-            }
-        }
-    }
-    if (typeof playRequests !== 'undefined' && removedUUID) {
-        const pendingRequest = playRequests.find(r => r.player_uuid === removedUUID);
-        if (pendingRequest && typeof denyPlayRequest === 'function') {
-            denyPlayRequest(pendingRequest.id);
-        }
-    }
-
-    return { removedName, removedUUID, newSquad, newMatches, newQueue };
-}
-
-/** Updates all relevant UI components after a player has been removed. */
-function _updateUIAfterPlayerRemoval() {
-    renderSquad();
-    if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-    if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    checkNextButtonState();
-    if (typeof window.initQueue === 'function') window.initQueue();
-}
-
-/** Sends a request to the backend to permanently remove the player from the session_members table. */
-async function _removePlayerFromRemoteDB(playerUUID) {
-    if (!isOperator || !playerUUID || !currentRoomCode || !operatorKey) return;
-    try {
-        await fetch('/api/play-request', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                room_code: currentRoomCode,
-                player_uuid: playerUUID,
-                operator_key: operatorKey
-            })
-        });
-    } catch (e) {
-        console.error('[CourtSide] Failed to remove member from DB session', e);
-    }
-}
-
-/** Orchestrates the removal of a player from the session. */
-async function removePlayerFromSession(playerUUID, playerName) {
-    if (!playerUUID && !playerName) return;
-
-    let pIndex = -1;
-    if (playerUUID) {
-        pIndex = StateStore.squad.findIndex(p => p.uuid === playerUUID);
-    }
-    if (pIndex === -1 && playerName) {
-        pIndex = StateStore.squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
-    }
-
-    if (pIndex === -1) return; // Player not in squad
-
-    const { removedName, removedUUID, newSquad, newMatches, newQueue } = _removePlayerFromLocalState(pIndex);
-
-    // Atomically update the global state to ensure consistency across the session
-    const hasChanged = StateStore.setState({
-        squad: newSquad,
-        currentMatches: newMatches,
-        playerQueue: newQueue
-    });
-
-    if (hasChanged) {
-        _updateUIAfterPlayerRemoval();
-        if (typeof broadcastEvent === 'function') {
-            broadcastEvent('player_removed', { playerUUID: removedUUID, playerName: removedName });
-        }
-    }
-
-    await _removePlayerFromRemoteDB(removedUUID);
-    Haptic.bump();
-}
-
 // ---------------------------------------------------------------------------
 // GLOBAL EXPOSURE — Ensures HTML onclick handlers can find these functions
 // ---------------------------------------------------------------------------
+window.SPORT_ICONS             = { 'Badminton': '🏸', 'Tennis': '🎾', 'Pickleball': '🏓' };
+window.showOverlay             = showOverlay;
+window.closeOverlay            = closeOverlay;
 window.addPlayer               = addPlayer;
 window.editPlayerName          = editPlayerName;
 window.deletePlayer            = deletePlayer;
@@ -544,1055 +54,36 @@ window.removePlayerFromSession = removePlayerFromSession;
 window.setCourts               = setCourts;
 window.toggleHostAudioAnnounce = toggleHostAudioAnnounce;
 window.openTournamentMode      = openTournamentMode;
+window.resetTournament         = resetTournament;
+window.handleWarRoomTap        = handleWarRoomTap;
+window.igniteTournament        = igniteTournament;
+window.renderWarRoomQR         = renderWarRoomQR;
+window.igniteWarRoomLive       = igniteWarRoomLive;
+window.showLiveSuccessModal    = showLiveSuccessModal;
+window.advanceTournamentTeam   = advanceTournamentTeam;
 window.editTournamentName      = editTournamentName;
 window.addTournamentGuest      = addTournamentGuest;
 window.editTournamentPlayer    = editTournamentPlayer;
 window.removeTournamentPlayer  = removeTournamentPlayer;
+window.autoPairTournament      = autoPairTournament;
+window.showLandingPage         = showLandingPage;
+window.goToMainMenu           = goToMainMenu;
+window.closeLandingPage        = closeLandingPage;
+window.joinFromLobby           = joinFromLobby;
+window.joinFromRecent          = joinFromRecent;
+window.openStandalonePassport  = openStandalonePassport;
+window.goToPlayerMode          = goToPlayerMode;
+window.startAchPress           = startAchPress;
+window.endAchPress             = endAchPress;
+window.filterHistory           = filterHistory;
+window.clearHistorySearch      = clearHistorySearch;
+window.clearSquadSearch        = clearSquadSearch;
 
 // ---------------------------------------------------------------------------
-// RENDERING
-// ---------------------------------------------------------------------------
-
-const _debouncedSquadRender = debounce(() => renderSquad(), 150);
-
-window.handleSquadSearch = (val) => {
-    window.squadSearchQuery = val;
-    _debouncedSquadRender();
-};
-
-function renderSquad() {
-    const container = document.getElementById('squadList');
-    if (!container) return;
-
-    ensureHostUI();
-
-    // Ensure search bar exists
-    let searchInput = document.getElementById('squadSearchInput');
-    if (!searchInput) {
-        const searchWrap = document.createElement('div');
-        searchWrap.className = 'input-row search-wrap';
-        searchWrap.style.cssText = 'margin-bottom: 16px; position: relative;';
-        searchWrap.innerHTML = ` 
-            <input type="text" id="squadSearchInput" placeholder="Search players..." 
-                   style="flex:1; padding-right: 35px;" oninput="window.handleSquadSearch(this.value)">
-            <button id="squadSearchClear" onclick="window.clearSquadSearch()" 
-                    style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1.1rem;">
-                ✕
-            </button>
-        `;
-        container.parentNode.insertBefore(searchWrap, container);
-        searchInput = document.getElementById('squadSearchInput');
-    }
-
-    const query = (window.squadSearchQuery || '').toLowerCase().trim();
-    
-    // Toggle clear button visibility
-    const clearBtn = document.getElementById('squadSearchClear');
-    if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
-
-    // Update the input's value if the query changed externally (e.g., from clearHistorySearch)
-    if (searchInput && searchInput.value !== (window.squadSearchQuery || '')) {
-        searchInput.value = window.squadSearchQuery || '';
-    }
-
-    const existingChips = new Map();
-    container.querySelectorAll('.player-chip').forEach(chip => {
-        const uuid = chip.dataset.uuid;
-        if (uuid) existingChips.set(uuid, chip);
-    });
-
-    const existingIds = new Set();
-    const fragment = document.createDocumentFragment();
-
-    StateStore.squad.forEach((p, idx) => {
-        const pId = p.uuid || p.name;
-        const isNew = p.games === 0 && p.wins === 0;
-        existingIds.add(pId);
-
-        const isMatch = !query || p.name.toLowerCase().includes(query);
-
-        const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
-        const chipContent = `
-            ${Avatar.html(p.name, p.spiritAnimal)}
-            <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
-            ${waitBadge}
-        `;
-        const isSwapping = pId === swapSourceUUID;
-        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''}`;
-
-        let chip = existingChips.get(pId);
-
-        if (chip) {
-            // Chip exists, update it if necessary
-            if (chip.className !== chipClasses) {
-                chip.className = chipClasses;
-            }
-            // Update innerHTML if content changed (includes wait badge)
-            if (chip.innerHTML.trim() !== chipContent.trim()) { // Trim to ignore whitespace differences
-                chip.innerHTML = chipContent;
-            }
-            chip.style.display = isMatch ? '' : 'none';
-            existingChips.delete(pId);
-        } else {
-            // Chip does not exist, create it
-            const newChip = document.createElement('div');
-            newChip.className = chipClasses;
-            newChip.dataset.uuid = pId;
-            newChip.innerHTML = chipContent;
-            newChip.style.display = isMatch ? '' : 'none';
-            newChip.addEventListener('mousedown', () => startPress(pId));
-            newChip.addEventListener('mouseup', () => endPress(pId));
-            newChip.addEventListener('touchstart', () => startPress(pId));
-            newChip.addEventListener('touchend', () => endPress(pId));
-            newChip.addEventListener('contextmenu', (e) => e.preventDefault());
-            fragment.appendChild(newChip);
-        }
-    });
-
-    // Append all new chips in a single DOM operation.
-    if (fragment.children.length > 0) {
-        container.appendChild(fragment);
-    }
-
-    // Handle removal of chips that are no longer in the squad or are filtered out
-    existingChips.forEach(chip => { // These are chips that were in the DOM but not in the current render pass
-        // These are chips for players NO LONGER in the StateStore.squad
-        chip.classList.add('player-chip-removing');
-        chip.addEventListener('animationend', () => chip.remove(), { once: true });
-    });
-
-    renderDirectorHub();
-}
-
-/** Clears the squad search and resets the list. */
-window.clearSquadSearch = function() {
-    const input = document.getElementById('squadSearchInput');
-    if (input) {
-        input.value = '';
-        window.squadSearchQuery = '';
-        renderSquad();
-        input.focus();
-    }
-};
-
-function checkNextButtonState() {
-    const btn = document.getElementById('nextRoundBtn');
-    if (!btn) return;
-    const canProceed = StateStore.currentMatches.length === 0;
-    btn.style.opacity       = canProceed ? '1'       : '0.4';
-    btn.style.pointerEvents = canProceed ? 'auto'    : 'none';
-    btn.style.cursor        = canProceed ? 'pointer' : 'default';
-    btn.style.background    = canProceed ? 'var(--accent)' : '#2a2a3a';
-    btn.textContent         = StateStore.currentMatches.length === 0 ? 'Start Session' : 'Matches in Progress';
-}
-
-function setCourts(n) {
-    const val = Math.max(1, parseInt(n) || 1);
-    const input = document.getElementById('courtCountInput');
-    const row = input ? input.closest('.court-input-row') : null;
-    
-    const triggerFeedback = () => {
-        if (row) {
-            row.classList.remove('success-pulse');
-            void row.offsetWidth; // trigger reflow
-            row.classList.add('success-pulse');
-        }
-        if (typeof showSessionToast === 'function') showSessionToast(`🏀 ${val} court${val > 1 ? 's' : ''} active`);
-        if (window.Haptic) Haptic.success();
-    };
-
-    if (input) input.value = val;
-    if (StateStore.get('activeCourts') === val) {
-        triggerFeedback();
-        return;
-    }
-
-    if (StateStore.currentMatches.length === 0) {
-        StateStore.set('activeCourts', val);
-        saveToDisk();
-        triggerFeedback();
-        return;
-    }
-
-    UIManager.confirm({
-        title: 'Change Courts?',
-        message: `Set to ${val} court${val > 1 ? 's' : ''}? This will reset all current matches.`,
-        confirmText: 'Change & Reset',
-        isDestructive: true,
-        onConfirm: () => {
-            StateStore.set('activeCourts', val);
-            StateStore.set('currentMatches', []);
-            document.getElementById('matchContainer').innerHTML = '';
-            const onCourt = StateStore.squad.filter(p => p.active);
-            onCourt.forEach(p => {
-                const id = p.uuid || p.name;
-                if (!StateStore.playerQueue.includes(id)) StateStore.playerQueue.unshift(id);
-            });
-            generateMatches();
-            saveToDisk();
-            triggerFeedback();
-        },
-        onCancel: () => {
-            const restoredCourts = StateStore.get('activeCourts') || 1;
-            if (input) input.value = restoredCourts;
-        }
-    });
-}
-
-function toggleHostAudioAnnounce() {
-    const current = localStorage.getItem('cs_host_audio_announce') === 'true';
-    const newVal = !current;
-    localStorage.setItem('cs_host_audio_announce', String(newVal));
-    if (typeof showSessionToast === 'function') showSessionToast(`🔊 Voice Alerts: ${newVal ? 'ON' : 'OFF'}`);
-    showOverlay('menu'); // Refresh overlay to show updated toggle state
-}
-
-function _preferencesSectionHTML() {
-    const isAudio = localStorage.getItem('cs_host_audio_announce') === 'true';
-    return `
-        <div class="sh-section">
-            <div class="sync-section-label">Preferences</div>
-            <div class="sh-grid">
-                <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="window.toggleHostAudioAnnounce()">
-                    🔊 VOICE ALERTS: ${isAudio ? 'ON' : 'OFF'}
-                </button>
-            </div>
-        </div>
-    `;
-}
+// STATS OVERLAY — TABS (Moved to top for early access)
 
 // ---------------------------------------------------------------------------
-// LONG-PRESS MENU
-// ---------------------------------------------------------------------------
 
-let _lastTapInfo = { uuid: null, time: 0 };
-
-function startPress(uuid) {
-    isLongPress = false;
-    pressTimer = setTimeout(() => {
-        isLongPress = true;
-        // If we are in swap mode and tap the source again, just cancel
-        if (swapSourceUUID && swapSourceUUID === uuid) {
-            Haptic.tap();
-        } else {
-            Haptic.bump();
-        }
-        openMenu(uuid);
-    }, 600);
-}
-
-function endPress(uuid) {
-    clearTimeout(pressTimer);
-    if (!isLongPress) {
-        const now = Date.now();
-        if (_lastTapInfo.uuid === uuid && (now - _lastTapInfo.time) < 300) {
-            // Double tap detected: Toggle Ready/Resting
-            togglePlayerActive(uuid);
-            _lastTapInfo = { uuid: null, time: 0 };
-        } else {
-            _lastTapInfo = { uuid, time: now };
-            
-            // Single tap fallback: If resting, toggle to ready. 
-            const player = StateStore.squad.find(p => p.uuid === uuid);
-            if (player && !player.active) {
-                togglePlayerActive(uuid);
-            }
-        }
-    }
-}
-
-function togglePlayerActive(uuid) {
-    const pIdx = StateStore.squad.findIndex(p => p.uuid === uuid);
-    if (pIdx === -1) return;
-    
-    Haptic.tap();
-    const player = StateStore.squad[pIdx];
-    const newSquad = [...StateStore.squad];
-    newSquad[pIdx] = { ...player, active: !player.active }; // Immutable update
-
-    const hasChanged = StateStore.set('squad', newSquad);
-    if (hasChanged) {
-        renderSquad();
-        checkNextButtonState();
-        if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [uuid]);
-        if (typeof broadcastGameState === 'function') broadcastGameState(true);
-    }
-}
-
-function openMenu(uuid) {
-    const playerIndex = StateStore.squad.findIndex(p => (p.uuid || p.name) === uuid);
-    if (playerIndex === -1) return;
-    selectedPlayerIndex = playerIndex;
-    const p = StateStore.squad[playerIndex];
-    const sport = StateStore.get('sport') || 'Badminton';
-    const sIcon = window.SPORT_ICONS[sport] || '🏸';
-    const menu = document.getElementById('actionMenu');
-    if (!menu) return;
-
-    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
-    const isPlaying = onCourt.has(p.uuid || p.name);
-
-    let swapActionHTML = '';
-
-    // Logic for Swap Button visibility
-    if (swapSourceUUID) {
-        // We are in the middle of a swap
-        if (isPlaying && (p.uuid || p.name) !== swapSourceUUID) {
-            // This is a valid target
-            const sourceP = StateStore.squad.find(s => s.uuid === swapSourceUUID);
-            const sourceName = sourceP ? sourceP.name : 'Player';
-            swapActionHTML = `
-                <button class="btn-main menu-btn" onclick="completeSwap('${p.uuid}')" style="background:var(--accent); color:#000;">
-                    Confirm Swap with ${escapeHTML(sourceName)}
-                </button>
-                <button class="btn-main menu-btn" onclick="cancelSwap()" style="background:var(--surface2); color:var(--text);">
-                    Cancel Swap
-                </button>
-            `;
-        } else {
-            // Clicked self or invalid target -> allow cancel
-            swapActionHTML = `<button class="btn-main menu-btn" onclick="cancelSwap()">Cancel Swap</button>`;
-        }
-    } else if (isPlaying) {
-        // Not swapping yet, show initiate button
-        swapActionHTML = `<button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="initiateSwap('${p.uuid || p.name}')">⇄ Swap Position</button>`;
-    }
-
-    let pokeActionHTML = '';
-    if (isPlaying && !swapSourceUUID && !p.isGuest) {
-        pokeActionHTML = `
-            <button class="btn-main menu-btn" style="background:var(--bg2); color:var(--warning); border:1px solid var(--warning);" onclick="broadcastPoke('${p.uuid}'); closeMenu();">
-                ⚡ Poke Player
-            </button>`;
-    }
-
-    menu.innerHTML = `
-        <div class="menu-card">
-            <h2>${escapeHTML(p.name)}</h2>
-            <p>${p.active ? (isPlaying ? `Currently Playing ${sIcon}` : 'Ready for Rotation') : 'Taking a Break ☕'}</p>
-            
-            ${swapActionHTML}
-
-            ${pokeActionHTML}
-
-            <button class="btn-main menu-btn" onclick="toggleRestingState()">
-                ${p.active ? 'Take a Break ☕' : 'Return to Play'}
-            </button>
-
-            ${p.active && !isPlaying ? `
-            <button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="movePlayerToFront()">
-                Move to Front ⬆
-            </button>
-            ` : ''}
-
-            <button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="editPlayerName()">
-                Edit Name
-            </button>
-
-            <button class="btn-main menu-btn btn-danger" onclick="deletePlayer()">
-                Remove Player
-            </button>
-            
-            <button class="btn-cancel" onclick="closeMenu()">Cancel</button>
-        </div>
-    `;
-    menu.style.display = 'flex';
-}
-
-function closeMenu() {
-    document.getElementById('actionMenu').style.display = 'none';
-    selectedPlayerIndex = null;
-}
-
-function movePlayerToFront() {
-    const p = StateStore.squad[selectedPlayerIndex];
-    if (!p) return;
-    
-    // Remove from current spot in queue and add to front using unified ID
-    const pId = p.uuid || p.name;
-    const newQueue = StateStore.playerQueue.filter(u => u !== pId);
-    newQueue.unshift(pId);
-    StateStore.set('playerQueue', newQueue);
-    
-    closeMenu();
-    if (typeof renderQueueStrip === 'function') renderQueueStrip();
-    saveToDisk();
-    if (typeof broadcastGameState === 'function') broadcastGameState(true);
-    if (window.Haptic) Haptic.success();
-    if (typeof showSessionToast === 'function') showSessionToast(`${p.name} moved to front`);
-}
-
-function openCourtRename(courtIndex) {
-    if (!isOperator) return; // Only host can rename
-
-    const courtNames = StateStore.get('courtNames') || {};
-    const currentName = courtNames[courtIndex] || `Court ${courtIndex + 1}`;
-
-    UIManager.prompt({
-        title: `Rename ${currentName}`,
-        initialValue: courtNames[courtIndex] || '',
-        placeholder: 'e.g. Center Court',
-        confirmText: 'Save Name',
-        onConfirm: (newName) => {
-            const trimmed = newName.trim();
-            const newCourtNames = { ...courtNames };
-
-            if (trimmed) {
-                newCourtNames[courtIndex] = trimmed;
-            } else {
-                delete newCourtNames[courtIndex]; // Revert to default if name is cleared
-            }
-
-            StateStore.set('courtNames', newCourtNames);
-            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-        }
-    });
-}
-window.openCourtRename = openCourtRename;
-// ---------------------------------------------------------------------------
-// OVERLAYS — STATS & SYNC
-// ---------------------------------------------------------------------------
-
-function joinManualCode() {
-    const input = document.getElementById('manualRoomCodeInput');
-    const raw = input?.value?.trim();
-    if (raw) {
-        // Normalize room code: strip non-alphanumeric and add hyphen if 8 chars
-        let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
-
-        if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
-            const newUrl = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
-            window.history.pushState({}, document.title, newUrl);
-            document.body.classList.add('player-mode');
-            closeOverlay();
-            PlayerMode.boot(Passport.get(), code);
-        } else {
-            window.location.href = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
-        }
-    } else {
-        alert('Please enter a room code.');
-    }
-}
-
-function showOverlay(type) {
-    const title   = document.getElementById('overlayTitle');
-    const content = document.getElementById('overlayContent');
-    document.getElementById('overlay').classList.add('open');
-
-    if (type === 'stats') {
-        title.innerText = type === 'history' ? 'Match History' : 'Leaderboard';
-        renderStatsTab(type === 'history' ? 'history' : 'performance');
-
-    } else {
-        title.innerText = 'Menu & Options';
-        const syncMsg = window._lastSyncTime ? `Cloud Sync Active (Last: ${window._lastSyncTime})` : 'Syncing with cloud...';
-        
-        let shContent = `<div id="syncStatusMsg" class="sync-status">${syncMsg}</div>`;
-
-        if (isOnlineSession) {
-            shContent += `
-                <div class="sh-section">
-                    <div class="session-live-card">
-                        <div class="session-live-top">
-                            <span class="session-live-dot"></span>
-                            <span class="session-live-label">LIVE SESSION</span>
-                        </div>
-                        <div class="session-room-code">${currentRoomCode}</div>
-                        <p style="font-size:0.7rem; color:var(--text-muted); margin-bottom:20px;">
-                            ${isOperator ? 'Share code or invite link to join' : 'Viewing as spectator'}
-                        </p>
-                        
-                        <div class="sh-qr-wrap">
-                            <div id="qrcode" style="display:flex;justify-content:center;margin:0 auto;"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="sh-section">
-                    <div class="sync-section-label">Broadcast Controls</div>
-                    <div class="sh-grid">
-                        <button class="btn-main sh-btn-sub" onclick="copyInviteLink()">🔗 Invite Link</button>
-                        <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📋 Room Code</button>
-                        ${isOperator ? `
-                            <button class="btn-main sh-btn-sub" onclick="resyncQueue()">🔄 Resync Queue</button>
-                            <button class="btn-main btn-danger" style="font-size:0.8rem;" onclick="confirmEndSession()">🛑 End Session</button>
-                        ` : `
-                            <button class="btn-main btn-danger" style="grid-column: span 2;" onclick="leaveSession(); closeOverlay();">Leave Session</button>
-                        `}
-                    </div>
-                </div>
-
-                ${_preferencesSectionHTML()}
-
-                <div class="sh-section">
-                    <div class="sync-section-label">Navigation</div>
-                    <div class="sh-grid">
-                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
-                    </div>
-                </div>
-
-                ${_supportSectionHTML()}
-            `;
-        } else {
-            shContent += `
-                <div class="sh-section">
-                    <div class="sync-section-label">Go Live</div>
-                    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
-                        Start a live session to sync with players in real-time.
-                    </p>
-                    <button class="btn-main" style="width:100%; height:54px;" onclick="createOnlineSession()">🌐 Start Live Session</button>
-                </div>
-
-                <div class="sh-section">
-                    <div class="sync-section-label">Join Session</div>
-                    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:12px;">
-                        Enter a room code to watch a live session.
-                    </p>
-                    <input type="text" id="manualRoomCodeInput" placeholder="ENTER CODE"
-                        class="sl-code-input" style="margin-bottom:10px;"
-                        autocomplete="off" autocorrect="off" maxlength="9">
-                    <button id="joinManualCodeBtn" class="btn-main sh-btn-sub" style="width:100%;">Connect to Room</button>
-                </div>
-
-                <div class="sh-section">
-                    <div class="sync-section-label">Backup & Migration</div>
-                    <div class="sh-grid">
-                        <button class="btn-main sh-btn-sub" onclick="copySyncToken()">📦 Export Data</button>
-                        <button class="btn-main sh-btn-sub" onclick="importSyncToken()">📥 Import Data</button>
-                    </div>
-                    <input type="text" id="syncInput" placeholder="Paste token here..."
-                        style="width:100%; margin-top:10px; font-size:0.8rem; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:10px;">
-                </div>
-
-                <div class="sh-section" style="text-align:center; padding-top:10px;">
-                    <button class="btn-main btn-danger" style="width:auto; display:inline-flex; padding:8px 16px; font-size:0.7rem; height:auto; min-height:auto;"
-                        onclick="confirmEraseAllData()">WIPE ALL LOCAL DATA</button>
-                </div>
-
-                ${_preferencesSectionHTML()}
-
-                <div class="sh-section">
-                    <div class="sync-section-label">Navigation</div>
-                    <div class="sh-grid">
-                        <button class="btn-main sh-btn-sub" style="grid-column: span 2;" onclick="goToMainMenu()">🏠 Home Menu</button>
-                    </div>
-                </div>
-
-                ${_supportSectionHTML()}
-            `;
-        }
-        content.innerHTML = shContent;
-
-        if (isOnlineSession) {
-            if (!currentRoomCode) {
-                console.error('[CourtSide] generateQR: currentRoomCode is null or undefined — QR not generated');
-                const qrDiv = document.getElementById('qrcode');
-                if (qrDiv) qrDiv.innerHTML = '<p style="color:#ef4444;font-size:12px;text-align:center;">Room code missing — try ending and restarting the session.</p>';
-            } else {
-                const joinUrl = window.location.origin + window.location.pathname + '?join=' + currentRoomCode + '&role=player';
-                console.log('[CourtSide] Generating QR for:', joinUrl);
-                const QRCtor = window.QRCodeConstructor || window.QRCode;
-                const qrDiv  = document.getElementById('qrcode');
-                if (qrDiv && QRCtor) {
-                    qrDiv.innerHTML = '';
-                    new QRCtor(qrDiv, {
-                        text:          joinUrl,
-                        width:         200,
-                        height:        200,
-                        colorDark:     '#000000',
-                        colorLight:    '#ffffff',
-                        correctLevel:  QRCtor.CorrectLevel?.H || 0,
-                    });
-                } else if (qrDiv) {
-                    console.warn('[CourtSide] QRCode library not loaded, showing plain URL');
-                    qrDiv.innerHTML = `<a href="${joinUrl}" style="color:#00ffa3;font-size:11px;word-break:break-all;">${joinUrl}</a>`;
-                }
-            }
-        }
-
-        // Attach event listeners for manual code entry to avoid global scope issues
-        if (!isOnlineSession) {
-            document.getElementById('joinManualCodeBtn')?.addEventListener('click', joinManualCode);
-            document.getElementById('manualRoomCodeInput')?.addEventListener('keydown', (event) => {
-                if (event.key === 'Enter') joinManualCode();
-            });
-        }
-    }
-}
-
-/** Computes production-level insights for the host dashboard. */
-function renderDirectorHub() {
-    const grid = document.getElementById('directorHubGrid');
-    if (!grid) return;
-
-    const squad = StateStore.squad;
-    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
-    const waiting = squad.filter(p => p.active && !onCourt.has(p.uuid || p.name));
-
-    // 1. Longest Wait
-    const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
-    // 2. King of the Hill (Current high streak)
-    const king = squad.filter(p => p.streak > 0).sort((a,b) => b.streak - a.streak)[0] || null;
-    // 3. Iron Man (Most games in session)
-    const ironMan = squad.filter(p => p.sessionPlayCount > 0).sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] || null;
-
-    const renderItem = (label, player, val, icon) => {
-        const sqIdx = player ? StateStore.squad.indexOf(player) : -1;
-        const clickable = player && sqIdx >= 0;
-        return `
-        <div class="sh-insight-item ${clickable ? 'clickable' : ''}" ${clickable ? `onclick="openPlayerCard(${sqIdx})"` : ''}>
-            <div class="sh-insight-label">${label}</div>
-            <div class="sh-insight-val">${player ? escapeHTML(player.name) : '—'}</div>
-            <div class="sh-insight-meta">${val || ''}</div>
-        </div>
-    `;
-        };
-
-    grid.innerHTML = `
-        ${renderItem('⌛ LONGEVITY', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'))}
-        ${renderItem('⚡ WIN STREAK', king, (king?.streak > 0 ? `${king.streak} streak` : 'No streaks'))}
-        ${renderItem('🎮 TOTAL GAMES', ironMan, (ironMan?.sessionPlayCount > 0 ? `${ironMan.sessionPlayCount} games` : '0 games'))}
-    `;
-}
-window.renderDirectorHub = renderDirectorHub;
-
-function closeOverlay() {
-    document.getElementById('overlay').classList.remove('open');
-}
-
-function confirmEndSession() {
-    UIManager.confirm({
-        title: 'End Session?',
-        message: 'This will end the live broadcast for all players and spectators. You will see a final session recap before exiting.',
-        confirmText: 'End Session & Recap',
-        isDestructive: true,
-        onConfirm: async () => {
-            const recapData = _calculateFinalRecapData();
-            const roomCode = window.currentRoomCode;
-            
-            // 1. Broadcast to players so they see their recap
-            if (typeof broadcastSessionEnded === 'function') {
-                broadcastSessionEnded(recapData);
-            }
-
-            // 2. Stop host sync logic immediately
-            localStorage.removeItem('cs_room_code');
-            localStorage.removeItem('cs_operator_key');
-            localStorage.removeItem('cs_op_key_hash');
-            localStorage.removeItem('cs_pro_vault'); // Clear local vault to return to fresh menu
-            localStorage.removeItem('cs_pending_sync');
-
-            // Clear request tracking for the session
-            _lastSeenRequestIds.clear();
-            _processingRequestIds.clear();
-            playRequests = [];
-            _notifQueue.length = 0;
-            window.playRequests = playRequests;
-
-            // 3. Show the Host Recap View (this also hides hostRoot via CSS)
-            _showHostRecap(recapData);
-
-            // 4. Delete from DB (authenticated call)
-            if (roomCode && window.operatorKey) {
-                fetch('/api/session-delete', {
-                    method: 'DELETE',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ room_code: roomCode, operator_key: window.operatorKey }),
-                }).catch(e => console.error('[CourtSide] Silent delete failed', e));
-            }
-        }
-    });
-}
-
-function _calculateFinalRecapData() {
-    const squad = StateStore.squad || [];
-    const history = StateStore.roundHistory || [];
-    const totalGames = history.reduce((sum, r) => sum + (r.matches?.length || 0), 0);
-    const sport = StateStore.get('sport') || 'Badminton';
-
-    const sortedByWins = [...squad].sort((a,b) => b.wins - a.wins); // Sort only by wins
-    const mvp = sortedByWins[0] || { name: 'N/A', wins: 0, games: 0 };
-    
-    const sortedByGames = [...squad].sort((a,b) => b.sessionPlayCount - a.sessionPlayCount);
-    const ironMan = sortedByGames[0] || { name: 'N/A', sessionPlayCount: 0 };
-
-    const sortedByStreak = [...squad].sort((a,b) => b.streak - a.streak);
-    const hotHand = sortedByStreak[0] || { name: 'N/A', streak: 0 };
-
-    const eligibleForWR = squad.filter(p => p.games >= 3);
-    const sortedByWR = [...eligibleForWR].sort((a,b) => (b.wins/b.games) - (a.wins/a.games));
-    const sharpShooter = sortedByWR[0] || { name: 'N/A', wins: 0, games: 0 };
-
-    return { 
-        sessionUUID: _generateUUID(), // Unique ID for this recap instance
-        sport,
-        totalGames, 
-        mvp: { name: mvp.name, wins: mvp.wins, games: mvp.games }, 
-        ironMan: { name: ironMan.name, sessionPlayCount: ironMan.sessionPlayCount },
-        hotHand: { name: hotHand.name, streak: hotHand.streak },
-        sharpShooter: { 
-            name: sharpShooter.name, 
-            wr: sharpShooter.games > 0 ? Math.round((sharpShooter.wins / sharpShooter.games) * 100) : 0,
-            squad: squad.map(p => ({ uuid: p.uuid, name: p.name, spiritAnimal: p.spiritAnimal })) // For voting
-        },
-        squad: sortedByWins.slice(0, 10) 
-    };
-}
-
-function _showHostRecap(recap) {
-    document.body.classList.add('session-ended');
-    closeOverlay();
-
-    const sessionMVPVotes = {}; // To store votes for this recap
-    const esc = (s) => (typeof escapeHTML === 'function' ? escapeHTML(s) : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
-
-    const leaderboardHTML = recap.squad.map((p, i) => `
-        <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);">
-            <div style="font-family:var(--font-display); font-weight:900; color:var(--accent); width:24px;">${i+1}</div>
-            <div style="flex:1; font-family:var(--font-display); font-weight:700; text-transform:uppercase; font-size:0.9rem;">${esc(p.name)}</div>
-            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:800; color:var(--text);">${p.wins}W</div>
-        </div>
-    `).join('');
-
-    const content = `
-        <div class="menu-card" style="max-width:440px; width:95%; max-height:90vh; overflow-y:auto; padding:32px 24px; text-align:left;">
-            <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; color:var(--accent); letter-spacing:4px; margin-bottom:8px; text-transform:uppercase;">SESSION COMPLETE</div>
-            <h2 style="font-size:2.2rem; margin-bottom:24px; line-height:1; font-family:var(--font-display); font-weight:900; font-style:italic;">RECAP & RANKINGS</h2>
-            
-            <div id="hostMvpDisplay" style="background:linear-gradient(135deg, var(--accent-dim), transparent); border:1px solid var(--border-accent); border-radius:16px; padding:24px; margin-bottom:24px; text-align:center;">
-                <div style="font-size:3rem; margin-bottom:10px;">🏆</div>
-                <div style="font-family:var(--font-display); font-size:0.7rem; font-weight:900; letter-spacing:2px; color:var(--accent); margin-bottom:4px; text-transform:uppercase;">SESSION MVP</div>
-                <div style="font-family:var(--font-display); font-size:2rem; font-weight:900; font-style:italic; text-transform:uppercase; color:#fff;">${esc(recap.mvp.name)}</div>
-                <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">${recap.mvp.wins} Wins · ${recap.mvp.games} Games</div>
-                <button class="sl-share-match-btn" style="margin-top:16px; background:var(--accent); color:#000;" 
-                    onclick="if(typeof generateMVPPoster==='function') generateMVPPoster('${esc(recap.mvp.name)}', ${recap.mvp.wins}, ${recap.mvp.games})">📲 SHARE MVP POSTER</button>
-            </div>
-
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px;">
-                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border);">
-                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">TOTAL GAMES</div>
-                    <div style="font-family:var(--font-display); font-size:1.8rem; font-weight:900; color:var(--accent);">${recap.totalGames}</div>
-                </div>
-                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
-                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">IRON MAN</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.ironMan.name)}</div>
-                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.ironMan.sessionPlayCount} Games</div>
-                </div>
-                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
-                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">HOT HAND</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.hotHand.name)}</div>
-                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.hotHand.streak} Win Streak</div>
-                </div>
-                <div style="background:var(--bg2); padding:16px; border-radius:12px; border:1px solid var(--border); overflow:hidden;">
-                    <div style="font-size:0.55rem; font-weight:800; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">SHARP SHOOTER</div>
-                    <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:900; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(recap.sharpShooter.name)}</div>
-                    <div style="font-size:0.6rem; color:var(--text-muted);">${recap.sharpShooter.wr}% Win Rate</div>
-                </div>
-            </div>
-
-            <div class="sync-section-label" style="margin-bottom:12px;">FINAL STANDINGS</div>
-            <div style="margin-bottom:24px; background:var(--surface); border-radius:12px; border:1px solid var(--border); padding:0 16px;">
-                ${leaderboardHTML}
-            </div>
-
-            <button class="btn-main" style="width:100%; height:54px; margin-bottom:12px; background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="window.location.reload()">BACK TO MENU</button>
-            <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.4; text-align:center;">Data has been synced to career records. Session logic disconnected.</p>
-        </div>
-    `;
-
-    UIManager.show(content, 'card');
-}
-// ---------------------------------------------------------------------------
-// QR CODE & SYNC TOKEN
-// ---------------------------------------------------------------------------
-
-function generateQR() {
-    // Fix: Use unicode-safe encoding so emojis don't crash btoa
-    const json  = JSON.stringify({ squad: StateStore.squad, currentMatches: StateStore.currentMatches });
-    const token = window.btoa(unescape(encodeURIComponent(json)));
-    if (token.length > 2500) {
-        alert('Data is too large for a QR code. Please use the "Copy Sync Token" button instead.');
-        return;
-    }
-    const qrDiv = document.getElementById('qrcode');
-    if (!qrDiv) return;
-    qrDiv.innerHTML = '';
-    const QRCtor = window.QRCodeConstructor || window.QRCode;
-    if (!QRCtor) { console.error('[CourtSide] generateQR: QRCode library not loaded'); return; }
-    new QRCtor(qrDiv, {
-        text:         token,
-        width:        200,
-        height:       200,
-        colorDark:    '#000000',
-        colorLight:   '#ffffff',
-    });
-}
-
-function copySyncToken() {
-    let text = window.currentRoomCode;
-    if (!isOnlineSession) {
-        // Fix: Unicode-safe encoding
-        const json = JSON.stringify({ squad: StateStore.squad, currentMatches: StateStore.currentMatches });
-        text = window.btoa(unescape(encodeURIComponent(json)));
-    }
-
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text)
-            .then(() => showSessionToast(isOnlineSession ? `📋 Room code copied: ${text}` : '📋 Token copied!'))
-            .catch(() => fallbackCopy(text));
-    } else {
-        fallbackCopy(text);
-    }
-}
-
-function fallbackCopy(text, msg = '📋 Token copied!') {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    try {
-        document.execCommand('copy');
-        showSessionToast(msg);
-    } catch (e) {
-        alert('Could not copy automatically. Please copy the token manually.');
-    }
-    document.body.removeChild(ta);
-}
-
-function _supportSectionHTML() {
-    return `
-        <div style="margin-top: auto; padding-top: 24px;">
-            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
-
-            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
-
-            <div style="flex:1 1 0; min-width:140px;">
-                <div class="sync-section-label">🐛 Report a Bug</div>
-                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
-                    Something broken? Let the dev know.
-                </p>
-                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
-                    onclick="openBugReportModal()">
-                    🐛 Report a Bug
-                </button>
-            </div>
-
-            <div style="flex:1 1 0; min-width:140px;">
-                <div class="sync-section-label">☕ Support the Dev</div>
-                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
-                    If Courtside Pro saves you time, consider buying the dev a coffee.
-                </p>
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
-                    <div style="text-align:center;">
-                            
-                    </div>
-                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
-                        style="display:inline-flex; align-items:center; gap:8px;
-                               background:#FF5E5B; color:#fff; font-weight:700;
-                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
-                               text-decoration:none; white-space:nowrap;">
-                        ☕ Ko-fi
-                    </a>
-                </div>
-            </div>
-
-            </div>
-        </div>
-    `;
-}
-
-function openBugReportModal() {
-    let modal = document.getElementById('bugReportModal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = 'bugReportModal';
-        modal.style.cssText = `
-            position:fixed; inset:0; background:rgba(0,0,0,0.7);
-            display:flex; align-items:center; justify-content:center;
-            z-index:9999; padding:20px; box-sizing:border-box;
-        `;
-        modal.innerHTML = `
-            <div style="background:var(--surface1,#1e293b); border:1px solid var(--border,#334155);
-                        border-radius:16px; padding:24px; width:100%; max-width:400px;
-                        box-shadow:0 20px 60px rgba(0,0,0,0.5);">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-                    <div style="font-weight:700; font-size:1rem; color:#fff;">🐛 Report a Bug</div>
-                    <button onclick="closeBugReportModal()" style="background:none; border:none;
-                            color:var(--text-muted,#94a3b8); font-size:1.2rem; cursor:pointer; padding:4px;">✕</button>
-                </div>
-                <p style="font-size:0.75rem; color:var(--text-muted,#94a3b8); margin:0 0 12px;">
-                    Something broken? Let the dev know.
-                </p>
-                <textarea id="bugReportModalText"
-                    placeholder="Describe what happened…"
-                    rows="5"
-                    style="width:100%; background:var(--bg2,#0f172a); border:1.5px solid var(--border,#334155);
-                           color:#fff; padding:14px; border-radius:12px; margin-bottom:12px;
-                           outline:none; font-size:14px; font-family:inherit;
-                           resize:vertical; box-sizing:border-box;"
-                ></textarea>
-                <div style="display:flex; gap:10px;">
-                    <button class="btn-main" style="flex:1; background:#334155; color:#fff;"
-                        onclick="closeBugReportModal()">Cancel</button>
-                    <button class="btn-main" style="flex:1; background:var(--accent,#38bdf8); color:#000;"
-                        onclick="submitBugReport()">📨 Send Report</button>
-                </div>
-            </div>
-        `;
-        modal.addEventListener('click', function(e) {
-            if (e.target === modal) closeBugReportModal();
-        });
-        document.body.appendChild(modal);
-    } else {
-        modal.style.display = 'flex';
-        const ta = document.getElementById('bugReportModalText');
-        if (ta) ta.value = '';
-    }
-}
-
-function closeBugReportModal() {
-    const modal = document.getElementById('bugReportModal');
-    if (modal) modal.style.display = 'none';
-}
-
-function submitBugReport() {
-    const text = (document.getElementById('bugReportModalText')?.value || '').trim();
-    if (!text) {
-        alert('Please describe the bug before sending.');
-        return;
-    }
-    const subject = encodeURIComponent('[Courtside Pro] Bug Report');
-    const body = encodeURIComponent(
-        'Bug Description:\n' + text +
-        '\n\n---\n' +
-        'App version: Courtside Pro\n' +
-        'Time: ' + new Date().toLocaleString() + '\n' +
-        'Squad size: ' + (StateStore.squad?.length ?? 'N/A') + '\n' +
-        'Active courts: ' + (StateStore.get('activeCourts') ?? 'N/A')
-    );
-    window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
-    closeBugReportModal();
-}
-
-function importSyncToken() {
-    const val = document.getElementById('syncInput').value.trim();
-    if (!val) return;
-    try {
-        // Fix: Unicode-safe decoding
-        const json = decodeURIComponent(escape(window.atob(val)));
-        const data = JSON.parse(json);
-        if (!data.squad) throw new Error('Missing squad data');
-                StateStore.setState({ squad: data.squad, currentMatches: data.currentMatches || [] }); // Triggers sync
-        closeOverlay();
-        renderSquad();
-        document.getElementById('matchContainer').innerHTML = '';
-        if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-        checkNextButtonState();
-    } catch (e) {
-        alert('Invalid Sync Token. Please check the data and try again.');
-    }
-}
-
-function eraseAllData() {
-    localStorage.clear();
-    location.reload();
-}
-
-function confirmEraseAllData() {
-    UIManager.confirm({
-        title: 'Wipe All Data?',
-        message: 'This will permanently delete all players, matches, and session history. This action cannot be undone.',
-        confirmText: 'Yes, Wipe Everything',
-        isDestructive: true,
-        onConfirm: eraseAllData
-    });
-}
-
-// ---------------------------------------------------------------------------
-// UTILITIES
-// ---------------------------------------------------------------------------
-
-/**
- * Returns a function that, as long as it continues to be invoked, will not
- * be triggered. The function will be called after it stops being called for
- * N milliseconds.
- */
-function debounce(fn, delay) {
-    let timeoutId = null;
-    const debounced = (...args) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => fn(...args), delay);
-    };
-    debounced.cancel = () => { if (timeoutId) clearTimeout(timeoutId); timeoutId = null; };
-    return debounced;
-}
-
-window.debounce = debounce;
-
-function escapeHTML(str) {
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-// ---------------------------------------------------------------------------
-// UNDO LAST ROUND
-// ---------------------------------------------------------------------------
-
-function updateUndoButton() {
-    const btn = document.getElementById('undoRoundBtn');
-    if (!btn) return;
-    btn.style.display  = StateStore.roundHistory.length > 0 ? 'inline-flex' : 'none';
-}
-
-function undoLastRound() {
-    if (StateStore.roundHistory.length === 0) return;
-    UIManager.confirm({
-        title: 'Undo Round?',
-        message: 'Undo the last round? This will reverse all stat changes.',
-        confirmText: 'Yes, Undo',
-        onConfirm: () => {
-            const snapshot = StateStore.roundHistory.pop();
-            // Restore state from the snapshot using the StateStore
-            StateStore.setState({
-                squad: snapshot.squadSnapshot,
-                currentMatches: snapshot.matches,
-                playerQueue: snapshot.queueSnapshot || StateStore.playerQueue,
-            });
-            renderSquad();
-            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
-            if (typeof renderQueueStrip === 'function') renderQueueStrip();
-            updateUndoButton();
-            checkNextButtonState();
-            Haptic.bump();
-
-            // SYNC FIX: Immediately broadcast the undone state so players 
-            // see their form revert without delay.
-            if (typeof broadcastGameState === 'function') broadcastGameState(true);
-
-            showSessionToast('↩ Last round undone');
-        }
-    });
-}
-
-// ---------------------------------------------------------------------------
-// STATS OVERLAY — TABS
-// ---------------------------------------------------------------------------
-
-/** Calculates a weighted skill index for sorting players. */
-function getSkillIndex(p) {
-    if (!p || p.games === 0) return 0;
-    const winRate = p.wins / p.games;
-    // Weighted score: Win rate is the primary driver, total wins provides tie-breaking volume
-    return (winRate * 100) + (p.wins * 2);
-}
 
 function renderStatsTab(tab) {
     // UX FIX: Always fetch the latest passport data to ensure career stats 
@@ -1991,6 +482,2006 @@ function renderStatsTab(tab) {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// ACHIEVEMENT PRESS HANDLERS
+// ---------------------------------------------------------------------------
+let achPressTimer = null;
+function startAchPress(key, pUUID = null) {
+    achPressTimer = setTimeout(() => {
+        if (typeof showAchievementDescription === 'function') {
+            let p = null;
+            const squad = (typeof StateStore !== 'undefined' ? StateStore.squad : null) || window.squad || [];
+            if (pUUID) p = squad.find(x => (x.uuid || x.name) === pUUID);
+            else if (typeof selectedPlayerIndex !== 'undefined' && selectedPlayerIndex !== null) p = StateStore.squad[selectedPlayerIndex];
+            
+            showAchievementDescription(key, p ? (p.achievements || []) : []);
+            if (window.Haptic) Haptic.bump();
+        }
+        achPressTimer = null;
+    }, 600);
+}
+function endAchPress(key) {
+    clearTimeout(achPressTimer);
+    achPressTimer = null;
+}
+
+// ---------------------------------------------------------------------------
+// PERSISTENCE
+// ---------------------------------------------------------------------------
+
+function saveToDisk() {
+    try {
+        // Cap roundHistory to last 10 entries — enough for undo, keeps localStorage lean
+        const historySlice = StateStore.roundHistory.slice(-10);
+        const stateToSave = {
+            squad: StateStore.squad,
+            currentMatches: StateStore.currentMatches,
+            roundHistory: historySlice,
+            playerQueue: StateStore.playerQueue,
+            activeCourts: StateStore.get('activeCourts'),
+            courtNames: StateStore.get('courtNames'),
+            isOpenParty: StateStore.get('isOpenParty') || false,
+            guestList: StateStore.get('guestList') || [],
+            lastUpdated: StateStore.get('lastUpdated'),
+        };
+        localStorage.setItem('cs_pro_vault', JSON.stringify(stateToSave));
+    } catch (e) {
+        console.warn('CourtSide: Failed to save to disk. Storage might be full.', e);
+        if (typeof showSessionToast === 'function') showSessionToast('⚠️ Storage warning: Data not saved locally.');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FIELD MIGRATION
+// ---------------------------------------------------------------------------
+function migratePlayer(p) {
+    if (p.wins             == null) p.wins             = 0;
+    if (p.games            == null) p.games            = 0;
+    if (p.streak           == null) p.streak           = 0;
+    if (p.sessionPlayCount == null) p.sessionPlayCount = 0;
+    if (p.waitRounds       == null) p.waitRounds       = 0;
+    if (p.consecutiveGames == null) p.consecutiveGames = 0;
+    if (p.forcedRest       == null) p.forcedRest       = false;
+    if (p.active           == null) p.active           = true;
+    if (p.teammateHistory  == null) p.teammateHistory  = {};
+    if (p.opponentHistory  == null) p.opponentHistory  = {};
+    if (p.partnerStats     == null) p.partnerStats     = {};
+    if (p.form             == null) p.form             = [];
+    if (p.achievements     == null) p.achievements     = [];
+    if (p.matchHistory     == null) p.matchHistory     = [];
+    if (p.spiritAnimal     == null) p.spiritAnimal     = null;
+
+    // Explicitly remove deprecated tracking fields
+    delete p.skillLevel;
+    delete p.rating;
+
+    return p;
+}
+
+function loadFromDisk() {
+    const saved = localStorage.getItem('cs_pro_vault');
+    if (saved) {
+        try {
+            const data = JSON.parse(saved);
+            const loadedSquad = data.squad || [];
+            loadedSquad.forEach(migratePlayer);
+
+            const squadIds = new Set(loadedSquad.map(p => p.uuid || p.name));
+            const loadedMatches = (data.currentMatches || []).filter(m =>
+                m.teams.flat().every(id => squadIds.has(id))
+            );
+
+            const loadedQueue = (data.playerQueue || []).filter(id => loadedSquad.find(p => (p.uuid || p.name) === id));
+            const loadedCourts = (Number.isInteger(data.activeCourts) && data.activeCourts >= 1)
+                ? data.activeCourts : 1;
+
+            StateStore.setState({
+                squad: loadedSquad,
+                roundHistory: data.roundHistory || [],
+                currentMatches: loadedMatches,
+                playerQueue: loadedQueue,
+                activeCourts: loadedCourts,
+                courtNames: data.courtNames || {},
+                isOpenParty: data.isOpenParty || false,
+            sport: data.sport || 'Badminton',
+                guestList: data.guestList || [],
+                lastUpdated: data.lastUpdated || Date.now(),
+            });
+
+            setTimeout(() => {
+                const courtInput = document.getElementById('courtCountInput');
+                if (courtInput) courtInput.value = loadedCourts;
+            }, 0);
+
+            renderSquad();
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
+        } catch (e) {
+            console.error('CourtSide: Failed to parse saved data.', e);
+            StateStore.setState({ squad: [], currentMatches: [], roundHistory: [] });
+        }
+    }
+    checkNextButtonState();
+    updateUndoButton();
+}
+
+// ---------------------------------------------------------------------------
+// PLAYER MANAGEMENT
+// ---------------------------------------------------------------------------
+
+function addPlayer() {
+    const el = document.getElementById('playerName');
+    const name = el.value.trim();
+    if (!name) return;
+    
+    // Check for existing player (case-insensitive)
+    const existing = StateStore.squad.find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+        if (typeof showSessionToast === 'function') showSessionToast('⚠️ Player already exists!');
+        else alert('Player already exists!');
+        el.value = '';
+        return;
+    }
+
+    const newUUID = _generateUUID();
+    // Use migratePlayer to ensure all required logic fields (stats, history) are initialized
+    const newPlayer = migratePlayer({
+        name: name,
+        uuid: newUUID,
+        active: true,
+        isGuest: true
+    });
+    
+    const pId = newPlayer.uuid || newPlayer.name;
+    const newQueue = [...StateStore.playerQueue];
+    if (!newQueue.includes(pId)) newQueue.push(pId);
+
+    // Explicitly trigger the StateStore setters to fire cloud sync and local persistence
+    StateStore.set('squad', [...StateStore.squad, newPlayer]);
+    StateStore.set('playerQueue', newQueue);
+
+    // Connectivity: Force an immediate push to Supabase so spectators see the new player instantly
+    if (window.isOnlineSession && window.isOperator && typeof pushStateToSupabase === 'function') {
+        pushStateToSupabase(true, [newUUID]);
+    }
+
+    el.value = '';
+    renderSquad();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    checkNextButtonState();
+    if (window.Haptic) Haptic.success();
+}
+
+function editPlayerName() {
+    const p = StateStore.squad[selectedPlayerIndex];
+    if (!p) return;
+    const oldName = p.name;
+
+    closeMenu(); // Close the long-press menu first
+
+    UIManager.prompt({
+        title: 'Edit Player Name',
+        initialValue: p.name,
+        confirmText: 'Save Name',
+        onConfirm: (newName) => {
+            const trimmedNewName = newName.trim();
+            if (!trimmedNewName) return;
+
+            // Check for name collision (case-insensitive, but not against the player's own old name)
+            if (StateStore.squad.some(player => player.name.toLowerCase() === trimmedNewName.toLowerCase() && player.name.toLowerCase() !== oldName.toLowerCase())) {
+                alert('A player with this name already exists.');
+                return;
+            }
+
+            if (typeof _applyNameUpdate === 'function') {
+                _applyNameUpdate(p.uuid, oldName, trimmedNewName);
+            }
+        }
+    });
+}
+
+let _isProcessingOpenPartyBatch = false;
+
+async function toggleOpenParty() {
+    const current = StateStore.get('isOpenParty') || false;
+    const next = !current;
+
+    if (next && window.playRequests?.length > 0 && !_isProcessingOpenPartyBatch) {
+        _isProcessingOpenPartyBatch = true;
+        const toApprove = [...window.playRequests];
+        showSessionToast(`🔓 Open Party: ON. Approving ${toApprove.length} players...`);
+        
+        try {
+            // 1. Process all pending requests locally first for instant UI response
+            for (const r of toApprove) {
+                // skipSync=true to prevent multiple redundant StateStore triggers in the loop
+                // skipAPI=true because we will resolve them in a single batch call below
+                await approvePlayRequest(r.name, r.id, r.player_uuid, true, true);
+            }
+
+            // 2. Commit the Open Party state and the new squad members atomically
+            StateStore.setState({
+                isOpenParty: true,
+                squad: [...StateStore.squad],
+                playerQueue: [...StateStore.playerQueue]
+            });
+
+            // 3. Inform the server to clean up the requests table
+            const ids = toApprove.map(r => r.id);
+            if (ids.length > 0) {
+                batchApproveAPI(ids); // Fire and forget cleanup
+            }
+        } finally {
+            _isProcessingOpenPartyBatch = false;
+            if (typeof broadcastGameState === 'function') broadcastGameState(true); // Immediate sync to players
+        }
+    } else {
+        StateStore.set('isOpenParty', next);
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
+        showSessionToast(`🔓 Open Party: ${next ? 'ON' : 'OFF'}`);
+    }
+    renderOpenPartyToggle();
+}
+
+function renderOpenPartyToggle() {
+    const el = document.getElementById('slOpenPartyToggle');
+    if (!el) return;
+    const isOpen = StateStore.get('isOpenParty') || false;
+    el.className = `open-party-toggle ${isOpen ? 'is-open' : 'is-closed'}`;
+    el.innerHTML = isOpen 
+        ? '<span>🔓</span> Open Party: ON' 
+        : '<span>🔒</span> Open Party: OFF';
+}
+
+/**
+ * Forces a reconciliation of the player queue with the active squad.
+ * Useful for fixing edge-case ordering issues or missing players.
+ */
+function resyncQueue() {
+    if (window.isOperator === false) return;
+    if (typeof initQueue === 'function') {
+        const hasChanged = initQueue(); // initQueue now returns true if playerQueue changed
+        if (hasChanged) {
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+            if (window.Haptic) Haptic.success();
+        } else {
+            if (typeof showSessionToast === 'function') showSessionToast('Queue already synchronized.');
+        }
+    }
+}
+
+function deletePlayer() {
+    const p = StateStore.squad[selectedPlayerIndex];
+    if (!p) return;
+
+    UIManager.confirm({
+        title: `Delete ${p.name}?`,
+        message: 'This will remove the player from the squad and all current matches. This action cannot be undone.',
+        confirmText: 'Yes, Delete Player',
+        isDestructive: true,
+        onConfirm: async () => {
+            // BUG FIX: Centralize removal logic. This function handles state,
+            // animation, and the required API call to update the database.
+            if (typeof removePlayerFromSession === 'function') {
+                await removePlayerFromSession(p.uuid, p.name);
+            }
+            closeMenu();
+        }
+    });
+}
+
+function initiateSwap(uuid) {
+    swapSourceUUID = uuid;
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    closeMenu();
+    showSessionToast(`Select another player to swap with ${p.name}`);
+    renderSquad();
+    Haptic.tap();
+}
+
+function completeSwap(targetUUID) {
+    const p1 = StateStore.squad.find(x => x.uuid === swapSourceUUID);
+    const p2 = StateStore.squad.find(x => x.uuid === targetUUID);
+    
+    if (p1 && p2 && typeof swapActivePlayers === 'function') {
+        if (swapActivePlayers(p1.uuid, p2.uuid)) {
+            showSessionToast(`Swapped ${p1.name} & ${p2.name}`);
+            Haptic.success(); // StateStore.set in swapActivePlayers will trigger sync
+        } else {
+            showSessionToast('Could not swap players.');
+        }
+    }
+    cancelSwap(); // Clears state and renders
+}
+
+function cancelSwap() {
+    swapSourceUUID = null;
+    closeMenu();
+    renderSquad();
+}
+
+function toggleRestingState() {
+    const p = StateStore.squad[selectedPlayerIndex];
+    if (!p) return;
+    closeMenu();
+    togglePlayerActive(p.uuid);
+}
+function _autoAddHostToSquad() {
+    // This function runs on app start for the host.
+    // If the host has a player passport from a previous session,
+    // and they aren't already in the current squad, add them automatically.
+    if (!passport || !passport.playerName) return;
+
+    const hostName = passport.playerName;
+    const hostUUID = passport.playerUUID;
+
+    // Check if a player with this UUID or name already exists.
+    const hostInSquad = StateStore.squad.find(p => p.uuid === hostUUID);
+    const newQueue = [...StateStore.playerQueue];
+    let changed = false;
+
+    if (!hostInSquad) {
+        const hostAsPlayer = migratePlayer({
+            name: hostName,
+            uuid: hostUUID,
+            active: true
+        });
+        
+        const existingIdx = newQueue.findIndex(u => u === hostUUID || u === hostName);
+        if (existingIdx === -1) {
+            newQueue.unshift(hostUUID);
+        } else {
+            newQueue[existingIdx] = hostUUID; // Transition name to UUID
+        }
+        
+        StateStore.setState({
+            squad: [hostAsPlayer, ...StateStore.squad],
+            playerQueue: newQueue
+        });
+        changed = true;
+        showSessionToast(`👋 Welcome, ${hostName}! You've been added to the rotation.`);
+    } else {
+        const existingIdx = newQueue.findIndex(u => u === hostUUID || u === hostName);
+        if (existingIdx === -1) {
+            newQueue.unshift(hostUUID); // Also add to front of queue
+            StateStore.set('playerQueue', newQueue);
+            changed = true;
+        } else if (newQueue[existingIdx] === hostName) {
+            newQueue[existingIdx] = hostUUID; // Standardize ID
+            StateStore.set('playerQueue', newQueue);
+            changed = true;
+        }
+        if (hostInSquad.active === false) {
+            const hostIdx = StateStore.squad.findIndex(p => p.uuid === hostUUID);
+            if (hostIdx !== -1) {
+                const newSquad = [...StateStore.squad];
+                newSquad[hostIdx] = { ...hostInSquad, active: true };
+                if (StateStore.set('squad', newSquad)) {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if (changed) {
+        renderSquad();
+        if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    }
+}
+
+/** Removes a player from all local state arrays (squad, matches, queue). */
+function _removePlayerFromLocalState(playerIndex) {
+    const removedPlayer = StateStore.squad[playerIndex];
+    const removedName = removedPlayer.name;
+    const removedUUID = removedPlayer.uuid || null;
+
+    const newSquad = [...StateStore.squad];
+    newSquad.splice(playerIndex, 1);
+    const removedId = removedUUID || removedName;
+    const newMatches = StateStore.currentMatches.filter(m => !m.teams.flat().includes(removedId));
+    const newQueue = StateStore.playerQueue.filter(u => u !== removedId);
+
+    if (window._approvedPlayers) {
+        // Remove by UUID and any potential name-based entry
+        if (removedUUID) delete window._approvedPlayers[removedUUID]; 
+        if (removedName && window._approvedPlayers[removedName]) delete window._approvedPlayers[removedName];
+    }
+
+    if (window._sessionUUIDMap) {
+        const uuidMap = window._sessionUUIDMap;
+        // Remove entry by the player's current name
+        if (removedName && uuidMap[removedName] === removedUUID) delete uuidMap[removedName];
+        // Iterate and remove any other entries that point to the removed UUID (e.g., old names)
+        for (const key in uuidMap) {
+            if (Object.prototype.hasOwnProperty.call(uuidMap, key) && uuidMap[key] === removedUUID) {
+                delete uuidMap[key];
+            }
+        }
+    }
+    if (typeof playRequests !== 'undefined' && removedUUID) {
+        const pendingRequest = playRequests.find(r => r.player_uuid === removedUUID);
+        if (pendingRequest && typeof denyPlayRequest === 'function') {
+            denyPlayRequest(pendingRequest.id);
+        }
+    }
+
+    return { removedName, removedUUID, newSquad, newMatches, newQueue };
+}
+
+/** Updates all relevant UI components after a player has been removed. */
+function _updateUIAfterPlayerRemoval() {
+    renderSquad();
+    if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    checkNextButtonState();
+    if (typeof window.initQueue === 'function') window.initQueue();
+}
+
+/** Sends a request to the backend to permanently remove the player from the session_members table. */
+async function _removePlayerFromRemoteDB(playerUUID) {
+    if (!window.isOperator || !playerUUID || !window.currentRoomCode || !window.operatorKey) return;
+    try {
+        await fetch('/api/play-request', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                room_code: window.currentRoomCode,
+                player_uuid: playerUUID,
+                operator_key: window.operatorKey
+            })
+        });
+    } catch (e) {
+        console.error('[CourtSide] Failed to remove member from DB session', e);
+    }
+}
+
+/** Orchestrates the removal of a player from the session. */
+async function removePlayerFromSession(playerUUID, playerName) {
+    if (!playerUUID && !playerName) return;
+
+    let pIndex = -1;
+    if (playerUUID) {
+        pIndex = StateStore.squad.findIndex(p => p.uuid === playerUUID);
+    }
+    if (pIndex === -1 && playerName) {
+        pIndex = StateStore.squad.findIndex(p => p.name.toLowerCase() === playerName.toLowerCase());
+    }
+
+    if (pIndex === -1) return; // Player not in squad
+
+    const { removedName, removedUUID, newSquad, newMatches, newQueue } = _removePlayerFromLocalState(pIndex);
+
+    // Atomically update the global state to ensure consistency across the session
+    const hasChanged = StateStore.setState({
+        squad: newSquad,
+        currentMatches: newMatches,
+        playerQueue: newQueue
+    });
+
+    if (hasChanged) {
+        _updateUIAfterPlayerRemoval();
+        if (typeof broadcastEvent === 'function') {
+            broadcastEvent('player_removed', { playerUUID: removedUUID, playerName: removedName });
+        }
+    }
+
+    await _removePlayerFromRemoteDB(removedUUID);
+    Haptic.bump();
+}
+
+// ---------------------------------------------------------------------------
+// RENDERING
+// ---------------------------------------------------------------------------
+
+const _debouncedSquadRender = debounce(() => renderSquad(), 150);
+
+window.handleSquadSearch = (val) => {
+    window.squadSearchQuery = val;
+    _debouncedSquadRender();
+};
+
+function renderSquad() {
+    const container = document.getElementById('squadList');
+    if (!container) return;
+
+    ensureHostUI();
+
+    // Ensure search bar exists
+    let searchInput = document.getElementById('squadSearchInput');
+    if (!searchInput) {
+        const searchWrap = document.createElement('div');
+        searchWrap.className = 'input-row search-wrap';
+        searchWrap.style.cssText = 'margin-bottom: 16px; position: relative;';
+        searchWrap.innerHTML = ` 
+            <input type="text" id="squadSearchInput" placeholder="Search players..." 
+                   style="flex:1; padding-right: 35px;" oninput="window.handleSquadSearch(this.value)">
+            <button id="squadSearchClear" onclick="window.clearSquadSearch()" 
+                    style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; display: none; font-size: 1.1rem;">
+                ✕
+            </button>
+        `;
+        container.parentNode.insertBefore(searchWrap, container);
+        searchInput = document.getElementById('squadSearchInput');
+    }
+
+    const query = (window.squadSearchQuery || '').toLowerCase().trim();
+    
+    // Toggle clear button visibility
+    const clearBtn = document.getElementById('squadSearchClear');
+    if (clearBtn) clearBtn.style.display = query ? 'block' : 'none';
+
+    // Update the input's value if the query changed externally (e.g., from clearHistorySearch)
+    if (searchInput && searchInput.value !== (window.squadSearchQuery || '')) {
+        searchInput.value = window.squadSearchQuery || '';
+    }
+
+    const existingChips = new Map();
+    container.querySelectorAll('.player-chip').forEach(chip => {
+        const uuid = chip.dataset.uuid;
+        if (uuid) existingChips.set(uuid, chip);
+    });
+
+    const existingIds = new Set();
+    const fragment = document.createDocumentFragment();
+
+    StateStore.squad.forEach((p, idx) => {
+        const pId = p.uuid || p.name;
+        const isNew = p.games === 0 && p.wins === 0;
+        existingIds.add(pId);
+
+        const isMatch = !query || p.name.toLowerCase().includes(query);
+
+        const waitBadge = p.active && p.waitRounds > 0 ? `<span class="wait-round-badge">${p.waitRounds}</span>` : '';
+        const chipContent = `
+            ${Avatar.html(p.name, p.spiritAnimal)}
+            <span class="chip-name">${escapeHTML(p.name)}${isNew ? '<span class="new-badge">NEW</span>' : ''}${!p.active ? ' ☕' : ''}${p.forcedRest ? ' 🔄' : ''}${!p.forcedRest && p.streak >= 4 ? ' 🔥' : ''}</span>
+            ${waitBadge}
+        `;
+        const isSwapping = pId === swapSourceUUID;
+        const chipClasses = `player-chip ${p.active ? 'active' : 'resting'} ${p.forcedRest ? 'forced-rest' : ''} ${isSwapping ? 'swapping-source' : ''} ${p.acknowledged ? 'player-acknowledged' : ''}`;
+
+        let chip = existingChips.get(pId);
+
+        if (chip) {
+            // Chip exists, update it if necessary
+            if (chip.className !== chipClasses) {
+                chip.className = chipClasses;
+            }
+            // Update innerHTML if content changed (includes wait badge)
+            if (chip.innerHTML.trim() !== chipContent.trim()) { // Trim to ignore whitespace differences
+                chip.innerHTML = chipContent;
+            }
+            chip.style.display = isMatch ? '' : 'none';
+            existingChips.delete(pId);
+        } else {
+            // Chip does not exist, create it
+            const newChip = document.createElement('div');
+            newChip.className = chipClasses;
+            newChip.dataset.uuid = pId;
+            newChip.innerHTML = chipContent;
+            newChip.style.display = isMatch ? '' : 'none';
+            newChip.addEventListener('mousedown', () => startPress(pId));
+            newChip.addEventListener('mouseup', () => endPress(pId));
+            newChip.addEventListener('touchstart', () => startPress(pId));
+            newChip.addEventListener('touchend', () => endPress(pId));
+            newChip.addEventListener('contextmenu', (e) => e.preventDefault());
+            fragment.appendChild(newChip);
+        }
+    });
+
+    // Append all new chips in a single DOM operation.
+    if (fragment.children.length > 0) {
+        container.appendChild(fragment);
+    }
+
+    // Handle removal of chips that are no longer in the squad or are filtered out
+    existingChips.forEach(chip => { // These are chips that were in the DOM but not in the current render pass
+        // These are chips for players NO LONGER in the StateStore.squad
+        chip.classList.add('player-chip-removing');
+        chip.addEventListener('animationend', () => chip.remove(), { once: true });
+    });
+
+    renderDirectorHub();
+}
+
+/** Clears the squad search and resets the list. */
+window.clearSquadSearch = function() {
+    const input = document.getElementById('squadSearchInput');
+    if (input) {
+        input.value = '';
+        window.squadSearchQuery = '';
+        renderSquad();
+        input.focus();
+    }
+};
+
+function checkNextButtonState() {
+    const btn = document.getElementById('nextRoundBtn');
+    if (!btn) return;
+    const canProceed = StateStore.currentMatches.length === 0;
+    btn.style.opacity       = canProceed ? '1'       : '0.4';
+    btn.style.pointerEvents = canProceed ? 'auto'    : 'none';
+    btn.style.cursor        = canProceed ? 'pointer' : 'default';
+    btn.style.background    = canProceed ? 'var(--accent)' : '#2a2a3a';
+    btn.textContent         = StateStore.currentMatches.length === 0 ? 'Start Session' : 'Matches in Progress';
+}
+
+function setCourts(n) {
+    const val = Math.max(1, parseInt(n) || 1);
+    const input = document.getElementById('courtCountInput');
+    const row = input ? input.closest('.court-input-row') : null;
+    
+    const triggerFeedback = () => {
+        if (row) {
+            row.classList.remove('success-pulse');
+            void row.offsetWidth; // trigger reflow
+            row.classList.add('success-pulse');
+        }
+        if (typeof showSessionToast === 'function') showSessionToast(`🏀 ${val} court${val > 1 ? 's' : ''} active`);
+        if (window.Haptic) Haptic.success();
+    };
+
+    if (input) input.value = val;
+    if (StateStore.get('activeCourts') === val) {
+        triggerFeedback();
+        return;
+    }
+
+    if (StateStore.currentMatches.length === 0) {
+        StateStore.set('activeCourts', val);
+        saveToDisk();
+        triggerFeedback();
+        return;
+    }
+
+    UIManager.confirm({
+        title: 'Change Courts?',
+        message: `Set to ${val} court${val > 1 ? 's' : ''}? This will reset all current matches.`,
+        confirmText: 'Change & Reset',
+        isDestructive: true,
+        onConfirm: () => {
+            StateStore.set('activeCourts', val);
+            StateStore.set('currentMatches', []);
+            document.getElementById('matchContainer').innerHTML = '';
+            const onCourt = StateStore.squad.filter(p => p.active);
+            onCourt.forEach(p => {
+                const id = p.uuid || p.name;
+                if (!StateStore.playerQueue.includes(id)) StateStore.playerQueue.unshift(id);
+            });
+            generateMatches();
+            saveToDisk();
+            triggerFeedback();
+        },
+        onCancel: () => {
+            const restoredCourts = StateStore.get('activeCourts') || 1;
+            if (input) input.value = restoredCourts;
+        }
+    });
+}
+
+function toggleHostAudioAnnounce() {
+    const current = localStorage.getItem('cs_host_audio_announce') === 'true';
+    const newVal = !current;
+    localStorage.setItem('cs_host_audio_announce', String(newVal));
+    if (typeof showSessionToast === 'function') showSessionToast(`🔊 Voice Alerts: ${newVal ? 'ON' : 'OFF'}`);
+    showOverlay('menu'); // Refresh overlay to show updated toggle state
+}
+
+
+// ---------------------------------------------------------------------------
+// LONG-PRESS MENU
+// ---------------------------------------------------------------------------
+
+let _lastTapInfo = { uuid: null, time: 0 };
+
+function startPress(uuid) {
+    isLongPress = false;
+    pressTimer = setTimeout(() => {
+        isLongPress = true;
+        // If we are in swap mode and tap the source again, just cancel
+        if (swapSourceUUID && swapSourceUUID === uuid) {
+            Haptic.tap();
+        } else {
+            Haptic.bump();
+        }
+        openMenu(uuid);
+    }, 600);
+}
+
+function endPress(uuid) {
+    clearTimeout(pressTimer);
+    if (!isLongPress) {
+        const now = Date.now();
+        if (_lastTapInfo.uuid === uuid && (now - _lastTapInfo.time) < 300) {
+            // Double tap detected: Toggle Ready/Resting
+            togglePlayerActive(uuid);
+            _lastTapInfo = { uuid: null, time: 0 };
+        } else {
+            _lastTapInfo = { uuid, time: now };
+            
+            // Single tap fallback: If resting, toggle to ready. 
+            const player = StateStore.squad.find(p => p.uuid === uuid);
+            if (player && !player.active) {
+                togglePlayerActive(uuid);
+            }
+        }
+    }
+}
+
+function togglePlayerActive(uuid) {
+    const pIdx = StateStore.squad.findIndex(p => p.uuid === uuid);
+    if (pIdx === -1) return;
+    
+    Haptic.tap();
+    const player = StateStore.squad[pIdx];
+    const newSquad = [...StateStore.squad];
+    newSquad[pIdx] = { ...player, active: !player.active }; // Immutable update
+
+    const hasChanged = StateStore.set('squad', newSquad);
+    if (hasChanged) {
+        renderSquad();
+        checkNextButtonState();
+        if (typeof pushStateToSupabase === 'function') pushStateToSupabase(false, [uuid]);
+        if (typeof broadcastGameState === 'function') broadcastGameState(true);
+    }
+}
+
+function openMenu(uuid) {
+    const playerIndex = StateStore.squad.findIndex(p => (p.uuid || p.name) === uuid);
+    if (playerIndex === -1) return;
+    selectedPlayerIndex = playerIndex;
+    const p = StateStore.squad[playerIndex];
+    const sport = StateStore.get('sport') || 'Badminton';
+    const sIcon = window.SPORT_ICONS[sport] || '🏸';
+    const menu = document.getElementById('actionMenu');
+    if (!menu) return;
+
+    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
+    const isPlaying = onCourt.has(p.uuid || p.name);
+
+    let swapActionHTML = '';
+
+    // Logic for Swap Button visibility
+    if (swapSourceUUID) {
+        // We are in the middle of a swap
+        if (isPlaying && (p.uuid || p.name) !== swapSourceUUID) {
+            // This is a valid target
+            const sourceP = StateStore.squad.find(s => s.uuid === swapSourceUUID);
+            const sourceName = sourceP ? sourceP.name : 'Player';
+            swapActionHTML = `
+                <button class="btn-main menu-btn" onclick="completeSwap('${p.uuid}')" style="background:var(--accent); color:#000;">
+                    Confirm Swap with ${escapeHTML(sourceName)}
+                </button>
+                <button class="btn-main menu-btn" onclick="cancelSwap()" style="background:var(--surface2); color:var(--text);">
+                    Cancel Swap
+                </button>
+            `;
+        } else {
+            // Clicked self or invalid target -> allow cancel
+            swapActionHTML = `<button class="btn-main menu-btn" onclick="cancelSwap()">Cancel Swap</button>`;
+        }
+    } else if (isPlaying) {
+        // Not swapping yet, show initiate button
+        swapActionHTML = `<button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="initiateSwap('${p.uuid || p.name}')">⇄ Swap Position</button>`;
+    }
+
+    let pokeActionHTML = '';
+    if (isPlaying && !swapSourceUUID && !p.isGuest) {
+        pokeActionHTML = `
+            <button class="btn-main menu-btn" style="background:var(--bg2); color:var(--warning); border:1px solid var(--warning);" onclick="broadcastPoke('${p.uuid}'); closeMenu();">
+                ⚡ Poke Player
+            </button>`;
+    }
+
+    menu.innerHTML = `
+        <div class="menu-card">
+            <h2>${escapeHTML(p.name)}</h2>
+            <p>${p.active ? (isPlaying ? `Currently Playing ${sIcon}` : 'Ready for Rotation') : 'Taking a Break ☕'}</p>
+            
+            ${swapActionHTML}
+
+            ${pokeActionHTML}
+
+            <button class="btn-main menu-btn" onclick="toggleRestingState()">
+                ${p.active ? 'Take a Break ☕' : 'Return to Play'}
+            </button>
+
+            ${p.active && !isPlaying ? `
+            <button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="movePlayerToFront()">
+                Move to Front ⬆
+            </button>
+            ` : ''}
+
+            <button class="btn-main menu-btn" style="background:var(--surface2); color:var(--text); border:1px solid var(--border);" onclick="editPlayerName()">
+                Edit Name
+            </button>
+
+            <button class="btn-main menu-btn btn-danger" onclick="deletePlayer()">
+                Remove Player
+            </button>
+            
+            <button class="btn-cancel" onclick="closeMenu()">Cancel</button>
+        </div>
+    `;
+    menu.style.display = 'flex';
+}
+
+function closeMenu() {
+    document.getElementById('actionMenu').style.display = 'none';
+    selectedPlayerIndex = null;
+}
+
+function movePlayerToFront() {
+    const p = StateStore.squad[selectedPlayerIndex];
+    if (!p) return;
+    
+    // Remove from current spot in queue and add to front using unified ID
+    const pId = p.uuid || p.name;
+    const newQueue = StateStore.playerQueue.filter(u => u !== pId);
+    newQueue.unshift(pId);
+    StateStore.set('playerQueue', newQueue);
+    
+    closeMenu();
+    if (typeof renderQueueStrip === 'function') renderQueueStrip();
+    saveToDisk();
+    if (typeof broadcastGameState === 'function') broadcastGameState(true);
+    if (window.Haptic) Haptic.success();
+    if (typeof showSessionToast === 'function') showSessionToast(`${p.name} moved to front`);
+}
+
+function openCourtRename(courtIndex) {
+    if (!isOperator) return; // Only host can rename
+
+    const courtNames = StateStore.get('courtNames') || {};
+    const currentName = courtNames[courtIndex] || `Court ${courtIndex + 1}`;
+
+    UIManager.prompt({
+        title: `Rename ${currentName}`,
+        initialValue: courtNames[courtIndex] || '',
+        placeholder: 'e.g. Center Court',
+        confirmText: 'Save Name',
+        onConfirm: (newName) => {
+            const trimmed = newName.trim();
+            const newCourtNames = { ...courtNames };
+
+            if (trimmed) {
+                newCourtNames[courtIndex] = trimmed;
+            } else {
+                delete newCourtNames[courtIndex]; // Revert to default if name is cleared
+            }
+
+            StateStore.set('courtNames', newCourtNames);
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+        }
+    });
+}
+
+function goToMainMenu() {
+    const hasActiveSession = StateStore.squad.length > 0 || (typeof window.isOnlineSession !== 'undefined' && window.isOnlineSession);
+    if (hasActiveSession) {
+        UIManager.confirm({
+            title: 'Exit to Lobby?',
+            message: 'Your current session is still active. Return to the main lobby?',
+            confirmText: 'Return to Lobby',
+            onConfirm: () => typeof showLandingPage === 'function' && showLandingPage()
+        });
+    } else {
+        showLandingPage();
+    }
+}
+
+function closeLandingPage() {
+    const el = document.getElementById('landingPage');
+    if (!el) return;
+
+    const doClose = () => {
+        el.style.transition = 'opacity 0.3s';
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 300);
+    };
+
+    // If the host has no name, prompt them before starting.
+    if (passport && !passport.playerName) {
+        UIManager.prompt({
+            title: 'Enter Your Name',
+            initialValue: '',
+            confirmText: 'Start Hosting',
+            onConfirm: (name) => {
+                if (name && name.trim()) {
+                    // Create the host's passport and add them to the squad.
+                    Passport.rename(name.trim());
+                    passport = Passport.get(); // Re-fetch passport
+                    _autoAddHostToSquad(); // This will now find and add them
+                    doClose();
+                } else {
+                    doClose(); // Close without adding if they cancel.
+                }
+            }
+        });
+    } else {
+        // Host already has a name, _autoAddHostToSquad should have already run.
+        doClose();
+    }
+}
+
+function joinFromRecent(code) {
+    if (window.Haptic) Haptic.tap();
+    window.location.href = `?join=${code}&role=player`;
+}
+
+function openStandalonePassport() {
+    const el = document.getElementById('landingPage');
+    if (el) el.remove();
+    
+    const ps = document.getElementById('passportStandalone');
+    const sl = document.getElementById('sidelinePanel');
+    
+    // Ensure SidelineView is hidden so they don't overlap
+    if (sl) sl.style.display = 'none';
+
+    const p = Passport.get();
+    if (ps && p) {
+        ps.style.display = 'flex';
+        document.body.classList.add('player-mode'); // Use context to hide host UI
+        window.renderPassportStandalone(p);
+
+        // 'Silent Hydrate' - Update career stats and trophies from global players table
+        if (p.playerUUID) {
+            fetch('/api/member-upsert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    room_code: 'RESTORE', 
+                    player_uuid: p.playerUUID, 
+                    player_name: p.playerName 
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.global) {
+                    const { passport: updatedP, needsUpload } = Passport.hydrate(data.global);
+
+                    // 2. Fetch global leaderboard to compute rank percentile
+                    fetch('/api/leaderboard-get')
+                        .then(lbRes => lbRes.json())
+                        .then(lbData => {
+                            const players = lbData.players || [];
+                            const rankIdx = players.findIndex(lp => lp.uuid === updatedP.playerUUID);
+                            if (rankIdx !== -1) {
+                                const rank = rankIdx + 1;
+                                const percentile = Math.ceil((rank / players.length) * 100);
+                                const percHTML = players.length > 5 ? `<div style="font-size:0.5rem; opacity:0.6; margin-top:2px; font-style:normal; font-weight:700;">TOP ${percentile}%</div>` : '';
+                                window._lastRankDisplay = `#${rank}${percHTML}`;
+                                window.renderPassportStandalone(updatedP, window._lastRankDisplay);
+                            } else {
+                                window.renderPassportStandalone(updatedP);
+                            }
+                        })
+                        .catch(() => window.renderPassportStandalone(updatedP));
+
+                    // If local stats are more advanced than the cloud, perform a reconcile sync
+                    if (needsUpload && !window.isOnlineSession) {
+                        console.log('[Passport] Local data advanced; reconciling with cloud...');
+                        fetch('/api/match-history', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                type: 'reconcile_sync',
+                                player_uuid: updatedP.playerUUID,
+                                total_wins: updatedP.stats.wins,
+                                total_games: updatedP.stats.games,
+                                achievements: updatedP.achievements,
+                                teammate_history: updatedP.teammateHistory,
+                                opponent_history: updatedP.opponentHistory,
+                                partner_stats: updatedP.partnerStats
+                            })
+                        }).catch(e => console.warn('[Passport] Reconciliation failed', e));
+                    }
+                }
+            })
+            .catch(e => console.warn('[Passport] Silent hydrate failed', e));
+        }
+    }
+}
+
+function goToPlayerMode() {
+    window.location.href = '?role=player';
+}
+
+function joinFromLobby() {
+    const input = document.getElementById('lobbyRoomCode');
+    const code = input?.value?.trim();
+    if (!code) return;
+    
+    // Normalize and Route
+    let cleanCode = code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    if (cleanCode.length === 8) cleanCode = cleanCode.slice(0, 4) + '-' + cleanCode.slice(4);
+    
+    window.location.href = `?join=${cleanCode}&role=player`;
+}
+
+function showLandingPage() {
+    if (document.getElementById('landingPage')) return;
+
+    // Hide other standalone views if returning to menu
+    const ps = document.getElementById('passportStandalone');
+    if (ps) ps.style.display = 'none';
+    const sl = document.getElementById('sidelinePanel');
+    if (sl) sl.style.display = 'none';
+    document.body.classList.remove('player-mode');
+
+    if (typeof closeOverlay === 'function') closeOverlay();
+    let div = document.createElement('div');
+    div.id = 'landingPage';
+    document.body.appendChild(div);
+    div.className = 'actionMenu'; // Reuse modal style
+    div.style.zIndex = '9000';
+    div.style.background = 'var(--bg)'; // Opaque background
+
+    const recentRooms = JSON.parse(localStorage.getItem('cs_recent_rooms') || '[]');
+    let recentHTML = '';
+    if (recentRooms.length > 0) {
+        recentHTML = `
+            <div style="margin-bottom: 24px;">
+                <div style="font-size: 0.55rem; color: var(--text-muted); font-weight: 900; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; text-align: center;">QUICK RE-JOIN</div>
+                <div style="display: flex; gap: 8px; justify-content: center;">
+                    ${recentRooms.map(code => `
+                        <button class="btn-main" onclick="window.joinFromRecent('${code}')" 
+                                style="flex: 1; height: 40px; font-size: 0.75rem; background: var(--surface2); color: var(--text); border: 1px solid var(--border); box-shadow: none;">
+                            ${code}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    div.innerHTML = `
+        <div class="menu-card" style="padding:40px 20px; max-width:380px; border:none; box-shadow:none; background:transparent;">
+            <div style="font-family:var(--font-display); font-size:3.2rem; font-weight:900; font-style:italic; line-height:0.85; margin-bottom:8px; color:var(--text); text-align:center;">
+                COURTSIDE<span style="color:var(--accent);">PRO</span>
+            </div>
+            <p style="color:var(--accent); text-align:center; margin-bottom:32px; font-size:0.6rem; letter-spacing:4px; text-transform:uppercase; font-weight:900; opacity:0.8;">
+                GLOBAL LOBBY
+            </p>
+
+            ${recentHTML}
+
+            <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:32px;">
+                <button class="btn-main" onclick="closeLandingPage()" style="height:54px; font-size:1rem; box-shadow:0 0 30px var(--accent-dim);">
+                    🏸 REGULAR PLAY SESSION
+                </button>
+                
+                <button class="btn-main" onclick="window.openTournamentMode()" 
+                        style="height:54px; font-size:1rem; background:var(--obsidian); border:1px solid var(--royal-purple); color:#fff; box-shadow:0 0 20px rgba(107, 33, 168, 0.3);">
+                    🏆 ENTER TOURNAMENT MODE
+                </button>
+
+                <div style="height:1px; background:var(--border); margin:8px 0; position:relative;">
+                    <span style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--bg); padding:0 12px; font-size:0.55rem; color:var(--text-muted); font-weight:900; letter-spacing:2px;">OR JOIN BY CODE</span>
+                </div>
+
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="lobbyRoomCode" placeholder="ROOM CODE" 
+                           style="flex:1; height:54px; text-align:center; font-family:var(--font-display); font-size:1.1rem; letter-spacing:2px; font-style:italic;"
+                           oninput="this.value = this.value.toUpperCase()"
+                           onkeydown="if(event.key==='Enter') window.joinFromLobby()">
+                    <button class="btn-main" onclick="window.joinFromLobby()" style="width:70px; background:var(--surface2); color:var(--text); border:1px solid var(--border);">GO</button>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <button class="btn-main" onclick="openStandalonePassport()" style="background:var(--bg2); color:var(--text); height:50px; font-size:0.8rem; border:1px solid var(--border);">
+                    🪪 MY PASSPORT
+                </button>
+                <button class="btn-main" onclick="PlayerMode.restorePassportPrompt()" style="background:var(--bg2); color:var(--text); height:50px; font-size:0.8rem; border:1px solid var(--border);">
+                    🔑 RESTORE
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function joinManualCode() {
+    const input = document.getElementById('manualRoomCodeInput');
+    const raw = input?.value?.trim();
+    if (raw) {
+        // Normalize room code: strip non-alphanumeric and add hyphen if 8 chars
+        let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
+
+        if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
+            const newUrl = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
+            window.history.pushState({}, document.title, newUrl);
+            document.body.classList.add('player-mode');
+            closeOverlay();
+            PlayerMode.boot(Passport.get(), code);
+        } else {
+            window.location.href = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
+        }
+    } else {
+        alert('Please enter a room code.');
+    }
+}
+
+async function submitIWantToPlay() {
+    const input = document.getElementById('iwtpNameInput');
+    const name  = (input?.value || '').trim();
+    const btn   = document.getElementById('iwtpSendBtn');
+    const p     = (typeof Passport !== 'undefined') ? Passport.get() : null;
+
+    if (!name) { showSessionToast('Please enter your name first.'); input?.focus(); return; }
+    if (!window.currentRoomCode) { showSessionToast('Not connected to a session.'); return; }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+    const playerUUID = p ? p.playerUUID : null;
+    const spiritAnimal = p ? p.spiritAnimal : null;
+
+    try {
+        const res = await fetch('/api/play-request', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+                room_code: window.currentRoomCode,
+                name: name,
+                player_uuid: playerUUID,
+                spirit_animal: spiritAnimal
+            }),
+        });
+
+        if (res.ok) {
+            localStorage.setItem('cs_spectator_name', name);
+            collapseIWTPSheet();
+            setTimeout(() => showSessionToast('🏀 Request sent! Pending host approval…'), 300);
+            Haptic.success();
+        } else { throw new Error('Failed'); }
+    } catch {
+        if (btn) { btn.disabled = false; btn.textContent = 'Send Request'; }
+        showSessionToast('Could not send request. Try again.');
+        Haptic.error();
+    }
+}
+
+function checkIWTPSmartRecognition() {
+    const sheet = document.getElementById('iwantToPlaySheet');
+    if (!sheet || !window.isOnlineSession || window.isOperator) return;
+
+    const savedName = localStorage.getItem('cs_spectator_name');
+    if (savedName) {
+        // Use window.squad for player-side logic, as StateStore is for the host.
+        const match = (window.squad || []).find(p => p.name.toLowerCase() === savedName.toLowerCase());
+        if (match) { confirmSpectateAs(match.name); return; }
+    }
+    showIWTPChoice();
+}
+
+let _lastSeenRequestIds = new Set();
+let _pollingInterval = null;
+let _isPolling = false;
+
+/**
+ * Tracks seen request IDs to prevent duplicate processing/notifications.
+ * Implements a sliding window (max 200 IDs) to prevent memory leaks in long sessions.
+ */
+function _trackRequestId(id) {
+    if (!id) return;
+    _lastSeenRequestIds.add(id);
+    if (_lastSeenRequestIds.size > 200) {
+        const oldest = _lastSeenRequestIds.values().next().value;
+        _lastSeenRequestIds.delete(oldest);
+    }
+}
+
+function _isPlayerAlreadyInSession(record) {
+    if (!record) return null;
+    const uuidMap = window._sessionUUIDMap || {};
+    return StateStore.squad.find(p => 
+        (record.player_uuid && p.uuid === record.player_uuid) || 
+        (p.name.toLowerCase() === (record.name || '').toLowerCase()) ||
+        (record.player_uuid && uuidMap[record.name] === record.player_uuid)
+    );
+}
+
+async function pollPlayRequests() {
+    if (_isPolling || !window.isOnlineSession || !window.isOperator || !window.currentRoomCode) return;
+    _isPolling = true;
+    try {
+        const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(window.currentRoomCode)}`);
+        const data = await res.json();
+        const incoming = data.requests || [];
+        const trulyPending = [];
+        for (const r of incoming) {
+            const isOpen = StateStore.get('isOpenParty');
+            if (!_lastSeenRequestIds.has(r.id)) {
+                // Track immediately to prevent race-induced duplicate processing
+                _trackRequestId(r.id);
+
+                const existing = _isPlayerAlreadyInSession(r);
+
+                if (existing) {
+                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad). Reconciling UUID/Name.`);
+                    let changed = false;
+                    const existingIdx = StateStore.squad.findIndex(p => p.uuid === existing.uuid);
+                    let updatedPlayer = { ...existing }; // Create a new object for immutable update
+
+                    if (r.player_uuid && updatedPlayer.uuid !== r.player_uuid) {
+                        updatedPlayer.uuid = r.player_uuid;
+                        changed = true;
+                    }
+                    if (r.name && updatedPlayer.name !== r.name) {
+                        updatedPlayer.name = r.name;
+                        changed = true;
+                    }
+
+                    const newSquad = [...StateStore.squad];
+                    newSquad[existingIdx] = updatedPlayer;
+                    StateStore.set('squad', newSquad); // Explicitly update StateStore
+
+                    if (changed) {
+                        renderSquad();
+                        saveToDisk();
+                    }
+
+                    if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+                    fetch('/api/play-request', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: r.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+                    }).catch(() => {});
+                    continue;
+                }
+
+                if (isOpen) {
+                    console.log(`[CourtSide] Auto-approving ${r.name} (Open Party)`);
+                    await approvePlayRequest(r.name, r.id, r.player_uuid || null);
+                    continue;
+                }
+                trulyPending.push(r);
+                const requestIdUUID = r.player_uuid || null;
+                const requestIdEmoji = r.spirit_animal || null;
+                showJoinNotification(r.name, r.id, requestIdUUID, requestIdEmoji);
+            } else {
+                // If we've seen it but it's still in the fetch, it's pending unless it's an auto-join
+                if (!isOpen) trulyPending.push(r);
+            }
+        }
+
+        playRequests = trulyPending;
+        window.playRequests = trulyPending;
+
+        const badge = document.getElementById('playRequestsBadge');
+        const count = document.getElementById('playRequestsCount');
+        if (badge && count) {
+            const hasReqs = trulyPending.length > 0;
+            badge.style.display = hasReqs ? 'flex' : 'none';
+            count.textContent   = trulyPending.length;
+        }
+    } catch (e) { console.error('[pollPlayRequests] failed', e); } finally { _isPolling = false; }
+}
+
+const _notifQueue = [];
+let   _notifShowing = false;
+
+function showJoinNotification(name, id, uuid = null, emoji = null) {
+    _notifQueue.push({ name, id, uuid, emoji });
+    if (!_notifShowing) processNotifQueue();
+}
+
+function processNotifQueue() {
+    if (_notifQueue.length === 0) { _notifShowing = false; return; }
+    _notifShowing = true;
+
+    const { name, id, uuid, emoji } = _notifQueue.shift();
+    const notif  = document.getElementById('joinNotification');
+    const nameEl = document.getElementById('joinNotifName');
+    if (!notif || !nameEl) return;
+
+    nameEl.innerHTML    = emoji ? `<span style="margin-right:8px">${emoji}</span>${escapeHTML(name)}` : escapeHTML(name);
+    notif.dataset.id    = id;
+    notif.dataset.name  = name;
+    notif.dataset.uuid  = uuid || '';
+    notif.classList.add('show');
+    Haptic.bump();
+
+    const timer = setTimeout(() => dismissJoinNotification(), 12000);
+    notif._timer = timer;
+}
+
+function dismissJoinNotification() {
+    const notif = document.getElementById('joinNotification');
+    if (!notif) return;
+    clearTimeout(notif._timer);
+    notif.classList.remove('show');
+    setTimeout(processNotifQueue, 400);
+}
+
+async function notifApprove() {
+    const notif = document.getElementById('joinNotification');
+    const name  = notif?.dataset.name;
+    const id    = notif?.dataset.id;
+    const uuid  = notif?.dataset.uuid || null;
+    if (name && id) {
+        await approvePlayRequest(name, id, uuid);
+    }
+    dismissJoinNotification();
+}
+
+async function notifDecline() {
+    const notif = document.getElementById('joinNotification');
+    const id    = notif?.dataset.id;
+    if (id) {
+        await denyPlayRequest(id);
+    }
+    dismissJoinNotification();
+}
+
+function showPlayRequests() {
+    const modal = document.getElementById('playRequestsModal');
+    const list  = document.getElementById('playRequestsList');
+    if (!modal || !list) return;
+
+    const approveAllHTML = playRequests.length > 1 
+        ? `<button class="btn-main" style="margin-bottom:12px; background:var(--accent); color:#000; font-size:0.8rem; height:40px;" onclick="approveAllRequests()">✓ Approve All (${playRequests.length})</button>`
+        : '';
+
+    list.innerHTML = playRequests.length === 0
+        ? '<p style="text-align:center;color:var(--text-muted);padding:20px 0;">No pending requests.</p>'
+        : approveAllHTML + playRequests.map(r => `
+            <div class="pr-row">
+                ${r.spirit_animal ? `<span style="font-size:1.2rem;margin-right:8px;">${r.spirit_animal}</span>` : ''}
+                <span class="pr-name">${escapeHTML(r.name)}</span>
+                <button class="pr-add-btn" onclick="approvePlayRequest('${escapeHTML(r.name)}', '${r.id}', '${r.player_uuid||''}')">+ Add</button>
+                <button class="pr-deny-btn" onclick="denyPlayRequest('${r.id}')">✕</button>
+            </div>
+        `).join('');
+
+    modal.style.display = 'flex';
+}
+
+// Called by sync.js when a Realtime INSERT event occurs on play_requests table
+window.onPlayRequestInsert = async function(record) {
+    if (!record) return;
+
+    // LOCK CHECK: If Edge function already activated this player, ignore the request insertion
+    if (record.player_uuid && _processingPlayerUUIDs.has(record.player_uuid)) return;
+
+    if (!_lastSeenRequestIds.has(record.id)) {
+        // Track immediately to prevent duplicate processing
+        _trackRequestId(record.id);
+
+        // Metadata Integrity: Ensure the record is in the cache so approvePlayRequest
+        // can extract the spirit animal and achievements during auto-approval.
+        if (!playRequests.some(r => r.id === record.id)) {
+            playRequests.push(record);
+            if (playRequests.length > 100) playRequests.shift(); // Max-size cleanup
+            window.playRequests = playRequests;
+        }
+
+        const existing = _isPlayerAlreadyInSession(record);
+
+        if (existing) {
+            // Adopt real UUID for manual additions triggered by realtime events (immutable update)
+            if (record.player_uuid && existing.uuid !== record.player_uuid) {
+                const existingIdx = StateStore.squad.findIndex(p => p.uuid === existing.uuid);
+                const newSquad = [...StateStore.squad];
+                newSquad[existingIdx] = { ...existing, uuid: record.player_uuid };
+                StateStore.set('squad', newSquad); // Explicitly update StateStore
+            }
+
+            if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
+            fetch('/api/play-request', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: record.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
+            }).catch(() => {});
+            return;
+        }
+
+        // Lock Check: If a batch approval is currently running, ignore realtime
+        // triggers for a moment. Sequential integrity is maintained by the
+        // batch loop and the next polling cycle.
+        if (_isProcessingOpenPartyBatch) return;
+
+        if (StateStore.get('isOpenParty')) {
+            await approvePlayRequest(record.name, record.id, record.player_uuid);
+            return;
+        }
+
+        const recordIdUUID = record.player_uuid || null;
+        const recordIdEmoji = record.spirit_animal || null;
+        showJoinNotification(record.name, record.id, recordIdUUID, recordIdEmoji);
+    }
+    if (!_isProcessingOpenPartyBatch) pollPlayRequests(); // Fetch full list to ensure badge count is accurate
+};
+
+function ensureHostUI() {
+    // Only show host UI if not in player/spectator view
+    const isPlayerView = document.body.classList.contains('player-mode');
+    if (isPlayerView) return;
+
+    // Create a host dashboard area if it doesn't exist
+    let dashboard = document.getElementById('hostDashboard');
+    if (!dashboard) {
+        dashboard = document.createElement('div');
+        dashboard.id = 'hostDashboard';
+        dashboard.className = 'host-dashboard';
+        dashboard.style.display = 'flex';
+        const container = document.querySelector('.app-container');
+        if (container) {
+            const header = container.querySelector('header');
+            if (header) header.insertAdjacentElement('afterend', dashboard);
+        }
+    }
+
+    // Add Director Hub container
+    if (!document.getElementById('directorHub')) {
+        const hub = document.createElement('div');
+        hub.id = 'directorHub';
+        hub.className = 'panel'; 
+        hub.style.padding = '16px';
+        hub.style.marginBottom = '12px';
+        hub.innerHTML = `
+            <div class="sync-section-label" style="margin-bottom:12px; font-size:0.6rem;">Director Insights</div>
+            <div id="directorHubGrid" class="sh-insights-grid"></div>
+        `;
+        dashboard.insertBefore(hub, dashboard.firstChild);
+    }
+    renderDirectorHub();
+
+    // Add Open Party Toggle
+    if (!document.getElementById('slOpenPartyToggle')) {
+        const toggle = document.createElement('div');
+        toggle.id = 'slOpenPartyToggle';
+        toggle.className = 'open-party-toggle';
+        toggle.onclick = () => toggleOpenParty();
+        dashboard.appendChild(toggle);
+        renderOpenPartyToggle();
+    }
+
+    // Add Court Selector to Host Dashboard
+    if (!document.getElementById('courtCountInput')) {
+        const selector = document.createElement('div');
+        selector.className = 'panel';
+        selector.style.padding = '12px 16px';
+        selector.innerHTML = `
+            <div class="court-selector" style="flex-direction: row; justify-content: space-between; align-items: center;">
+                <div class="court-selector-label" style="margin-bottom: 0;">ACTIVE COURTS</div>
+                <div class="court-input-row">
+                    <input type="number" id="courtCountInput" class="court-count-input" 
+                           value="${StateStore.get('activeCourts') || 1}" min="1" max="10">
+                    <button class="court-set-btn" onclick="window.setCourts(document.getElementById('courtCountInput').value)">SET</button>
+                </div>
+            </div>
+        `;
+        dashboard.appendChild(selector);
+    }
+
+    // 1. Join Notification Toast (Popup)
+   if (!document.getElementById('joinNotification')) {
+        const notif = document.createElement('div');
+        notif.id = 'joinNotification';
+        notif.className = 'join-notif';
+        notif.innerHTML = `
+            <div class="join-notif-inner">
+                <div class="join-notif-label">REQUEST TO JOIN</div>
+                <div class="join-notif-name" id="joinNotifName">PLAYER</div>
+                <div class="join-notif-actions">
+                    <button class="join-notif-approve" onclick="notifApprove()">APPROVE</button>
+                    <button class="join-notif-decline" onclick="notifDecline()">DECLINE</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(notif);
+    }
+
+    // 2. Play Requests Badge (The Button)
+    if (!document.getElementById('playRequestsBadge')) {
+        const badge = document.createElement('div');
+        badge.id = 'playRequestsBadge';
+        badge.className = 'play-requests-badge';
+        badge.onclick = window.showPlayRequests;
+        badge.style.display = 'none'; 
+        badge.innerHTML = `
+            <span>PENDING REQUESTS</span>
+            <span id="playRequestsCount" style="background:rgba(0,0,0,0.3); color:var(--accent); padding:2px 8px; border-radius:6px; margin-left:10px; font-size:0.7rem; border:1px solid var(--border-accent);">0</span>
+        `;
+        if (dashboard) dashboard.appendChild(badge);
+        else document.body.appendChild(badge);
+    }
+
+    // 3. Play Requests Modal (The List)
+    if (!document.getElementById('playRequestsModal')) {
+        const modal = document.createElement('div');
+        modal.id = 'playRequestsModal';
+        modal.className = 'play-requests-modal';
+        modal.style.display = 'none';
+        modal.innerHTML = `
+            <div class="play-requests-card">
+                <div class="play-requests-title">Pending Requests</div>
+                <div id="playRequestsList" style="max-height: 300px; overflow-y: auto;"></div>
+                <button class="btn-cancel" onclick="closePlayRequests()" style="margin-top:12px;">Close</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+}
+
+function openTournamentMode() {
+    const overlay = document.createElement('div');
+    overlay.className = 'war-room-overlay';
+    overlay.id = 'warRoomOverlay';
+    
+    const code = window.currentRoomCode;
+    const isLive = !!code;
+    
+    // FIX: Tight filter to ensure anyone in wrTeams is GONE from Pool
+    const assignedIds = new Set(wrTeams.flatMap(t => t.players.map(tp => tp.uuid || tp.name)));
+    const unassigned = StateStore.squad.filter(p => p.active && !assignedIds.has(p.uuid || p.name));
+
+    overlay.innerHTML = `
+        <div class="wr-header">
+            <div class="wr-title-area" onclick="window.editTournamentName()">
+                <div style="font-family:var(--font-display); font-size:0.6rem; color:var(--trophy-gold); font-weight:900; letter-spacing:2px; margin-bottom:2px;">${isLive ? 'LIVE SESSION' : 'OFFLINE MODE'}</div>
+                <div style="font-family:var(--font-display); font-size:1.6rem; font-weight:900; font-style:italic; line-height:1; color:#fff;">${wrTournamentName} <span style="font-size:0.8rem; opacity:0.4;">✏️</span></div>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+                <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} IN ROOM</div>
+                <div id="wrQR" class="wr-header-qr" onclick="window.showLiveSuccessModal(window.currentRoomCode)" style="cursor:pointer;"></div>
+            </div>
+            <div style="display:flex; gap:10px;">
+                            ${wrTeams.length > 0 ? `<button class="wr-btn-guest" style="border-color:var(--danger); color:var(--danger);" onclick="window.resetTournament()">🔄 RESET</button>` : ''}
+
+                ${!isLive ? `<button class="wr-btn-guest wr-go-live-btn" style="border-color:var(--accent); color:var(--accent);" onclick="window.igniteWarRoomLive()">🌐 GO LIVE</button>` : `<div class="wr-room-pill">ROOM: ${code}</div>`}
+                <button class="wr-btn-guest" onclick="window.addTournamentGuest()">🏆 + GUEST</button>
+                <button class="wr-btn-close" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
+            </div>
+        </div>
+
+        <div class="wr-workbench">
+            <div class="wr-column">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div class="wr-column-title" style="margin-bottom:0;">The Draft Pool</div>
+                    ${unassigned.length >= 2 ? `<button class="wr-chip-btn" onclick="window.autoPairTournament()" style="color:var(--accent); font-size:0.6rem; font-weight:900; border:1px solid var(--accent); border-radius:4px; padding:2px 6px;">⚡ AUTO-PAIR</button>` : ''}
+                </div>
+                <div id="wrDraftPool" style="flex:1; overflow-y:auto;">
+                    ${unassigned.map(p => `
+                        <div class="wr-draft-chip" onclick="handleWarRoomTap('${p.uuid}')" data-uuid="${p.uuid}">
+                            <div style="flex:1; font-weight:700;">
+                                ${escapeHTML(p.name)} ${p.isGuest ? '' : '<span title="Passport User" style="opacity:0.5; margin-left:4px;">🪪</span>'}
+                            </div>
+                            <div class="wr-chip-actions">
+                                <button class="wr-chip-btn" onclick="event.stopPropagation(); window.editTournamentPlayer('${p.uuid}')">✏️</button>
+                                <button class="wr-chip-btn" onclick="event.stopPropagation(); window.removeTournamentPlayer('${p.uuid}')">✕</button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            <div class="wr-column">
+                <div class="wr-column-title">Bracket Entries</div>
+                <div id="wrTeamsList" style="flex:1; overflow-y:auto; display:grid; grid-template-columns:1fr; gap:10px;">
+                    ${wrTeams.map((t, idx) => `
+                        <div class="wr-team-card">
+                            <div style="font-size:0.6rem; color:var(--trophy-gold); margin-bottom:4px;">TEAM ${idx + 1}</div>
+                            <div style="font-family:var(--font-display); font-weight:800; font-style:italic; text-transform:uppercase;">
+                                ${escapeHTML(t.name)}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+
+        <button class="wr-ignition-btn" onclick="igniteTournament()">
+            GENERATE CHAMPIONSHIP BRACKET
+        </button>
+    `;
+
+    document.body.appendChild(overlay);
+    if (isLive) setTimeout(() => renderWarRoomQR(), 100);
+}
+
+function renderWarRoomQR() {
+    const code = window.currentRoomCode;
+    const qrDiv = document.getElementById('wrQR');
+    if (!qrDiv || !code) return;
+    
+    const joinUrl = window.location.origin + window.location.pathname + '?join=' + code + '&role=player';
+    const QRCtor = window.QRCodeConstructor || window.QRCode;
+    if (QRCtor) {
+        qrDiv.innerHTML = '';
+        new QRCtor(qrDiv, {
+            text: joinUrl,
+            width: 60,
+            height: 60,
+            colorDark: '#000000',
+            colorLight: '#ffffff'
+        });
+    }
+}
+
+function editTournamentName() {
+    UIManager.prompt({
+        title: 'Edit Tournament Name',
+        initialValue: wrTournamentName,
+        onConfirm: (val) => {
+            if (val.trim()) wrTournamentName = val.trim().toUpperCase();
+            const overlay = document.getElementById('warRoomOverlay');
+            if (overlay) { overlay.remove(); openTournamentMode(); }
+        }
+    });
+}
+
+function addTournamentGuest() {
+    UIManager.prompt({
+        title: 'Add Tournament Guest',
+        placeholder: 'Enter name...',
+        confirmText: 'Add to Pool',
+        onConfirm: (name) => {
+            const trimmed = name.trim();
+            if (!trimmed) return;
+            
+            const newUUID = _generateUUID();
+            const newPlayer = migratePlayer({
+                name: trimmed,
+                uuid: newUUID,
+                active: true,
+                isGuest: true
+            });
+            
+            StateStore.set('squad', [...StateStore.squad, newPlayer]);
+            if (window.Haptic) Haptic.success();
+            // Refresh the Tournament Mode UI
+            const overlay = document.getElementById('warRoomOverlay');
+            if (overlay) { overlay.remove(); openTournamentMode(); }
+        }
+    });
+}
+
+function editTournamentPlayer(uuid) {
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    if (!p) return;
+    
+    UIManager.prompt({
+        title: 'Edit Player Name',
+        initialValue: p.name,
+        onConfirm: (newName) => {
+            if (!newName.trim()) return;
+            if (typeof _applyNameUpdate === 'function') {
+                _applyNameUpdate(uuid, p.name, newName.trim());
+                // Refresh view
+                const overlay = document.getElementById('warRoomOverlay');
+                if (overlay) { overlay.remove(); openTournamentMode(); }
+            }
+        }
+    });
+}
+
+async function removeTournamentPlayer(uuid) {
+    const p = StateStore.squad.find(x => x.uuid === uuid);
+    if (!p) return;
+    await removePlayerFromSession(uuid, p.name);
+    const overlay = document.getElementById('warRoomOverlay');
+    if (overlay) { overlay.remove(); openTournamentMode(); }
+}
+
+function autoPairTournament() {
+    const assignedIds = new Set(wrTeams.flatMap(t => t.players.map(tp => tp.uuid || tp.name)));
+    const unassigned = StateStore.squad
+        .filter(p => p.active && !assignedIds.has(p.uuid || p.name))
+        .sort((a, b) => (b.wins || 0) - (a.wins || 0)); // Sort by wins high to low
+
+    if (unassigned.length < 2) return;
+
+    // Balanced Pairing: Match top seeds with bottom seeds
+    while (unassigned.length >= 2) {
+        const top = unassigned.shift();
+        const bottom = unassigned.pop();
+        
+        const team = { 
+            id: _generateUUID(), 
+            players: [top, bottom], 
+            name: `${top.name} & ${bottom.name}` 
+        };
+        wrTeams.push(team);
+    }
+
+    if (window.Haptic) Haptic.success();
+    showSessionToast('Balanced Teams Created');
+    const overlay = document.getElementById('warRoomOverlay');
+    if (overlay) { overlay.remove(); openTournamentMode(); }
+}
+
+function handleWarRoomTap(uuid) {
+    const el = document.querySelector(`[data-uuid="${uuid}"]`);
+    if (!wrSelectedPlayer) {
+        wrSelectedPlayer = uuid;
+        el.classList.add('selected');
+        Haptic.tap();
+    } else {
+        if (wrSelectedPlayer === uuid) {
+            wrSelectedPlayer = null;
+            el.classList.remove('selected');
+            return;
+        }
+        // Merge!
+        const p1 = StateStore.squad.find(p => p.uuid === wrSelectedPlayer);
+        const p2 = StateStore.squad.find(p => p.uuid === uuid);
+        
+        createWarRoomTeam(p1, p2);
+        wrSelectedPlayer = null;
+    }
+}
+
+function createWarRoomTeam(p1, p2) {
+    const team = { id: _generateUUID(), players: [p1, p2], name: `${p1.name} & ${p2.name}` };
+    wrTeams.push(team);
+    
+    // Refresh pool to properly exclude the team members
+    const overlay = document.getElementById('warRoomOverlay');
+    if (overlay) { overlay.remove(); openTournamentMode(); }
+
+    if (window.Haptic) Haptic.success();
+}
+
+function igniteTournament() {
+    if (wrTeams.length < 2) return alert('Need at least 2 teams to ignite bracket.');
+    wrRounds = generateTournamentBracket(wrTeams);
+    renderTournamentBracket();
+    if (window.Haptic) Haptic.success();
+    showSessionToast('🏆 TOURNAMENT IGNITED');
+}
+
+function renderTournamentBracket() {
+    const workbench = document.querySelector('.wr-workbench');
+    if (!workbench) return;
+
+    workbench.innerHTML = '';
+    workbench.className = 'wr-bracket-canvas';
+    
+    wrRounds.forEach((round, rIdx) => {
+        const roundDiv = document.createElement('div');
+        roundDiv.className = 'wr-round';
+        roundDiv.innerHTML = `
+            <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">ROUND ${rIdx + 1}</div>
+            ${round.map((m, mIdx) => {
+                const isDecided = m.winner !== null;
+                const isBye = m.team1 && !m.team2;
+                const canSelect = !isDecided && m.team1 && m.team2 && !isBye;
+                
+                const t1Winner = m.winner?.id === m.team1?.id || isBye;
+                const t2Winner = m.winner?.id === m.team2?.id && !isBye;
+
+                return `
+                <div class="wr-matchup">
+                    <div class="wr-bracket-slot ${m.team1 ? 'has-team' : ''} ${t1Winner ? 'winner' : ''}" 
+                         onclick="${canSelect ? `window.advanceTournamentTeam(${rIdx}, ${mIdx}, 1)` : ''}">
+                        ${m.team1 ? escapeHTML(m.team1.name) : 'TBD'}
+                    </div>
+                    <div class="wr-bracket-slot ${m.team2 ? 'has-team' : ''} ${t2Winner ? 'winner' : ''}" 
+                         onclick="${canSelect ? `window.advanceTournamentTeam(${rIdx}, ${mIdx}, 2)` : ''}">
+                        ${m.team2 ? escapeHTML(m.team2.name) : (m.team1 ? 'BYE' : 'TBD')}
+                    </div>
+                </div>`;
+            }).join('')}
+        `;
+        workbench.appendChild(roundDiv);
+    });
+
+    // Add Championship center-piece
+    const lastRound = wrRounds[wrRounds.length - 1];
+    const overallWinner = lastRound[0].winner;
+
+    const champ = document.createElement('div');
+    champ.className = 'wr-round';
+    champ.innerHTML = `
+        <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">FINALS</div>
+        <div class="wr-championship-ring ${overallWinner ? 'crowned' : ''}">
+            <div style="font-size:2rem;">🏆</div>
+            <div style="font-family:var(--font-display); font-weight:900; color:var(--trophy-gold); letter-spacing:3px;">
+                ${overallWinner ? escapeHTML(overallWinner.name) : 'CHAMPION'}
+            </div>
+        </div>
+    `;
+    workbench.appendChild(champ);
+}
+
+function advanceTournamentTeam(rIdx, mIdx, teamNum) {
+    const match = wrRounds[rIdx][mIdx];
+    const winner = teamNum === 1 ? match.team1 : match.team2;
+    const loser = teamNum === 1 ? match.team2 : match.team1;
+    
+    if (!winner) return;
+    match.winner = winner;
+
+    // Record Career Stats for all players in this match
+    _recordTournamentMatchResult(winner, loser);
+
+    // Advance to next round if not the final round
+    if (rIdx < wrRounds.length - 1) {
+        const nextRoundIdx = rIdx + 1;
+        const nextMatchIdx = Math.floor(mIdx / 2);
+        const nextMatch = wrRounds[nextRoundIdx][nextMatchIdx];
+        
+        if (mIdx % 2 === 0) nextMatch.team1 = winner;
+        else nextMatch.team2 = winner;
+    }
+
+    renderTournamentBracket();
+    Haptic.success();
+}
+
+function _recordTournamentMatchResult(winnerTeam, loserTeam) {
+    if (!winnerTeam || !loserTeam) return; // Ignore BYEs
+
+    const updatePlayer = (p, isWin) => {
+        p.wins += isWin ? 1 : 0;
+        p.games += 1;
+        p.streak = isWin ? (p.streak + 1) : 0;
+        p.form = (p.form || []).concat(isWin ? 'W' : 'L').slice(-5);
+        p.sessionPlayCount++;
+
+        // Career Record Update (Passport)
+        const myUUID = (typeof Passport !== 'undefined') ? Passport.get()?.playerUUID : null;
+        if (myUUID && p.uuid === myUUID && typeof Passport.recordGame === 'function') {
+            Passport.recordGame(isWin);
+        }
+    };
+
+    winnerTeam.players.forEach(p => updatePlayer(p, true));
+    loserTeam.players.forEach(p => updatePlayer(p, false));
+
+    // Signal state change for Host (persists to localStorage and triggers cloud sync)
+    if (typeof StateStore !== 'undefined') {
+        StateStore.set('squad', [...StateStore.squad]);
+    }
+}
+
+function openBugReportModal() {
+    let modal = document.getElementById('bugReportModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'bugReportModal';
+        modal.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.7);
+            display:flex; align-items:center; justify-content:center;
+            z-index:9999; padding:20px; box-sizing:border-box;
+        `;
+        modal.innerHTML = `
+            <div style="background:var(--surface1,#1e293b); border:1px solid var(--border,#334155);
+                        border-radius:16px; padding:24px; width:100%; max-width:400px;
+                        box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div style="font-weight:700; font-size:1rem; color:#fff;">🐛 Report a Bug</div>
+                    <button onclick="closeBugReportModal()" style="background:none; border:none;
+                            color:var(--text-muted,#94a3b8); font-size:1.2rem; cursor:pointer; padding:4px;">✕</button>
+                </div>
+                <p style="font-size:0.75rem; color:var(--text-muted,#94a3b8); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <textarea id="bugReportModalText"
+                    placeholder="Describe what happened…"
+                    rows="5"
+                    style="width:100%; background:var(--bg2,#0f172a); border:1.5px solid var(--border,#334155);
+                           color:#fff; padding:14px; border-radius:12px; margin-bottom:12px;
+                           outline:none; font-size:14px; font-family:inherit;
+                           resize:vertical; box-sizing:border-box;"
+                ></textarea>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-main" style="flex:1; background:#334155; color:#fff;"
+                        onclick="closeBugReportModal()">Cancel</button>
+                    <button class="btn-main" style="flex:1; background:var(--accent,#38bdf8); color:#000;"
+                        onclick="submitBugReport()">📨 Send Report</button>
+                </div>
+            </div>
+        `;
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) closeBugReportModal();
+        });
+        document.body.appendChild(modal);
+    } else {
+        modal.style.display = 'flex';
+        const ta = document.getElementById('bugReportModalText');
+        if (ta) ta.value = '';
+    }
+}
+
+function closeBugReportModal() {
+    const modal = document.getElementById('bugReportModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function submitBugReport() {
+    const text = (document.getElementById('bugReportModalText')?.value || '').trim();
+    if (!text) {
+        alert('Please describe the bug before sending.');
+        return;
+    }
+    const subject = encodeURIComponent('[Courtside Pro] Bug Report');
+    const body = encodeURIComponent(
+        'Bug Description:\n' + text +
+        '\n\n---\n' +
+        'App version: Courtside Pro\n' +
+        'Time: ' + new Date().toLocaleString() + '\n' +
+        'Squad size: ' + (StateStore.squad?.length ?? 'N/A') + '\n' +
+        'Active courts: ' + (StateStore.get('activeCourts') ?? 'N/A')
+    );
+    window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
+    closeBugReportModal();
+}
+
+function importSyncToken() {
+    const val = document.getElementById('syncInput').value.trim();
+    if (!val) return;
+    try {
+        // Fix: Unicode-safe decoding
+        const json = decodeURIComponent(escape(window.atob(val)));
+        const data = JSON.parse(json);
+        if (!data.squad) throw new Error('Missing squad data');
+                StateStore.setState({ squad: data.squad, currentMatches: data.currentMatches || [] }); // Triggers sync
+        closeOverlay();
+        renderSquad();
+        document.getElementById('matchContainer').innerHTML = '';
+        if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+        checkNextButtonState();
+    } catch (e) {
+        alert('Invalid Sync Token. Please check the data and try again.');
+    }
+}
+
+function eraseAllData() {
+    localStorage.clear();
+    location.reload();
+}
+
+function confirmEraseAllData() {
+    UIManager.confirm({
+        title: 'Wipe All Data?',
+        message: 'This will permanently delete all players, matches, and session history. This action cannot be undone.',
+        confirmText: 'Yes, Wipe Everything',
+        isDestructive: true,
+        onConfirm: eraseAllData
+    });
+}
+
+function updateUndoButton() {
+    const btn = document.getElementById('undoRoundBtn');
+    if (!btn) return;
+    btn.style.display  = StateStore.roundHistory.length > 0 ? 'inline-flex' : 'none';
+}
+
+function undoLastRound() {
+    if (StateStore.roundHistory.length === 0) return;
+    UIManager.confirm({
+        title: 'Undo Round?',
+        message: 'Undo the last round? This will reverse all stat changes.',
+        confirmText: 'Yes, Undo',
+        onConfirm: () => {
+            const snapshot = StateStore.roundHistory.pop();
+            // Restore state from the snapshot using the StateStore
+            StateStore.setState({
+                squad: snapshot.squadSnapshot,
+                currentMatches: snapshot.matches,
+                playerQueue: snapshot.queueSnapshot || StateStore.playerQueue,
+            });
+            renderSquad();
+            if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+            if (typeof renderQueueStrip === 'function') renderQueueStrip();
+            updateUndoButton();
+            checkNextButtonState();
+            Haptic.bump();
+
+            // SYNC FIX: Immediately broadcast the undone state so players 
+            // see their form revert without delay.
+            if (typeof broadcastGameState === 'function') broadcastGameState(true);
+
+            showSessionToast('↩ Last round undone');
+        }
+    });
+}
 window.filterHistory = function(query) {
     const term = query.toLowerCase().trim();
     
@@ -2163,10 +2654,47 @@ async function openPlayerCard(idx) {
     }
 }
 
-window.openPlayerCard = openPlayerCard;
 
-function closePlayerCard() {
-    document.getElementById('playerCardModal').style.display = 'none';
+function _supportSectionHTML() {
+    return `
+        <div style="margin-top: auto; padding-top: 24px;">
+            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
+
+            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">🐛 Report a Bug</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
+                    onclick="openBugReportModal()">
+                    🐛 Report a Bug
+                </button>
+            </div>
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">☕ Support the Dev</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
+                    If Courtside Pro saves you time, consider buying the dev a coffee.
+                </p>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
+                    <div style="text-align:center;">
+                            
+                    </div>
+                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
+                        style="display:inline-flex; align-items:center; gap:8px;
+                               background:#FF5E5B; color:#fff; font-weight:700;
+                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
+                               text-decoration:none; white-space:nowrap;">
+                        ☕ Ko-fi
+                    </a>
+                </div>
+            </div>
+
+            </div>
+        </div>
+    `;
 }
 
 /**
@@ -2298,6 +2826,317 @@ async function sharePlayerCard() {
     Haptic.success();
 }
 
+async function shareAuraPoster(matchIdx) {
+    const m = StateStore.currentMatches[matchIdx];
+    if (!m) return;
+    
+    const getName = (id) => {
+        return (typeof findP === 'function') ? (findP(id)?.name || id) : id;
+    };
+
+    if (typeof generateShareableImage === 'function') {
+        generateShareableImage({
+            teamA: (m.teams[0] || []).map(getName).join(' & '),
+            teamB: (m.teams[1] || []).map(getName).join(' & '),
+            title: 'LIVE NOW'
+        }).catch(e => {
+            console.error('Aura poster failed:', e);
+            showSessionToast('Could not generate poster');
+        });
+    } else {
+        console.error('generateShareableImage function not found.');
+        showSessionToast('Share function is unavailable.');
+    }
+}
+
+let playRequests = [];
+window.playRequests = playRequests;
+
+function _iwtpShow(id) {
+    ['iwtpChoiceView','iwtpNewPlayerView','iwtpExistingView','iwtpSpectatorView'].forEach(v => {
+        const el = document.getElementById(v);
+        if (el) el.style.display = v === id ? 'block' : 'none';
+    });
+}
+
+function showIWTPChoice() { _iwtpShow('iwtpChoiceView'); }
+
+function showIWTPNewPlayer() {
+    _iwtpShow('iwtpNewPlayerView');
+    Haptic.tap();
+    setTimeout(() => document.getElementById('iwtpNameInput')?.focus(), 120);
+}
+
+function showIWTPExisting() {
+    _iwtpShow('iwtpExistingView');
+    Haptic.tap();
+    const list = document.getElementById('iwtpPlayerList');
+    if (!list) return;
+    // Use window.squad for player-side logic, as StateStore is for the host.
+    const currentSquad = window.squad || [];
+    if (currentSquad.length === 0) {
+        list.innerHTML = `<p class="iwtp-empty">No players yet.<br>Ask the host to add players first.</p>`;
+        return;
+    }
+    list.innerHTML = currentSquad.map(p => `
+        <button class="iwtp-player-chip" onclick="confirmSpectateAs('${escapeHTML(p.name)}')">
+            ${Avatar.html(p.name, p.spiritAnimal)}
+            <span>${escapeHTML(p.name)}</span>
+        </button>
+    `).join('');
+}
+
+function confirmSpectateAs(name) {
+    localStorage.setItem('cs_spectator_name', name);
+    document.getElementById('iwtpSpectatorName').textContent    = name.toUpperCase();
+    const subEl = document.getElementById('iwtpSpectatorSubtitle');
+    if (subEl) subEl.textContent = 'Live view — read only';
+    _iwtpShow('iwtpSpectatorView');
+    document.body.classList.add('spectator-mode');
+    if (window.Haptic) Haptic.success();
+    if (typeof showSessionToast === 'function') showSessionToast(`👁 Watching as ${name}`);
+}
+// ---------------------------------------------------------------------------
+
+function joinManualCode() {
+    const input = document.getElementById('manualRoomCodeInput');
+    const raw = input?.value?.trim();
+    if (raw) {
+        // Normalize room code: strip non-alphanumeric and add hyphen if 8 chars
+        let code = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+        if (code.length === 8) code = code.slice(0, 4) + '-' + code.slice(4);
+
+        if (typeof PlayerMode !== 'undefined' && typeof Passport !== 'undefined') {
+            const newUrl = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
+            window.history.pushState({}, document.title, newUrl);
+            document.body.classList.add('player-mode');
+            closeOverlay();
+            PlayerMode.boot(Passport.get(), code);
+        } else {
+            window.location.href = window.location.origin + window.location.pathname + '?join=' + encodeURIComponent(code) + '&role=player';
+        }
+    } else {
+        alert('Please enter a room code.');
+    }
+}
+
+
+/** Computes production-level insights for the host dashboard. */
+function renderDirectorHub() {
+    const grid = document.getElementById('directorHubGrid');
+    if (!grid) return;
+
+    const squad = StateStore.squad;
+    const onCourt = new Set(StateStore.currentMatches.flatMap(m => m.teams.flat()));
+    const waiting = squad.filter(p => p.active && !onCourt.has(p.uuid || p.name));
+
+    // 1. Longest Wait
+    const longest = waiting.length ? [...waiting].sort((a,b) => (b.waitRounds || 0) - (a.waitRounds || 0))[0] : null;
+    // 2. King of the Hill (Current high streak)
+    const king = squad.filter(p => p.streak > 0).sort((a,b) => b.streak - a.streak)[0] || null;
+    // 3. Iron Man (Most games in session)
+    const ironMan = squad.filter(p => p.sessionPlayCount > 0).sort((a,b) => b.sessionPlayCount - a.sessionPlayCount)[0] || null;
+
+    const renderItem = (label, player, val, icon) => {
+        const sqIdx = player ? StateStore.squad.indexOf(player) : -1;
+        const clickable = player && sqIdx >= 0;
+        return `
+        <div class="sh-insight-item ${clickable ? 'clickable' : ''}" ${clickable ? `onclick="openPlayerCard(${sqIdx})"` : ''}>
+            <div class="sh-insight-label">${label}</div>
+            <div class="sh-insight-val">${player ? escapeHTML(player.name) : '—'}</div>
+            <div class="sh-insight-meta">${val || ''}</div>
+        </div>
+    `;
+        };
+
+    grid.innerHTML = `
+        ${renderItem('⌛ LONGEVITY', longest, (longest?.waitRounds ? `${longest.waitRounds} rounds` : 'Next up'))}
+        ${renderItem('⚡ WIN STREAK', king, (king?.streak > 0 ? `${king.streak} streak` : 'No streaks'))}
+        ${renderItem('🎮 TOTAL GAMES', ironMan, (ironMan?.sessionPlayCount > 0 ? `${ironMan.sessionPlayCount} games` : '0 games'))}
+    `;
+}
+window.renderDirectorHub = renderDirectorHub;
+
+function _supportSectionHTML() {
+    return `
+        <div style="margin-top: auto; padding-top: 24px;">
+            <hr style="margin:0 0 28px; border:none; border-top:1px solid var(--border);">
+
+            <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">🐛 Report a Bug</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <button class="btn-main" style="width:100%; background:#334155; color:#fff;"
+                    onclick="openBugReportModal()">
+                    🐛 Report a Bug
+                </button>
+            </div>
+
+            <div style="flex:1 1 0; min-width:140px;">
+                <div class="sync-section-label">☕ Support the Dev</div>
+                <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 16px;">
+                    If Courtside Pro saves you time, consider buying the dev a coffee.
+                </p>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
+                    <div style="text-align:center;">
+                            
+                    </div>
+                    <a href="https://ko-fi.com/willemaaron" target="_blank" rel="noopener"
+                        style="display:inline-flex; align-items:center; gap:8px;
+                               background:#FF5E5B; color:#fff; font-weight:700;
+                               font-size:0.82rem; padding:12px 20px; border-radius:12px;
+                               text-decoration:none; white-space:nowrap;">
+                        ☕ Ko-fi
+                    </a>
+                </div>
+            </div>
+
+            </div>
+        </div>
+    `;
+}
+
+function openBugReportModal() {
+    let modal = document.getElementById('bugReportModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'bugReportModal';
+        modal.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.7);
+            display:flex; align-items:center; justify-content:center;
+            z-index:9999; padding:20px; box-sizing:border-box;
+        `;
+        modal.innerHTML = `
+            <div style="background:var(--surface1,#1e293b); border:1px solid var(--border,#334155);
+                        border-radius:16px; padding:24px; width:100%; max-width:400px;
+                        box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div style="font-weight:700; font-size:1rem; color:#fff;">🐛 Report a Bug</div>
+                    <button onclick="closeBugReportModal()" style="background:none; border:none;
+                            color:var(--text-muted,#94a3b8); font-size:1.2rem; cursor:pointer; padding:4px;">✕</button>
+                </div>
+                <p style="font-size:0.75rem; color:var(--text-muted,#94a3b8); margin:0 0 12px;">
+                    Something broken? Let the dev know.
+                </p>
+                <textarea id="bugReportModalText"
+                    placeholder="Describe what happened…"
+                    rows="5"
+                    style="width:100%; background:var(--bg2,#0f172a); border:1.5px solid var(--border,#334155);
+                           color:#fff; padding:14px; border-radius:12px; margin-bottom:12px;
+                           outline:none; font-size:14px; font-family:inherit;
+                           resize:vertical; box-sizing:border-box;"
+                ></textarea>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-main" style="flex:1; background:#334155; color:#fff;"
+                        onclick="closeBugReportModal()">Cancel</button>
+                    <button class="btn-main" style="flex:1; background:var(--accent,#38bdf8); color:#000;"
+                        onclick="submitBugReport()">📨 Send Report</button>
+                </div>
+            </div>
+        `;
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) closeBugReportModal();
+        });
+        document.body.appendChild(modal);
+    } else {
+        modal.style.display = 'flex';
+        const ta = document.getElementById('bugReportModalText');
+        if (ta) ta.value = '';
+    }
+}
+
+function closeBugReportModal() { 
+    const modal = document.getElementById('bugReportModal');
+    if (modal) modal.style.display = 'none';
+}
+window.closeBugReportModal = closeBugReportModal;
+
+function submitBugReport() {
+    const text = (document.getElementById('bugReportModalText')?.value || '').trim();
+    if (!text) {
+        alert('Please describe the bug before sending.');
+        return;
+    }
+    const subject = encodeURIComponent('[Courtside Pro] Bug Report');
+    const body = encodeURIComponent(
+        'Bug Description:\n' + text +
+        '\n\n---\n' +
+        'App version: Courtside Pro\n' +
+        'Time: ' + new Date().toLocaleString() + '\n' +
+        'Squad size: ' + (StateStore.squad?.length ?? 'N/A') + '\n' +
+        'Active courts: ' + (StateStore.get('activeCourts') ?? 'N/A')
+    );
+    window.open('mailto:iamwillempacardo@gmail.com?subject=' + subject + '&body=' + body);
+    closeBugReportModal();
+}
+
+function importSyncToken() {
+    const val = document.getElementById('syncInput').value.trim();
+    if (!val) return;
+    try {
+        // Fix: Unicode-safe decoding
+        const json = decodeURIComponent(escape(window.atob(val)));
+        const data = JSON.parse(json);
+        if (!data.squad) throw new Error('Missing squad data');
+                StateStore.setState({ squad: data.squad, currentMatches: data.currentMatches || [] }); // Triggers sync
+        closeOverlay();
+        renderSquad();
+        document.getElementById('matchContainer').innerHTML = '';
+        if (typeof rebuildMatchCardIndices === 'function') rebuildMatchCardIndices();
+        checkNextButtonState();
+    } catch (e) {
+        alert('Invalid Sync Token. Please check the data and try again.');
+    }
+}
+
+function eraseAllData() {
+    localStorage.clear();
+    location.reload();
+}
+
+function confirmEraseAllData() {
+    UIManager.confirm({
+        title: 'Wipe All Data?',
+        message: 'This will permanently delete all players, matches, and session history. This action cannot be undone.',
+        confirmText: 'Yes, Wipe Everything',
+        isDestructive: true,
+        onConfirm: eraseAllData
+    });
+}
+
+// ---------------------------------------------------------------------------
+// UTILITIES
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a function that, as long as it continues to be invoked, will not
+ * be triggered. The function will be called after it stops being called for
+ * N milliseconds.
+ */
+function debounce(fn, delay) {
+    let timeoutId = null;
+    const debounced = (...args) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn(...args), delay);
+    };
+    debounced.cancel = () => { if (timeoutId) clearTimeout(timeoutId); timeoutId = null; };
+    return debounced;
+}
+
+window.debounce = debounce;
+
+function escapeHTML(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // ---------------------------------------------------------------------------
 // AURA MATCH POSTER
 // ---------------------------------------------------------------------------
@@ -2328,18 +3167,6 @@ async function shareAuraPoster(matchIdx) {
 // ---------------------------------------------------------------------------
 // "I WANT TO PLAY" — Spectator feature
 // ---------------------------------------------------------------------------
-
-let playRequests = [];
-window.playRequests = playRequests;
-
-function _iwtpShow(id) {
-    ['iwtpChoiceView','iwtpNewPlayerView','iwtpExistingView','iwtpSpectatorView'].forEach(v => {
-        const el = document.getElementById(v);
-        if (el) el.style.display = v === id ? 'block' : 'none';
-    });
-}
-
-function showIWTPChoice() { _iwtpShow('iwtpChoiceView'); }
 
 function showIWTPNewPlayer() {
     _iwtpShow('iwtpNewPlayerView');
@@ -2392,8 +3219,8 @@ async function submitIWantToPlay() {
     const btn   = document.getElementById('iwtpSendBtn');
     const p     = (typeof Passport !== 'undefined') ? Passport.get() : null;
 
-    if (!name) { showSessionToast('Please enter your name first.'); input?.focus(); return; }
-    if (!currentRoomCode) { showSessionToast('Not connected to a session.'); return; }
+    if (!name) { if (typeof showSessionToast === 'function') showSessionToast('Please enter your name first.'); input?.focus(); return; }
+    if (!window.currentRoomCode) { if (typeof showSessionToast === 'function') showSessionToast('Not connected to a session.'); return; }
 
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
@@ -2405,7 +3232,7 @@ async function submitIWantToPlay() {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body:    JSON.stringify({
-                room_code: currentRoomCode,
+                room_code: window.currentRoomCode,
                 name: name,
                 player_uuid: playerUUID,
                 spirit_animal: spiritAnimal
@@ -2415,13 +3242,13 @@ async function submitIWantToPlay() {
         if (res.ok) {
             localStorage.setItem('cs_spectator_name', name);
             collapseIWTPSheet();
-            setTimeout(() => showSessionToast('🏀 Request sent! Pending host approval…'), 300);
-            Haptic.success();
+            setTimeout(() => { if (typeof showSessionToast === 'function') showSessionToast('🏀 Request sent! Pending host approval…'); }, 300);
+            if (window.Haptic) Haptic.success();
         } else { throw new Error('Failed'); }
     } catch {
         if (btn) { btn.disabled = false; btn.textContent = 'Send Request'; }
-        showSessionToast('Could not send request. Try again.');
-        Haptic.error();
+        if (typeof showSessionToast === 'function') showSessionToast('Could not send request. Try again.');
+        if (window.Haptic) Haptic.error();
     }
 }
 
@@ -2438,202 +3265,7 @@ function checkIWTPSmartRecognition() {
     showIWTPChoice();
 }
 
-let _lastSeenRequestIds = new Set();
-let _pollingInterval = null;
-let _isPolling = false;
 
-/**
- * Tracks seen request IDs to prevent duplicate processing/notifications.
- * Implements a sliding window (max 200 IDs) to prevent memory leaks in long sessions.
- */
-function _trackRequestId(id) {
-    if (!id) return;
-    _lastSeenRequestIds.add(id);
-    if (_lastSeenRequestIds.size > 200) {
-        const oldest = _lastSeenRequestIds.values().next().value;
-        _lastSeenRequestIds.delete(oldest);
-    }
-}
-
-function _isPlayerAlreadyInSession(record) {
-    if (!record) return null;
-    const uuidMap = window._sessionUUIDMap || {};
-    return StateStore.squad.find(p => 
-        (record.player_uuid && p.uuid === record.player_uuid) || 
-        (p.name.toLowerCase() === (record.name || '').toLowerCase()) ||
-        (record.player_uuid && uuidMap[record.name] === record.player_uuid)
-    );
-}
-
-async function pollPlayRequests() {
-    if (_isPolling || !isOnlineSession || !isOperator || !currentRoomCode || _isProcessingOpenPartyBatch) return;
-    _isPolling = true;
-    try {
-        const res  = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}`);
-        const data = await res.json();
-        const incoming = data.requests || [];
-
-        const trulyPending = [];
-
-        for (const r of incoming) {
-            const isOpen = StateStore.get('isOpenParty');
-            if (!_lastSeenRequestIds.has(r.id)) {
-                // Track immediately to prevent race-induced duplicate processing
-                _trackRequestId(r.id);
-
-                const existing = _isPlayerAlreadyInSession(r);
-
-                if (existing) {
-                    console.log(`[CourtSide] Auto-resolving request for ${r.name} (already in squad). Reconciling UUID/Name.`);
-                    let changed = false;
-                    const existingIdx = StateStore.squad.findIndex(p => p.uuid === existing.uuid);
-                    let updatedPlayer = { ...existing }; // Create a new object for immutable update
-
-                    if (r.player_uuid && updatedPlayer.uuid !== r.player_uuid) {
-                        updatedPlayer.uuid = r.player_uuid;
-                        changed = true;
-                    }
-                    if (r.name && updatedPlayer.name !== r.name) {
-                        updatedPlayer.name = r.name;
-                        changed = true;
-                    }
-
-                    const newSquad = [...StateStore.squad];
-                    newSquad[existingIdx] = updatedPlayer;
-                    StateStore.set('squad', newSquad); // Explicitly update StateStore
-
-                    if (changed) {
-                        renderSquad();
-                        saveToDisk();
-                    }
-
-                    if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
-                    fetch('/api/play-request', {
-                        method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ id: r.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
-                    }).catch(() => {});
-                    continue;
-                }
-
-                if (isOpen) {
-                    console.log(`[CourtSide] Auto-approving ${r.name} (Open Party)`);
-                    await approvePlayRequest(r.name, r.id, r.player_uuid || null);
-                    continue;
-                }
-                trulyPending.push(r);
-                const requestIdUUID = r.player_uuid || null;
-                const requestIdEmoji = r.spirit_animal || null;
-                showJoinNotification(r.name, r.id, requestIdUUID, requestIdEmoji);
-            } else {
-                // If we've seen it but it's still in the fetch, it's pending unless it's an auto-join
-                if (!isOpen) trulyPending.push(r);
-            }
-        }
-
-        playRequests = trulyPending;
-        window.playRequests = trulyPending;
-
-        const badge = document.getElementById('playRequestsBadge');
-        const count = document.getElementById('playRequestsCount');
-        if (badge && count) {
-            const hasReqs = trulyPending.length > 0;
-            badge.style.display = hasReqs ? 'flex' : 'none';
-            count.textContent   = trulyPending.length;
-        }
-    } catch (e) { console.error('[pollPlayRequests] failed', e); } finally { _isPolling = false; }
-}
-
-const _notifQueue = [];
-let   _notifShowing = false;
-
-function showJoinNotification(name, id, uuid = null, emoji = null) {
-    _notifQueue.push({ name, id, uuid, emoji });
-    if (!_notifShowing) processNotifQueue();
-}
-
-function processNotifQueue() {
-    if (_notifQueue.length === 0) { _notifShowing = false; return; }
-    _notifShowing = true;
-
-    const { name, id, uuid, emoji } = _notifQueue.shift();
-    const notif  = document.getElementById('joinNotification');
-    const nameEl = document.getElementById('joinNotifName');
-    if (!notif || !nameEl) return;
-
-    nameEl.innerHTML    = emoji ? `<span style="margin-right:8px">${emoji}</span>${escapeHTML(name)}` : escapeHTML(name);
-    notif.dataset.id    = id;
-    notif.dataset.name  = name;
-    notif.dataset.uuid  = uuid || '';
-    notif.classList.add('show');
-    Haptic.bump();
-
-    const timer = setTimeout(() => dismissJoinNotification(), 12000);
-    notif._timer = timer;
-}
-
-function dismissJoinNotification() {
-    const notif = document.getElementById('joinNotification');
-    if (!notif) return;
-    clearTimeout(notif._timer);
-    notif.classList.remove('show');
-    setTimeout(processNotifQueue, 400);
-}
-
-async function notifApprove() {
-    const notif = document.getElementById('joinNotification');
-    const name  = notif?.dataset.name;
-    const id    = notif?.dataset.id;
-    const uuid  = notif?.dataset.uuid || null;
-    if (name && id) {
-        await approvePlayRequest(name, id, uuid);
-    }
-    dismissJoinNotification();
-}
-
-async function notifDecline() {
-    const notif = document.getElementById('joinNotification');
-    const id    = notif?.dataset.id;
-    if (id) {
-        await denyPlayRequest(id);
-    }
-    dismissJoinNotification();
-}
-
-function showPlayRequests() {
-    const modal = document.getElementById('playRequestsModal');
-    const list  = document.getElementById('playRequestsList');
-    if (!modal || !list) return;
-
-    const approveAllHTML = playRequests.length > 1 
-        ? `<button class="btn-main" style="margin-bottom:12px; background:var(--accent); color:#000; font-size:0.8rem; height:40px;" onclick="approveAllRequests()">✓ Approve All (${playRequests.length})</button>`
-        : '';
-
-    list.innerHTML = playRequests.length === 0
-        ? '<p style="text-align:center;color:var(--text-muted);padding:20px 0;">No pending requests.</p>'
-        : approveAllHTML + playRequests.map(r => `
-            <div class="pr-row">
-                ${r.spirit_animal ? `<span style="font-size:1.2rem;margin-right:8px;">${r.spirit_animal}</span>` : ''}
-                <span class="pr-name">${escapeHTML(r.name)}</span>
-                <button class="pr-add-btn" onclick="approvePlayRequest('${escapeHTML(r.name)}', '${r.id}', '${r.player_uuid||''}')">+ Add</button>
-                <button class="pr-deny-btn" onclick="denyPlayRequest('${r.id}')">✕</button>
-            </div>
-        `).join('');
-
-    modal.style.display = 'flex';
-}
-
-async function approveAllRequests() {
-    if (!window.playRequests || window.playRequests.length === 0) return;
-    const toApprove = [...window.playRequests];
-    closePlayRequests();
-    showSessionToast(`Processing ${toApprove.length} approvals...`);
-    const ids = toApprove.map(r => r.id);
-    if (ids.length > 0) {
-        await batchApproveAPI(ids);
-    }
-}
-window.approveAllRequests = approveAllRequests;
 
 function closePlayRequests() {
     document.getElementById('playRequestsModal').style.display = 'none';
@@ -2733,7 +3365,7 @@ async function approvePlayRequest(name, id, playerUUID = null, skipSync = false,
 
     _processingRequestIds.add(id);
     if (playerUUID) {
-        _processingPlayerUUIDs.add(playerUUID);
+        _processingPlayerUUIDs.add(playerUUID);sss
         setTimeout(() => _processingPlayerUUIDs.delete(playerUUID), 2000);
     }
 
@@ -2831,20 +3463,6 @@ function _makeApprovalToken() {
     return Array.from({ length: 12 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 }
 
-function _generateUUID() {
-    if (window.Passport && typeof window.Passport._uuid === 'function') {
-        return window.Passport._uuid();
-    }
-    // Use native crypto API as primary fallback if Passport is missing
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-        return crypto.randomUUID();
-    }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-}
-
 /** Sends a batch request to resolve multiple play requests in one API call. */
 async function batchApproveAPI(ids) {
     if (!ids || ids.length === 0 || !window.currentRoomCode || !window.operatorKey) return;
@@ -2864,397 +3482,20 @@ async function batchApproveAPI(ids) {
     }
 }
 
-async function denyPlayRequest(id) {
-    try {
-        await fetch('/api/play-request', {
-            method:  'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ id, room_code: currentRoomCode, operator_key: operatorKey }),
-        });
-        await pollPlayRequests();
-        showPlayRequests();
-    } catch { /* silent */ }
-}
 
-// Called by sync.js when a Realtime INSERT event occurs on play_requests table
-window.onPlayRequestInsert = async function(record) {
-    if (!record) return;
-
-    // LOCK CHECK: If Edge function already activated this player, ignore the request insertion
-    if (record.player_uuid && _processingPlayerUUIDs.has(record.player_uuid)) return;
-
-    if (!_lastSeenRequestIds.has(record.id)) {
-        // Track immediately to prevent duplicate processing
-        _trackRequestId(record.id);
-
-        // Metadata Integrity: Ensure the record is in the cache so approvePlayRequest
-        // can extract the spirit animal and achievements during auto-approval.
-        if (!playRequests.some(r => r.id === record.id)) {
-            playRequests.push(record);
-            if (playRequests.length > 100) playRequests.shift(); // Max-size cleanup
-            window.playRequests = playRequests;
-        }
-
-        const existing = _isPlayerAlreadyInSession(record);
-
-        if (existing) {
-            // Adopt real UUID for manual additions triggered by realtime events (immutable update)
-            if (record.player_uuid && existing.uuid !== record.player_uuid) {
-                const existingIdx = StateStore.squad.findIndex(p => p.uuid === existing.uuid);
-                const newSquad = [...StateStore.squad];
-                newSquad[existingIdx] = { ...existing, uuid: record.player_uuid };
-                StateStore.set('squad', newSquad); // Explicitly update StateStore
-            }
-
-            if (existing.uuid && typeof window.memberApprove === 'function') window.memberApprove(existing.uuid);
-            fetch('/api/play-request', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: record.id, room_code: window.currentRoomCode, operator_key: window.operatorKey }),
-            }).catch(() => {});
-            return;
-        }
-
-        // Lock Check: If a batch approval is currently running, ignore realtime
-        // triggers for a moment. Sequential integrity is maintained by the
-        // batch loop and the next polling cycle.
-        if (_isProcessingOpenPartyBatch) return;
-
-        if (StateStore.get('isOpenParty')) {
-            await approvePlayRequest(record.name, record.id, record.player_uuid);
-            return;
-        }
-
-        const recordIdUUID = record.player_uuid || null;
-        const recordIdEmoji = record.spirit_animal || null;
-        showJoinNotification(record.name, record.id, recordIdUUID, recordIdEmoji);
-    }
-    if (!_isProcessingOpenPartyBatch) pollPlayRequests(); // Fetch full list to ensure badge count is accurate
-};
-
-function ensureHostUI() {
-    // Only show host UI if not in player/spectator view
-    const isPlayerView = document.body.classList.contains('player-mode');
-    if (isPlayerView) return;
-
-    // Create a host dashboard area if it doesn't exist
-    let dashboard = document.getElementById('hostDashboard');
-    if (!dashboard) {
-        dashboard = document.createElement('div');
-        dashboard.id = 'hostDashboard';
-        dashboard.className = 'host-dashboard';
-        dashboard.style.display = 'flex';
-        const container = document.querySelector('.app-container');
-        if (container) {
-            const header = container.querySelector('header');
-            if (header) header.insertAdjacentElement('afterend', dashboard);
-        }
-    }
-
-    // Add Director Hub container
-    if (!document.getElementById('directorHub')) {
-        const hub = document.createElement('div');
-        hub.id = 'directorHub';
-        hub.className = 'panel'; 
-        hub.style.padding = '16px';
-        hub.style.marginBottom = '12px';
-        hub.innerHTML = `
-            <div class="sync-section-label" style="margin-bottom:12px; font-size:0.6rem;">Director Insights</div>
-            <div id="directorHubGrid" class="sh-insights-grid"></div>
-        `;
-        dashboard.insertBefore(hub, dashboard.firstChild);
-    }
-    renderDirectorHub();
-
-    // Add Open Party Toggle
-    if (!document.getElementById('slOpenPartyToggle')) {
-        const toggle = document.createElement('div');
-        toggle.id = 'slOpenPartyToggle';
-        toggle.className = 'open-party-toggle';
-        toggle.onclick = () => toggleOpenParty();
-        dashboard.appendChild(toggle);
-        renderOpenPartyToggle();
-    }
-
-    // Add Court Selector to Host Dashboard
-    if (!document.getElementById('courtCountInput')) {
-        const selector = document.createElement('div');
-        selector.className = 'panel';
-        selector.style.padding = '12px 16px';
-        selector.innerHTML = `
-            <div class="court-selector" style="flex-direction: row; justify-content: space-between; align-items: center;">
-                <div class="court-selector-label" style="margin-bottom: 0;">ACTIVE COURTS</div>
-                <div class="court-input-row">
-                    <input type="number" id="courtCountInput" class="court-count-input" 
-                           value="${StateStore.get('activeCourts') || 1}" min="1" max="10">
-                    <button class="court-set-btn" onclick="window.setCourts(document.getElementById('courtCountInput').value)">SET</button>
-                </div>
-            </div>
-        `;
-        dashboard.appendChild(selector);
-    }
-
-    // 1. Join Notification Toast (Popup)
-   if (!document.getElementById('joinNotification')) {
-        const notif = document.createElement('div');
-        notif.id = 'joinNotification';
-        notif.className = 'join-notif';
-        notif.innerHTML = `
-            <div class="join-notif-inner">
-                <div class="join-notif-label">REQUEST TO JOIN</div>
-                <div class="join-notif-name" id="joinNotifName">PLAYER</div>
-                <div class="join-notif-actions">
-                    <button class="join-notif-approve" onclick="notifApprove()">APPROVE</button>
-                    <button class="join-notif-decline" onclick="notifDecline()">DECLINE</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(notif);
-    }
-
-    // 2. Play Requests Badge (The Button)
-    if (!document.getElementById('playRequestsBadge')) {
-        const badge = document.createElement('div');
-        badge.id = 'playRequestsBadge';
-        badge.className = 'play-requests-badge';
-        badge.onclick = window.showPlayRequests;
-        badge.style.display = 'none'; 
-        badge.innerHTML = `
-            <span>PENDING REQUESTS</span>
-            <span id="playRequestsCount" style="background:rgba(0,0,0,0.3); color:var(--accent); padding:2px 8px; border-radius:6px; margin-left:10px; font-size:0.7rem; border:1px solid var(--border-accent);">0</span>
-        `;
-        if (dashboard) dashboard.appendChild(badge);
-        else document.body.appendChild(badge);
-    }
-
-    // 3. Play Requests Modal (The List)
-    if (!document.getElementById('playRequestsModal')) {
-        const modal = document.createElement('div');
-        modal.id = 'playRequestsModal';
-        modal.className = 'play-requests-modal';
-        modal.style.display = 'none';
-        modal.innerHTML = `
-            <div class="play-requests-card">
-                <div class="play-requests-title">Pending Requests</div>
-                <div id="playRequestsList" style="max-height: 300px; overflow-y: auto;"></div>
-                <button class="btn-cancel" onclick="closePlayRequests()" style="margin-top:12px;">Close</button>
-            </div>
-        `;
-        document.body.appendChild(modal);
-    }
-}
-
-let wrSelectedPlayer = null;
-let wrTeams = [];
-let wrTournamentName = 'TOURNAMENT';
-
-function openTournamentMode() {
-    const overlay = document.createElement('div');
-    overlay.className = 'war-room-overlay';
-    overlay.id = 'warRoomOverlay';
-    
-    const code = window.currentRoomCode;
-    const isLive = !!code;
-    
-    // FIX: Tight filter to ensure anyone in wrTeams is GONE from Pool
-    const assignedIds = new Set(wrTeams.flatMap(t => t.players.map(tp => tp.uuid || tp.name)));
-    const unassigned = StateStore.squad.filter(p => p.active && !assignedIds.has(p.uuid || p.name));
-
-    overlay.innerHTML = `
-        <div class="wr-header">
-            <div class="wr-title-area" onclick="window.editTournamentName()">
-                <div style="font-family:var(--font-display); font-size:0.6rem; color:var(--trophy-gold); font-weight:900; letter-spacing:2px; margin-bottom:2px;">${isLive ? 'LIVE SESSION' : 'OFFLINE MODE'}</div>
-                <div style="font-family:var(--font-display); font-size:1.6rem; font-weight:900; font-style:italic; line-height:1; color:#fff;">${wrTournamentName} <span style="font-size:0.8rem; opacity:0.4;">✏️</span></div>
-            </div>
-            <div id="wrTicker" class="wr-participant-ticker">${StateStore.squad.length} IN ROOM</div>
-            <div style="display:flex; gap:10px;">
-                ${!isLive ? `<button class="wr-btn-guest" style="border-color:var(--accent); color:var(--accent);" onclick="createOnlineSession()">🌐 GO LIVE</button>` : ''}
-                <button class="wr-btn-guest" onclick="window.addTournamentGuest()">🏆 + GUEST</button>
-                <button class="wr-btn-close" onclick="document.getElementById('warRoomOverlay').remove()">✕</button>
-            </div>
-        </div>
-
-        <div class="wr-workbench">
-            <div class="wr-column">
-                <div class="wr-column-title">The Draft Pool</div>
-                <div id="wrDraftPool" style="flex:1; overflow-y:auto;">
-                    ${unassigned.map(p => `
-                        <div class="wr-draft-chip" onclick="handleWarRoomTap('${p.uuid}')" data-uuid="${p.uuid}">
-                            <div style="flex:1; font-weight:700;">
-                                ${escapeHTML(p.name)} ${p.isGuest ? '' : '<span title="Passport User" style="opacity:0.5; margin-left:4px;">🪪</span>'}
-                            </div>
-                            <div class="wr-chip-actions">
-                                <button class="wr-chip-btn" onclick="event.stopPropagation(); window.editTournamentPlayer('${p.uuid}')">✏️</button>
-                                <button class="wr-chip-btn" onclick="event.stopPropagation(); window.removeTournamentPlayer('${p.uuid}')">✕</button>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-            <div class="wr-column">
-                <div class="wr-column-title">Bracket Entries</div>
-                <div id="wrTeamsList" style="flex:1; overflow-y:auto; display:grid; grid-template-columns:1fr; gap:10px;">
-                    <!-- Teams will appear here -->
-                </div>
-            </div>
-        </div>
-
-        <button class="wr-ignition-btn" onclick="igniteTournament()">
-            GENERATE CHAMPIONSHIP BRACKET
-        </button>
-    `;
-
-    document.body.appendChild(overlay);
-}
-
-function editTournamentName() {
-    UIManager.prompt({
-        title: 'Edit Tournament Name',
-        initialValue: wrTournamentName,
-        onConfirm: (val) => {
-            if (val.trim()) wrTournamentName = val.trim().toUpperCase();
-            const overlay = document.getElementById('warRoomOverlay');
-            if (overlay) { overlay.remove(); openTournamentMode(); }
-        }
-    });
-}
-
-function addTournamentGuest() {
-    UIManager.prompt({
-        title: 'Add Tournament Guest',
-        placeholder: 'Enter name...',
-        confirmText: 'Add to Pool',
-        onConfirm: (name) => {
-            const trimmed = name.trim();
-            if (!trimmed) return;
-            
-            const newUUID = _generateUUID();
-            const newPlayer = migratePlayer({
-                name: trimmed,
-                uuid: newUUID,
-                active: true,
-                isGuest: true
-            });
-            
-            StateStore.set('squad', [...StateStore.squad, newPlayer]);
-            if (window.Haptic) Haptic.success();
-            // Refresh the Tournament Mode UI
-            const overlay = document.getElementById('warRoomOverlay');
-            if (overlay) { overlay.remove(); openTournamentMode(); }
-        }
-    });
-}
-
-function editTournamentPlayer(uuid) {
-    const p = StateStore.squad.find(x => x.uuid === uuid);
-    if (!p) return;
-    
-    UIManager.prompt({
-        title: 'Edit Player Name',
-        initialValue: p.name,
-        onConfirm: (newName) => {
-            if (!newName.trim()) return;
-            if (typeof _applyNameUpdate === 'function') {
-                _applyNameUpdate(uuid, p.name, newName.trim());
-                // Refresh view
-                const overlay = document.getElementById('warRoomOverlay');
-                if (overlay) { overlay.remove(); openTournamentMode(); }
-            }
-        }
-    });
-}
-
-async function removeTournamentPlayer(uuid) {
-    const p = StateStore.squad.find(x => x.uuid === uuid);
-    if (!p) return;
-    await removePlayerFromSession(uuid, p.name);
-    const overlay = document.getElementById('warRoomOverlay');
-    if (overlay) { overlay.remove(); openTournamentMode(); }
-}
-
-window.handleWarRoomTap = (uuid) => {
-    const el = document.querySelector(`[data-uuid="${uuid}"]`);
-    if (!wrSelectedPlayer) {
-        wrSelectedPlayer = uuid;
-        el.classList.add('selected');
-        Haptic.tap();
-    } else {
-        if (wrSelectedPlayer === uuid) {
-            wrSelectedPlayer = null;
-            el.classList.remove('selected');
-            return;
-        }
-        // Merge!
-        const p1 = StateStore.squad.find(p => p.uuid === wrSelectedPlayer);
-        const p2 = StateStore.squad.find(p => p.uuid === uuid);
-        
-        createWarRoomTeam(p1, p2);
-        wrSelectedPlayer = null;
-    }
-};
-
-function createWarRoomTeam(p1, p2) {
-    const team = { id: _generateUUID(), players: [p1, p2], name: `${p1.name} & ${p2.name}` };
-    wrTeams.push(team);
-    
-    // Refresh pool to properly exclude the team members
-    const overlay = document.getElementById('warRoomOverlay');
-    if (overlay) { overlay.remove(); openTournamentMode(); }
-
-    if (window.Haptic) Haptic.success();
-}
-
-function igniteTournament() {
-    if (wrTeams.length < 2) return alert('Need at least 2 teams to ignite bracket.');
-    const rounds = generateTournamentBracket(wrTeams);
-    
-    const workbench = document.querySelector('.wr-workbench');
-    workbench.innerHTML = '';
-    workbench.className = 'wr-bracket-canvas';
-    
-    rounds.forEach((round, rIdx) => {
-        const roundDiv = document.createElement('div');
-        roundDiv.className = 'wr-round';
-        roundDiv.innerHTML = `
-            <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">ROUND ${rIdx + 1}</div>
-            ${round.map(m => `
-                <div class="wr-matchup">
-                    <div class="wr-bracket-slot ${m.team1 ? 'has-team' : ''}">${m.team1 ? m.team1.name : 'TBD'}</div>
-                    <div class="wr-bracket-slot ${m.team2 ? 'has-team' : ''}">${m.team2 ? m.team2.name : (m.team1 ? 'BYE' : 'TBD')}</div>
-                </div>
-            `).join('')}
-        `;
-        workbench.appendChild(roundDiv);
-    });
-
-    // Add Championship center-piece
-    const champ = document.createElement('div');
-    champ.className = 'wr-round';
-    champ.innerHTML = `
-        <div class="wr-column-title" style="text-align:center; color:var(--trophy-gold)">FINALS</div>
-        <div class="wr-championship-ring">
-            <div style="font-size:2rem;">🏆</div>
-            <div style="font-family:var(--font-display); font-weight:900; color:var(--trophy-gold); letter-spacing:3px;">CHAMPION</div>
-        </div>
-    `;
-    workbench.appendChild(champ);
-
-    if (window.Haptic) Haptic.success();
-    showSessionToast('🏆 TOURNAMENT IGNITED');
-}
 const _startPolling = () => {
     if (_pollingInterval) clearInterval(_pollingInterval);
     ensureHostUI();
     pollPlayRequests();
     
     _pollingInterval = setInterval(async () => { 
-        if (isOnlineSession && isOperator) {
+        if (window.isOnlineSession && window.isOperator) {
             pollPlayRequests();
             
             // Self-Healing: Check for players who are 'active' in DB but missing in local squad
             if (!_isProcessingOpenPartyBatch) try {
                 const knownUuids = StateStore.squad.map(p => p.uuid).filter(id => id && id.length > 10).join(',');
-                const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(currentRoomCode)}&status=active&exclude=${encodeURIComponent(knownUuids)}`);
+                const res = await fetch(`/api/play-request?room_code=${encodeURIComponent(window.currentRoomCode)}&status=active&exclude=${encodeURIComponent(knownUuids)}`);
                 
                 const data = await res.json();
                 const activeInDB = data.requests || [];
@@ -3301,26 +3542,17 @@ function updateIWTPVisibility() {
     
     // If Open Party and we are a known player, just switch to player mode automatically
     const hasPassport = !!(window._passport?.playerName && window._passport?.playerUUID);
-    if (window._isOpenParty && hasPassport && !isOperator && !isPlayerView) {
+    if (window._isOpenParty && hasPassport && !window.isOperator && !isPlayerView) {
         PlayerMode.boot(window._passport, window.currentRoomCode);
         return;
     }
 
     // If already in squad, never show the join prompt
     const inSquad = (window.squad || []).some(p => p.uuid === window._passport?.playerUUID);
-    const show = isOnlineSession && !isOperator && !isPlayerView && !inSquad;
+    const show = window.isOnlineSession && !window.isOperator && !isPlayerView && !inSquad;
 
     sheet.style.display = show ? 'flex' : 'none';
     if (show) checkIWTPSmartRecognition();
-}
-
-// =============================================================================
-// PASSPORT INTEGRATION
-// =============================================================================
-
-function passportInit() {
-    const passport = Passport.init();
-    return passport;
 }
 
 function passportRename() {
@@ -3342,7 +3574,7 @@ function passportRename() {
                 PlayerMode._renderIdentity(Passport.get());
             }
 
-            if (typeof isOnlineSession !== 'undefined' && isOnlineSession) {
+            if (typeof window.isOnlineSession !== 'undefined' && window.isOnlineSession) {
                 // KEY FIX: If Host renames, update squad/matches/queue immediately
                 if (window.isOperator && typeof window._applyNameUpdate === 'function') {
                     window._applyNameUpdate(passport.playerUUID, oldName, trimmed);
@@ -3404,585 +3636,7 @@ function passportRename() {
  * Processes a win/loss signal received via Realtime.
  * Refreshes the sideline view and acknowledges the signal in the DB.
  */
-async function handlePassportSignal(signal, passport) {
-    SidelineView.refresh();
-
-    await fetch('/api/passport-signal', {
-        method:  'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-            player_uuid: passport.playerUUID,
-            room_code:   currentRoomCode,
-        }),
-    }).catch(() => {});
-}
-
-/**
- * HOST dispatches win signals after selecting winners.
- * Called from setWinner() in logic.js.
- *
- * KEY FIX: broadcastGameState() is called HERE, at the end of dispatchWinSignals(),
- * AFTER the winning team is recorded in currentMatches. This means players see
- * the winner selection on their feed the instant the host taps a team box —
- * not after the next round is generated.
- */
-async function dispatchWinSignals(mIdx, skipBroadcast = false, timestamp = Date.now()) {
-    if (!isOperator || !currentRoomCode) return;
-    const m = StateStore.currentMatches[mIdx];
-    if (!m || m.winnerTeamIndex === null) return;
-
-    const winIdx  = m.winnerTeamIndex;
-    const loseIdx = winIdx === 0 ? 1 : 0;
-    const label   = `Game ${mIdx + 1}`;
-
-    // Match objects store UUIDs now
-    const winnerUUIDs = m.teams[winIdx]  || [];
-    const loserUUIDs  = m.teams[loseIdx] || [];
-
-    const winnerNames = winnerUUIDs.map(uuid => {
-        const p = StateStore.squad.find(x => (x.uuid || x.name) === uuid);
-        return p ? p.name : 'Unknown';
-    });
-    const winnerDisplayNames = winnerNames.join(' & ');
-
-    if (typeof _broadcast === 'function' && isOnlineSession) {
-        _broadcast('match_resolved', {
-            winnerNames:  winnerDisplayNames,
-            winnerUUIDs,
-            loserUUIDs,
-            gameLabel:    label,
-            timestamp:    timestamp
-        });
-    }
-
-    // 2. Broadcast game state so players see winner selection on match card.
-    //    Skip when caller (processCourtResult) will broadcast after building
-    //    the new lineup — so players receive one clean update with the next game.
-    if (!skipBroadcast && typeof broadcastGameState === 'function' && isOnlineSession) {
-        broadcastGameState(false, timestamp);
-    }
-
-    // 3. Durable DB fallback
-    if (winnerUUIDs.length > 0 || loserUUIDs.length > 0) {
-        fetch('/api/passport-signal', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({
-                room_code:    currentRoomCode,
-                winner_uuids: winnerUUIDs,
-                loser_uuids:  loserUUIDs,
-                game_label:   label,
-            }),
-        }).catch(e => console.error('Signal dispatch failed:', e));
-    }
-}
-
-// =============================================================================
-// PASSPORT-AWARE JOIN FLOW OVERRIDE
-// =============================================================================
-
-function _installPassportIWTPOverride() {
-    const _originalCheckIWTP = checkIWTPSmartRecognition;
-    checkIWTPSmartRecognition = function() {
-        const passport = Passport.get();
-        const sheet    = document.getElementById('iwantToPlaySheet');
-        if (!sheet || !isOnlineSession || isOperator) return;
-
-        // BUG FIX: If already in player mode, suppress the welcome back join prompt
-        if (document.body.classList.contains('player-mode')) {
-            sheet.style.display = 'none';
-            return;
-        }
-
-        if (passport && passport.playerName) {
-            showPassportWelcome(passport);
-            return;
-        }
-        _originalCheckIWTP();
-    };
-}
-
-function showPassportWelcome(passport) {
-    const sheet = document.getElementById('iwantToPlaySheet');
-    if (!sheet) return;
-
-    const choiceView = document.getElementById('iwtpChoiceView');
-    if (!choiceView) return;
-
-    const isOpen = StateStore.get('isOpenParty');
-    choiceView.innerHTML = `
-        <div class="iwtp-title">Welcome back,</div>
-        <div class="iwtp-passport-name">${escapeHTML(passport.playerName)}</div>
-        <div class="iwtp-subtitle">Your passport was found on this device.</div>
-        <button class="iwtp-btn" onclick="passportJoinSession()">
-            🏀 ${isOpen ? 'Join Instantly' : 'Check-in to Room'} ${escapeHTML(currentRoomCode || '')}
-        </button>
-        <button class="iwtp-choice-btn iwtp-choice-existing" style="margin-top:10px;" onclick="passportRenameAndJoin()">
-            ✏️ Join with a different name
-        </button>
-        <button class="iwtp-back-btn" style="margin-top:14px; display:block; text-align:center; width:100%;"
-            onclick="spectateOnly()">
-            👁 Just spectate
-        </button>
-    `;
-
-    _iwtpShow('iwtpChoiceView');
-    sheet.style.display = 'flex';
-}
-
-async function passportJoinSession() {
-    const passport = Passport.get();
-    if (!passport || !currentRoomCode) return;
-    await submitPassportJoinRequest(passport.playerName, passport.playerUUID);
-}
-
-async function passportRenameAndJoin() {
-    const passport = Passport.get();
-    
-    UIManager.prompt({
-        title: 'Join Session',
-        initialValue: passport?.playerName || '',
-        placeholder: 'Enter name...',
-        confirmText: 'Join',
-        onConfirm: async (newName) => {
-            const trimmed = (newName || '').trim();
-            if (!trimmed) return;
-            Passport.rename(trimmed);
-            await submitPassportJoinRequest(trimmed, passport.playerUUID);
-        }
-    });
-}
-
-async function submitPassportJoinRequest(name, uuid) {
-    if (!currentRoomCode) return;
-    const btn = document.querySelector('.iwtp-btn');
-    const p = (typeof Passport !== 'undefined') ? Passport.get() : null;
-
-    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-
-    const animal = p ? p.spiritAnimal : null;
-
-    try {
-        const res = await fetch('/api/play-request', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                room_code: currentRoomCode,
-                name: name,
-                player_uuid: uuid,
-                spirit_animal: animal
-            })
-        });
-
-        if (res.ok) {
-            collapseIWTPSheet();
-            setTimeout(() => { SidelineView.show(); }, 450);
-            showSessionToast('🏀 Request sent! Waiting for host approval…');
-            Haptic.success();
-        } else { throw new Error('Failed'); }
-    } catch {
-        if (btn) { btn.disabled = false; btn.textContent = 'Join Session'; }
-        showSessionToast('Could not send request. Try again.');
-    }
-}
-
-/**
- * Updates the UI for a pending request (modal and toast) if data changes via broadcast.
- */
-window.updatePendingRequestUI = function(uuid, name, emoji) {
-    if (!window.isOperator) return;
-
-    // 1. Update toast if showing
-    const notif = document.getElementById('joinNotification');
-    if (notif && notif.classList.contains('show') && notif.dataset.uuid === uuid) {
-        const nameEl = document.getElementById('joinNotifName');
-        const finalName = name || notif.dataset.name;
-        if (nameEl) {
-            nameEl.innerHTML = emoji ? `<span style="margin-right:8px">${emoji}</span>${escapeHTML(finalName)}` : escapeHTML(finalName);
-        }
-        if (name) notif.dataset.name = name;
-    }
-
-    // 2. Update modal if open
-    if (document.getElementById('playRequestsModal')?.style.display === 'flex') {
-        showPlayRequests();
-    }
-};
-
-function spectateOnly() {
-    collapseIWTPSheet();
-    document.body.classList.add('spectator-mode');
-    showSessionToast('👁 Spectating live');
-}
-
-
-// =============================================================================
-// LANDING PAGE
-// =============================================================================
-
-function showLandingPage() {
-    if (document.getElementById('landingPage')) return;
-
-    // Hide other standalone views if returning to menu
-    const ps = document.getElementById('passportStandalone');
-    if (ps) ps.style.display = 'none';
-    const sl = document.getElementById('sidelinePanel');
-    if (sl) sl.style.display = 'none';
-    document.body.classList.remove('player-mode');
-
-    if (typeof closeOverlay === 'function') closeOverlay();
-    let div = document.getElementById('landingPage');
-    if (!div) {
-        div = document.createElement('div');
-        div.id = 'landingPage';
-        document.body.appendChild(div);
-    }
-    div.className = 'actionMenu'; // Reuse modal style
-    div.style.zIndex = '9000';
-    div.style.background = 'var(--bg)'; // Opaque background
-
-    const recentRooms = JSON.parse(localStorage.getItem('cs_recent_rooms') || '[]');
-    let recentHTML = '';
-    if (recentRooms.length > 0) {
-        recentHTML = `
-            <div style="margin-bottom: 24px;">
-                <div style="font-size: 0.55rem; color: var(--text-muted); font-weight: 900; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; text-align: center;">QUICK RE-JOIN</div>
-                <div style="display: flex; gap: 8px; justify-content: center;">
-                    ${recentRooms.map(code => `
-                        <button class="btn-main" onclick="window.joinFromRecent('${code}')" 
-                                style="flex: 1; height: 40px; font-size: 0.75rem; background: var(--surface2); color: var(--text); border: 1px solid var(--border); box-shadow: none;">
-                            ${code}
-                        </button>
-                    `).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    div.innerHTML = `
-        <div class="menu-card" style="padding:40px 20px; max-width:380px; border:none; box-shadow:none; background:transparent;">
-            <div style="font-family:var(--font-display); font-size:3.2rem; font-weight:900; font-style:italic; line-height:0.85; margin-bottom:8px; color:var(--text); text-align:center;">
-                COURTSIDE<span style="color:var(--accent);">PRO</span>
-            </div>
-            <p style="color:var(--accent); text-align:center; margin-bottom:32px; font-size:0.6rem; letter-spacing:4px; text-transform:uppercase; font-weight:900; opacity:0.8;">
-                GLOBAL LOBBY
-            </p>
-
-            ${recentHTML}
-
-            <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:32px;">
-                <button class="btn-main" onclick="closeLandingPage()" style="height:54px; font-size:1rem; box-shadow:0 0 30px var(--accent-dim);">
-                    🏸 REGULAR PLAY SESSION
-                </button>
-                
-                <button class="btn-main" onclick="window.openTournamentMode()" 
-                        style="height:54px; font-size:1rem; background:var(--obsidian); border:1px solid var(--royal-purple); color:#fff; box-shadow:0 0 20px rgba(107, 33, 168, 0.3);">
-                    🏆 ENTER TOURNAMENT MODE
-                </button>
-
-                <div style="height:1px; background:var(--border); margin:8px 0; position:relative;">
-                    <span style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--bg); padding:0 12px; font-size:0.55rem; color:var(--text-muted); font-weight:900; letter-spacing:2px;">OR JOIN BY CODE</span>
-                </div>
-
-                <div style="display:flex; gap:8px;">
-                    <input type="text" id="lobbyRoomCode" placeholder="ROOM CODE" 
-                           style="flex:1; height:54px; text-align:center; font-family:var(--font-display); font-size:1.1rem; letter-spacing:2px; font-style:italic;"
-                           oninput="this.value = this.value.toUpperCase()"
-                           onkeydown="if(event.key==='Enter') window.joinFromLobby()">
-                    <button class="btn-main" onclick="window.joinFromLobby()" style="width:70px; background:var(--surface2); color:var(--text); border:1px solid var(--border);">GO</button>
-                </div>
-            </div>
-
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                <button class="btn-main" onclick="openStandalonePassport()" style="background:var(--bg2); color:var(--text); height:50px; font-size:0.8rem; border:1px solid var(--border);">
-                    🪪 MY PASSPORT
-                </button>
-                <button class="btn-main" onclick="PlayerMode.restorePassportPrompt()" style="background:var(--bg2); color:var(--text); height:50px; font-size:0.8rem; border:1px solid var(--border);">
-                    🔑 RESTORE
-                </button>
-            </div>
-        </div>
-    `;
-}
-
-window.goToMainMenu = showLandingPage;
-
-window.closeLandingPage = function() {
-    const el = document.getElementById('landingPage');
-    if (!el) return;
-
-    const doClose = () => {
-        el.style.transition = 'opacity 0.3s';
-        el.style.opacity = '0';
-        setTimeout(() => el.remove(), 300);
-    };
-
-    // If the host has no name, prompt them before starting.
-    if (passport && !passport.playerName) {
-        UIManager.prompt({
-            title: 'Enter Your Name',
-            initialValue: '',
-            confirmText: 'Start Hosting',
-            onConfirm: (name) => {
-                if (name && name.trim()) {
-                    // Create the host's passport and add them to the squad.
-                    Passport.rename(name.trim());
-                    passport = Passport.get(); // Re-fetch passport
-                    _autoAddHostToSquad(); // This will now find and add them
-                    doClose();
-                } else {
-                    doClose(); // Close without adding if they cancel.
-                }
-            }
-        });
-    } else {
-        // Host already has a name, _autoAddHostToSquad should have already run.
-        doClose();
-    }
-};
-
-window.joinFromRecent = function(code) {
-    if (window.Haptic) Haptic.tap();
-    window.location.href = `?join=${code}&role=player`;
-};
-
-window.openStandalonePassport = function() {
-    const el = document.getElementById('landingPage');
-    if (el) el.remove();
-    
-    const ps = document.getElementById('passportStandalone');
-    const sl = document.getElementById('sidelinePanel');
-    
-    // Ensure SidelineView is hidden so they don't overlap
-    if (sl) sl.style.display = 'none';
-
-    const p = Passport.get();
-    if (ps && p) {
-        ps.style.display = 'flex';
-        document.body.classList.add('player-mode'); // Use context to hide host UI
-        window.renderPassportStandalone(p);
-
-        // 'Silent Hydrate' - Update career stats and trophies from global players table
-        if (p.playerUUID) {
-            fetch('/api/member-upsert', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    room_code: 'RESTORE', 
-                    player_uuid: p.playerUUID, 
-                    player_name: p.playerName 
-                })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.global) {
-                    const { passport: updatedP, needsUpload } = Passport.hydrate(data.global);
-
-                    // 2. Fetch global leaderboard to compute rank percentile
-                    fetch('/api/leaderboard-get')
-                        .then(lbRes => lbRes.json())
-                        .then(lbData => {
-                            const players = lbData.players || [];
-                            const rankIdx = players.findIndex(lp => lp.uuid === updatedP.playerUUID);
-                            if (rankIdx !== -1) {
-                                const rank = rankIdx + 1;
-                                const percentile = Math.ceil((rank / players.length) * 100);
-                                const percHTML = players.length > 5 ? `<div style="font-size:0.5rem; opacity:0.6; margin-top:2px; font-style:normal; font-weight:700;">TOP ${percentile}%</div>` : '';
-                                window._lastRankDisplay = `#${rank}${percHTML}`;
-                                window.renderPassportStandalone(updatedP, window._lastRankDisplay);
-                            } else {
-                                window.renderPassportStandalone(updatedP);
-                            }
-                        })
-                        .catch(() => window.renderPassportStandalone(updatedP));
-
-                    // If local stats are more advanced than the cloud, perform a reconcile sync
-                    if (needsUpload && !window.isOnlineSession) {
-                        console.log('[Passport] Local data advanced; reconciling with cloud...');
-                        fetch('/api/match-history', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                type: 'reconcile_sync',
-                                player_uuid: updatedP.playerUUID,
-                                total_wins: updatedP.stats.wins,
-                                total_games: updatedP.stats.games,
-                                achievements: updatedP.achievements,
-                                teammate_history: updatedP.teammateHistory,
-                                opponent_history: updatedP.opponentHistory,
-                                partner_stats: updatedP.partnerStats
-                            })
-                        }).catch(e => console.warn('[Passport] Reconciliation failed', e));
-                    }
-                }
-            })
-            .catch(e => console.warn('[Passport] Silent hydrate failed', e));
-        }
-    }
-};
-
-window.renderPassportStandalone = function(p, globalRank = window._lastRankDisplay || '—') {
-    const content = document.getElementById('passportStandaloneContent');
-    if (!content || !p) return;
-
-    const stats = p.stats || { wins: 0, games: 0 };
-    const wr = stats.games > 0 ? Math.round((stats.wins / stats.games) * 100) : 0;
-    const avatarColor = Avatar.color(p.playerName);
-    const emoji = p.spiritAnimal || '🐾';
-
-    const renderTrophies = (ids) => {
-        const listEl = document.getElementById('psAchievements');
-        if (!listEl) return;
-        const html = Object.keys(window.Achievements || {}).map(key => {
-            const data = window.getAchievementDisplay(key, ids);
-            if (!data.unlocked) return '';
-            return `
-                <div class="ps-trophy" title="${data.name}: ${data.description}">
-                    <div class="ps-trophy-icon">${data.icon}</div>
-                    <div class="ps-trophy-name">${data.name}</div>
-                </div>
-            `;
-        }).join('');
-        listEl.innerHTML = html || '<div class="ps-empty-ach">No trophies earned yet.</div>';
-    };
-
-    // Legacy Calculations
-    const squad = (typeof StateStore !== 'undefined' ? StateStore.squad : null) || window.squad || [];
-    
-    let rivalDisplay = '—';
-    if (p.opponentHistory && Object.keys(p.opponentHistory).length > 0) {
-        const rivals = Object.entries(p.opponentHistory).sort(([, a], [, b]) => b - a);
-        const [rUUID, rCount] = rivals[0];
-        const rivalName = squad.find(s => s.uuid === rUUID)?.name 
-                       || p.partnerStats?.[rUUID]?.name 
-                       || 'Veteran Rival';
-        rivalDisplay = `${rivalName} (${rCount}g)`;
-    }
-
-    let partnerDisplay = '—';
-    if (p.partnerStats && Object.keys(p.partnerStats).length > 0) {
-        const partners = Object.entries(p.partnerStats)
-            .filter(([, s]) => s.games >= 3)
-            .sort(([, a], [, b]) => (b.wins / b.games) - (a.wins / a.games) || b.games - a.games);
-        
-        if (partners.length > 0) {
-            const [pUUID, pStats] = partners[0];
-            const wr = Math.round((pStats.wins / pStats.games) * 100);
-            const pName = squad.find(s => s.uuid === pUUID)?.name 
-                       || pStats.name 
-                       || 'Elite Partner';
-            partnerDisplay = `${pName} (${wr}% WR)`;
-        }
-    }
-
-    content.innerHTML = `
-        <div class="ps-header">
-            <div class="ps-avatar-ring">
-                <div class="ps-avatar" style="background:${avatarColor}">${p.spiritAnimal || (p.playerName || '?').charAt(0).toUpperCase()}</div>
-            </div>
-            <h1 class="ps-name">${escapeHTML(p.playerName)}</h1>
-            <div class="ps-badge">${emoji} ATHLETE</div>
-        </div>
-        
-        <div style="background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:20px; text-align:center;">
-            <div style="font-size:0.55rem; color:var(--text-muted); letter-spacing:1px; margin-bottom:4px;">RECOVERY KEY (Keep this safe!)</div>
-            <div style="font-family:monospace; font-size:0.7rem; color:var(--accent); cursor:pointer;" onclick="fallbackCopy('${p.playerUUID}', 'Key Copied!')">${p.playerUUID}</div>
-        </div>
-
-        <div class="ps-stats-grid">
-            <div class="ps-stat-card" style="border-color:var(--accent-glow);">
-                <div class="ps-stat-val" style="color:var(--accent); line-height:1.1;">${globalRank}</div>
-                <div class="ps-stat-label">GLOBAL RANK</div>
-            </div>
-            <div class="ps-stat-card">
-                <div class="ps-stat-val">${stats.games}</div>
-                <div class="ps-stat-label">TOTAL GAMES</div>
-            </div>
-            <div class="ps-stat-card">
-                <div class="ps-stat-val">${stats.wins}</div>
-                <div class="ps-stat-label">TOTAL WINS</div>
-            </div>
-            <div class="ps-stat-card">
-                <div class="ps-stat-val">${wr}%</div>
-                <div class="ps-stat-label">WIN RATE</div>
-            </div>
-        </div>
-
-        <div class="ps-section">
-            <div class="ps-section-header">📜 LEGACY</div>
-            <div class="ps-stats-grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
-                <div class="ps-stat-card">
-                    <div class="ps-stat-val" style="font-size: 0.85rem; color: var(--text);">${partnerDisplay}</div>
-                    <div class="ps-stat-label">BEST PARTNER</div>
-                </div>
-                <div class="ps-stat-card">
-                    <div class="ps-stat-val" style="font-size: 0.85rem; color: var(--text);">${rivalDisplay}</div>
-                    <div class="ps-stat-label">CAREER RIVAL</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="ps-section">
-            <div class="ps-section-header">🏆 TROPHY ROOM</div>
-            <div id="psAchievements" class="ps-achievements-list">
-                <div class="sl-searching"><div class="sl-searching-spinner"></div></div>
-            </div>
-        </div>
-
-        <div class="ps-actions">
-            <button class="btn-main ps-btn-sub" onclick="passportRename()">✏️ Edit Name</button>
-            <button class="btn-main ps-btn-sub" onclick="PlayerMode.pickSpiritAnimal()">🐾 Spirit Animal</button>
-                        <button class="btn-main ps-btn-sub" style="grid-column: span 2; background:rgba(0, 255, 163, 0.1) !important; color:var(--accent) !important; border: 1px solid var(--border-accent) !important;" onclick="generateRecoveryCard()">💾 Download Backup Card</button>
-        </div>
-    `;
-
-    // Show local trophies immediately
-    renderTrophies(p.achievements || []);
-};
-
-window.goToPlayerMode = function() {
-    window.location.href = '?role=player';
-};
-
-window.joinFromLobby = function() {
-    const input = document.getElementById('lobbyRoomCode');
-    const code = input?.value?.trim();
-    if (!code) return;
-    
-    // Normalize and Route
-    let cleanCode = code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-    if (cleanCode.length === 8) cleanCode = cleanCode.slice(0, 4) + '-' + cleanCode.slice(4);
-    
-    window.location.href = `?join=${cleanCode}&role=player`;
-};
-
-function _startHostTimerTick() {
-    if (window._hostTickTimer) clearInterval(window._hostTickTimer);
-    window._hostTickTimer = setInterval(() => {
-        const matches = StateStore.currentMatches || [];
-        matches.forEach((m, i) => {
-            if (!m.startedAt || m.winnerTeamIndex !== null) return;
-            const el = document.getElementById(`timer-${i}`);
-            if (!el) return;
-            
-            const elapsed = Math.floor((Date.now() - m.startedAt) / 1000);
-            const min = Math.floor(elapsed / 60);
-            const sec = elapsed % 60;
-            el.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
-            
-            // Use the same CSS classes defined for the court-timer
-            el.classList.toggle('timer-warn', min >= 10);
-            el.classList.toggle('timer-alert', min >= 15);
-        });
-    }, 1000);
-}
-
-// =============================================================================
-// initApp
-// =============================================================================
-
 async function initApp() {
-
     try {
         const _raw = localStorage.getItem('cs_player_passport');
         passport = _raw ? JSON.parse(_raw) : null;
@@ -4051,7 +3705,7 @@ async function initApp() {
     }
 
     // Show landing if no data and not in a session
-    if (StateStore.squad.length === 0 && !isOnlineSession && !urlParams.get('join')) {
+    if (StateStore.squad.length === 0 && !window.isOnlineSession && !urlParams.get('join')) {
         showLandingPage();
     }
 }
