@@ -6459,17 +6459,6 @@ body.session-ended #nextUpTicker {
     font-family: var(--font-body);
 }
 
-.wr-header-qr {
-    background: #fff;
-    padding: 4px;
-    border-radius: 8px;
-    width: 68px;
-    height: 68px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
 .wr-title-area {
     display: flex;
     flex-direction: column;
@@ -6604,16 +6593,9 @@ body.session-ended #nextUpTicker {
 }
 
 .wr-bracket-slot.has-team {
-    cursor: pointer;
     border-color: var(--trophy-gold);
     color: #fff;
     background: linear-gradient(90deg, rgba(212, 175, 55, 0.1), transparent);
-}
-
-.wr-bracket-slot.winner {
-    border-color: var(--accent);
-    background: linear-gradient(90deg, rgba(32, 255, 173, 0.2), transparent);
-    color: var(--accent);
 }
 
 .wr-championship-ring {
@@ -6628,12 +6610,6 @@ body.session-ended #nextUpTicker {
     background: radial-gradient(circle, rgba(212, 175, 55, 0.15) 0%, transparent 70%);
     box-shadow: 0 0 40px rgba(212, 175, 55, 0.2);
     animation: trophyGlow 3s infinite alternate;
-}
-
-.wr-championship-ring.crowned {
-    border-color: var(--accent);
-    background: radial-gradient(circle, rgba(32, 255, 173, 0.2) 0%, transparent 70%);
-    box-shadow: 0 0 50px rgba(32, 255, 173, 0.3);
 }
 
 @keyframes trophyGlow {
