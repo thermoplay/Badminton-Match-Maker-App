@@ -65,7 +65,6 @@ window.editTournamentName      = editTournamentName;
 window.addTournamentGuest      = addTournamentGuest;
 window.editTournamentPlayer    = editTournamentPlayer;
 window.removeTournamentPlayer  = removeTournamentPlayer;
-window.autoPairTournament      = autoPairTournament;
 window.showLandingPage         = showLandingPage;
 window.goToMainMenu           = goToMainMenu;
 window.closeLandingPage        = closeLandingPage;
@@ -2189,10 +2188,7 @@ function openTournamentMode() {
 
         <div class="wr-workbench">
             <div class="wr-column">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-                    <div class="wr-column-title" style="margin-bottom:0;">The Draft Pool</div>
-                    ${unassigned.length >= 2 ? `<button class="wr-chip-btn" onclick="window.autoPairTournament()" style="color:var(--accent); font-size:0.6rem; font-weight:900; border:1px solid var(--accent); border-radius:4px; padding:2px 6px;">⚡ AUTO-PAIR</button>` : ''}
-                </div>
+                <div class="wr-column-title">The Draft Pool</div>
                 <div id="wrDraftPool" style="flex:1; overflow-y:auto;">
                     ${unassigned.map(p => `
                         <div class="wr-draft-chip" onclick="handleWarRoomTap('${p.uuid}')" data-uuid="${p.uuid}">
@@ -4200,33 +4196,6 @@ async function removeTournamentPlayer(uuid) {
     const p = StateStore.squad.find(x => x.uuid === uuid);
     if (!p) return;
     await removePlayerFromSession(uuid, p.name);
-    const overlay = document.getElementById('warRoomOverlay');
-    if (overlay) { overlay.remove(); openTournamentMode(); }
-}
-
-function autoPairTournament() {
-    const assignedIds = new Set(wrTeams.flatMap(t => t.players.map(tp => tp.uuid || tp.name)));
-    const unassigned = StateStore.squad
-        .filter(p => p.active && !assignedIds.has(p.uuid || p.name))
-        .sort((a, b) => (b.wins || 0) - (a.wins || 0)); // Sort by wins high to low
-
-    if (unassigned.length < 2) return;
-
-    // Balanced Pairing: Match top seeds with bottom seeds
-    while (unassigned.length >= 2) {
-        const top = unassigned.shift();
-        const bottom = unassigned.pop();
-        
-        const team = { 
-            id: _generateUUID(), 
-            players: [top, bottom], 
-            name: `${top.name} & ${bottom.name}` 
-        };
-        wrTeams.push(team);
-    }
-
-    if (window.Haptic) Haptic.success();
-    showSessionToast('Balanced Teams Created');
     const overlay = document.getElementById('warRoomOverlay');
     if (overlay) { overlay.remove(); openTournamentMode(); }
 }
